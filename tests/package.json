@@ -1,0 +1,11 @@
+{
+  "name": "headspace-tests",
+  "private": true,
+  "description": "Local test suite for the Headspace day planner.",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}
