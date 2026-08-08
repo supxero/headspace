@@ -478,11 +478,159 @@ let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,r
 
 function fresh(){
   return {
-    days:{}, carry:[], focus:[],
+    ver:2, days:{}, carry:[], focus:[], tomb:{},
     floats:[{id:uid(),name:'Inbox',tasks:[]},{id:uid(),name:'Ideas',tasks:[]}],
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false}
   };
+}
+
+/* ================= per item change tracking =================
+   Every task, subtask, float tab and focus item carries `up`, the moment it last
+   changed on some device. Ids that go away are recorded in state.tomb with the moment
+   they went. Sync merges those two maps id by id, so two devices that each add
+   something keep both instead of one blob replacing the other. */
+const LEGACY_UP=1;            /* stamp for anything saved before per item timestamps */
+const TOMB_KEEP=45*864e5;     /* a deletion is remembered for 45 days, then forgotten */
+const upOf=o=>{ const n=+(o&&o.up); return isFinite(n)&&n>0?n:LEGACY_UP };
+const locKey=l=>l.kind==='day'?('day:'+l.date+':'+l.zone):l.kind==='float'?('float:'+l.fid):'carry';
+const arr=x=>Array.isArray(x)?x:[];
+
+/* one walk over every mergeable item in a state, in a stable order */
+function eachItem(s,fn){
+  arr(s.floats).forEach((f,i)=>{ if(f&&f.id) fn('float',f,{ord:i}) });
+  arr(s.floats).forEach(f=>{ if(f&&f.id) arr(f.tasks).forEach((t,i)=>eachTask(t,{kind:'float',fid:f.id},i,fn)) });
+  Object.keys(s.days||{}).sort().forEach(d=>ZONES.forEach(z=>
+    arr((s.days[d]||{})[z]).forEach((t,i)=>eachTask(t,{kind:'day',date:d,zone:z},i,fn))));
+  arr(s.carry).forEach((t,i)=>eachTask(t,{kind:'carry'},i,fn));
+  arr(s.focus).forEach((f,i)=>{ if(f&&f.id) fn('focus',f,{ord:i}) });
+}
+function eachTask(t,loc,ord,fn){
+  if(!t||!t.id) return;
+  fn('task',t,{ord,loc});
+  arr(t.subtasks).forEach((s,i)=>{ if(s&&s.id) fn('sub',s,{ord:i,pid:t.id}) });
+}
+/* everything about an item that belongs to the item itself, including where it sits */
+function sigOf(kind,o,m){
+  if(kind==='float') return 'F|'+m.ord+'|'+(o.name||'');
+  if(kind==='focus') return 'X|'+m.ord+'|'+(o.title||'')+'|'+(o.done?1:0)+'|'+(o.doneAt||'');
+  if(kind==='sub')   return 'S|'+m.pid+'|'+m.ord+'|'+(o.title||'')+'|'+(o.done?1:0);
+  return 'T|'+locKey(m.loc)+'|'+m.ord+'|'+(o.title||'')+'|'+(o.done?1:0)+'|'+(o.from||'')+
+    '|'+arr(o.subtasks).map(x=>x&&x.id).join(',');
+}
+let sigMap={};
+function snapSigs(){ const m={}; eachItem(state,(k,o,meta)=>{m[o.id]=sigOf(k,o,meta)}); sigMap=m }
+/* called on every commit: whatever changed since the last one gets a fresh stamp,
+   and whatever disappeared gets a tombstone. Covers every edit path, drag and Undo alike. */
+function stampChanges(){
+  const t=Date.now(), next={}, seen={};
+  if(!state.tomb||typeof state.tomb!=='object') state.tomb={};
+  eachItem(state,(k,o,meta)=>{
+    const sig=sigOf(k,o,meta); next[o.id]=sig; seen[o.id]=1;
+    if(state.tomb[o.id]!=null){ delete state.tomb[o.id]; o.up=t; return }  /* brought back by Undo */
+    const had=sigMap[o.id];
+    if(had===undefined){ if(!(+o.up>0)) o.up=t }
+    else if(had!==sig) o.up=t;
+  });
+  Object.keys(sigMap).forEach(id=>{ if(!seen[id]) state.tomb[id]=t });
+  Object.keys(state.tomb).forEach(id=>{ if(t-state.tomb[id]>TOMB_KEEP) delete state.tomb[id] });
+  sigMap=next;
+}
+function stampLegacy(s){
+  eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP });
+  if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
+  Object.keys(s.tomb).forEach(id=>{ if(!(+s.tomb[id]>0)) delete s.tomb[id] });
+  return s;
+}
+
+/* ================= merge two planners, item by item ================= */
+function flatten(s){
+  const g={float:{},task:{},sub:{},focus:{}};
+  eachItem(s,(k,o,m)=>{
+    if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,up:upOf(o)};
+    else if(k==='focus') g.focus[o.id]={id:o.id,title:o.title||'',done:!!o.done,
+      doneAt:o.doneAt||null,ord:m.ord,up:upOf(o)};
+    else if(k==='sub') g.sub[o.id]={id:o.id,title:o.title||'',done:!!o.done,pid:m.pid,ord:m.ord,up:upOf(o)};
+    else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
+      loc:m.loc,ord:m.ord,subs:arr(o.subtasks).map(x=>x.id),up:upOf(o)};
+  });
+  return g;
+}
+/* newer wins. Same moment on both sides: pick by content so both devices land on the same answer. */
+function pickNewer(a,b){
+  if(!a) return b;
+  if(!b) return a;
+  if(a.up!==b.up) return a.up>b.up?a:b;
+  return JSON.stringify(a)<=JSON.stringify(b)?a:b;
+}
+function mergeTombs(x,y){
+  const out={};
+  [x||{},y||{}].forEach(m=>Object.keys(m).forEach(id=>{
+    const v=+m[id]||0; if(!(out[id]>=v)) out[id]=v;
+  }));
+  return out;
+}
+function stateSig(s){
+  const g=flatten(s), out=[];
+  ['float','task','sub','focus'].forEach(k=>Object.keys(g[k]).sort()
+    .forEach(id=>out.push(k+' '+JSON.stringify(g[k][id]))));
+  const tb=(s&&s.tomb)||{};
+  Object.keys(tb).sort().forEach(id=>out.push('gone '+id+' '+tb[id]));
+  return out.join('\n');
+}
+function mergeStates(mine,theirs){
+  const A=flatten(mine), B=flatten(theirs);
+  const tomb=mergeTombs(mine.tomb,theirs.tomb);
+  const keep={float:{},task:{},sub:{},focus:{}};
+  ['float','task','sub','focus'].forEach(g=>{
+    const ids={};
+    Object.keys(A[g]).forEach(i=>{ids[i]=1}); Object.keys(B[g]).forEach(i=>{ids[i]=1});
+    Object.keys(ids).forEach(id=>{
+      const w=pickNewer(A[g][id],B[g][id]);
+      const gone=tomb[id];
+      if(gone!=null&&gone>=w.up) return;   /* deleted after the last edit anyone made to it */
+      keep[g][id]=w;
+    });
+  });
+  return rebuild(keep,tomb,mine,theirs);
+}
+function rebuild(keep,tomb,mine,theirs){
+  const f=fresh(), out=f;
+  out.tomb=tomb;
+  /* settings stay this device's own. lastRoll is the one exception: it marks work
+     already done to the tasks themselves, so the later marker holds for both. */
+  out.settings={...f.settings,...((mine&&mine.settings)||{})};
+  const rolls=[(mine&&mine.settings||{}).lastRoll,(theirs&&theirs.settings||{}).lastRoll].filter(Boolean).sort();
+  if(rolls.length) out.settings.lastRoll=rolls[rolls.length-1];
+
+  const byOrd=(a,b)=>(a.ord-b.ord)||(a.id<b.id?-1:a.id>b.id?1:0);
+  const floats=Object.keys(keep.float).map(id=>keep.float[id]).sort(byOrd)
+    .map(x=>({id:x.id,name:x.name,tasks:[],up:x.up}));
+  if(floats.length) out.floats=floats;
+  const fmap={}; out.floats.forEach(x=>{fmap[x.id]=x});
+
+  const subsBy={};
+  Object.keys(keep.sub).forEach(id=>{
+    const s=keep.sub[id];
+    if(keep.task[s.pid]) (subsBy[s.pid]=subsBy[s.pid]||[]).push(s);   /* never orphan a step */
+  });
+  out.days={}; out.carry=[];
+  Object.keys(keep.task).map(id=>keep.task[id]).sort(byOrd).forEach(t=>{
+    const o={id:t.id,title:t.title,done:t.done,up:t.up,
+      subtasks:(subsBy[t.id]||[]).sort(byOrd).map(s=>({id:s.id,title:s.title,done:s.done,up:s.up}))};
+    if(t.from) o.from=t.from;
+    const l=t.loc||{kind:'carry'};
+    if(l.kind==='day'){
+      if(!out.days[l.date]) out.days[l.date]={must:[],should:[],extra:[]};
+      out.days[l.date][ZONES.indexOf(l.zone)>-1?l.zone:'must'].push(o);
+    }else if(l.kind==='float'){
+      (fmap[l.fid]||out.floats[0]).tasks.push(o);   /* tab deleted elsewhere: keep the task */
+    }else out.carry.push(o);
+  });
+  out.focus=Object.keys(keep.focus).map(id=>keep.focus[id]).sort(byOrd)
+    .map(x=>({id:x.id,title:x.title,done:x.done,doneAt:x.doneAt,up:x.up}));
+  if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
+  return out;
 }
 function load(){
   try{
@@ -498,6 +646,9 @@ function load(){
     if(Array.isArray(p.backlog)&&p.backlog.length) state.floats[0].tasks.push(...p.backlog);
   }catch(e){ state=fresh() }
   if(!state.settings.activeFloat) state.settings.activeFloat=state.floats[0].id;
+  /* anything saved before per item stamps keeps its data and gets the oldest stamp,
+     so a real edit on any device always beats it */
+  state.ver=2; stampLegacy(state); snapSigs();
 }
 let saveT=null;
 function save(){
@@ -506,6 +657,7 @@ function save(){
   saveT=setTimeout(commit,400);
 }
 function commit(){
+  stampChanges();
   try{
     localStorage.setItem(KEY,JSON.stringify(state));
     $('#save').textContent='saved'; $('#save').classList.remove('warn');
@@ -532,7 +684,10 @@ const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this dev
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
 const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay','showDone'];
-const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,pushT:null,checked:0};
+const POLL_MS=25000;                          /* look for another device's changes this often */
+const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
+const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
+  pushT:null,checked:0,busy:false};
 
 function lsGet(k){ try{ return localStorage.getItem(k) }catch(e){ return null } }
 function lsSet(k,v){ try{ localStorage.setItem(k,v) }catch(e){} }
@@ -616,13 +771,14 @@ function pushSoon(){
 }
 function flushPush(){
   clearTimeout(sync.pushT);
-  if(sync.key&&sync.ready&&sync.pending&&sync.state!=='conflict') pushNow(false);
+  if(!sync.key||!sync.ready||!sync.pending||sync.state==='conflict') return;
+  if(sync.busy){ sync.pushT=setTimeout(flushPush,1200); return }   /* a cycle is already out */
+  /* an automatic push always reads the cloud and merges first, so it can never
+     wipe out something the other device wrote while this one was editing */
+  syncCycle({});
 }
-async function pushNow(manual){
-  if(!sync.key) return manual?(toast('Add a sync key first'),false):false;
-  clearTimeout(sync.pushT);
+async function putState(manual){
   const when=new Date().toISOString();
-  syncSet('busy');
   try{
     await cloudPut(sync.key,state,when);
     sync.pending=false; sync.ready=true;
@@ -631,6 +787,13 @@ async function pushNow(manual){
     if(manual) toast('Pushed to the cloud');
     return true;
   }catch(e){ netFail(e,manual); return false }
+}
+/* the Push button stays a straight overwrite, as a manual override */
+async function pushNow(manual){
+  if(!sync.key) return manual?(toast('Add a sync key first'),false):false;
+  clearTimeout(sync.pushT);
+  syncSet('busy');
+  return putState(manual);
 }
 
 /* ---------- pull ---------- */
@@ -658,66 +821,111 @@ function swapState(next){
   Object.keys(state).forEach(k=>{ delete state[k] });
   Object.assign(state,next);
 }
+/* read a copy that came off the wire, whatever version wrote it */
+function readCloud(p){
+  if(!p||typeof p!=='object'||(!p.days&&!p.floats)) return null;
+  const f=fresh();
+  const out={...f,...p,settings:{...f.settings,...(p.settings||{})}};
+  if(!Array.isArray(out.floats)||!out.floats.length) out.floats=f.floats;
+  if(!Array.isArray(out.carry)) out.carry=[];
+  if(!Array.isArray(out.focus)) out.focus=[];
+  if(!out.days||typeof out.days!=='object') out.days={};
+  return stampLegacy(out);
+}
+/* put a state on screen without letting the change look like a local edit */
+function adopt(next){
+  swapState(next);
+  snapSigs();
+  sync.applying=true; commit(); sync.applying=false;
+  if(ui.sel&&!findTask(ui.sel)) ui.sel=null;
+  ui.renderKey=''; render();
+}
 function applyCloud(row,announce){
-  const p=row&&row.data;
-  if(!p||typeof p!=='object'||(!p.days&&!p.floats)){
+  const p=readCloud(row&&row.data);
+  if(!p){
     syncSet('error','the copy in the cloud could not be read');
     if(announce) toast('The cloud copy could not be read, so nothing was changed');
     return false;
   }
   const before=JSON.stringify(state);
   lsSet(SBACK_LS,before);
-  const f=fresh(), keep=state.settings;
-  const next={...f,...p,settings:{...f.settings,...(p.settings||{})}};
-  VIEWSET.forEach(k=>{ next.settings[k]=keep[k] });
-  if(!Array.isArray(next.floats)||!next.floats.length) next.floats=f.floats;
-  if(!Array.isArray(next.carry)) next.carry=[];
-  if(!Array.isArray(next.focus)) next.focus=[];
-  if(!next.days||typeof next.days!=='object') next.days={};
-  if(!next.floats.some(x=>x.id===next.settings.activeFloat)) next.settings.activeFloat=next.floats[0].id;
+  const keep=state.settings;
+  VIEWSET.forEach(k=>{ p.settings[k]=keep[k] });
+  if(!p.floats.some(x=>x.id===p.settings.activeFloat)) p.settings.activeFloat=p.floats[0].id;
 
-  swapState(next);
-  sync.applying=true; commit(); sync.applying=false;
+  adopt(p);
   sync.pending=false; sync.ready=true;
   lsSet(SSTAMP_LS,row.updated_at);
   syncSet('synced','pulled from '+clock(row.updated_at));
-  ui.sel=null; ui.adding=null; ui.addText=''; ui.renderKey='';
-  render();
+  ui.adding=null; ui.addText='';
   if(announce) toast('Pulled from the cloud',()=>{
-    try{ swapState(JSON.parse(before)) }catch(e){}
+    try{ adopt(stampLegacy(JSON.parse(before))) }catch(e){}
     lsSet(SSTAMP_LS,new Date().toISOString());
+    pushSoon();
   });
   return true;
 }
 
-/* ---------- reconcile: newest updated_at wins, and nothing goes silently ---------- */
-async function reconcile(manual){
-  if(!sync.key) return;
+/* ---------- the automatic cycle: read the cloud, merge item by item, write back ----------
+   Runs on load, on focus, on reconnect, on a timer, and a moment after any edit. */
+async function syncCycle(opts){
+  opts=opts||{};
+  if(!sync.key||sync.busy) return false;
+  if(sync.state==='conflict'&&!opts.force) return false;
+  sync.busy=true;
   syncSet('busy');
-  let row;
+  let row=null;
   try{ row=await cloudGet(sync.key) }
-  catch(e){ netFail(e,manual); sync.ready=true; if(sync.pending) pushSoon(); return }
-  sync.checked=Date.now();
-  const mine=lsGet(SSTAMP_LS);
-  if(!row){ sync.ready=true; sync.pending=true; await pushNow(false); return }
-  if(!mine){
-    /* this device has never agreed with the cloud, so do not guess */
-    if(emptyPlanner(state)){ applyCloud(row,false); return }
-    sync.ready=true; syncSet('conflict');
-    const m=$('#syncModal'); if(m) m.innerHTML=syncBody();
-    toast('Sync: this device and the cloud both hold a planner. Open Sync to choose.');
-    return;
+  catch(e){ sync.busy=false; sync.ready=true; netFail(e,opts.manual); return false }
+  try{
+    sync.checked=Date.now();
+    if(!row){                                   /* first device on this key */
+      sync.ready=true; sync.pending=true;
+      const ok=await putState(opts.manual);
+      sync.busy=false; return ok;
+    }
+    const theirs=readCloud(row.data);
+    if(!theirs){
+      sync.ready=true; syncSet('error','the copy in the cloud could not be read');
+      sync.busy=false; return false;
+    }
+    if(!lsGet(SSTAMP_LS)&&!emptyPlanner(state)&&!emptyPlanner(theirs)){
+      /* this device has never agreed with the cloud and both hold a planner, so do not guess */
+      sync.ready=true; sync.busy=false; syncSet('conflict');
+      refreshSyncModal();
+      toast('Sync: this device and the cloud both hold a planner. Open Sync to choose.');
+      return false;
+    }
+    const before=stateSig(state);
+    const merged=mergeStates(state,theirs);
+    const after=stateSig(merged);
+    if(after!==before){ adopt(merged); if(opts.announce) toast('Updated from your other device') }
+    sync.ready=true;
+    if(after!==stateSig(theirs)){             /* the cloud is missing something this device holds */
+      sync.pending=true;
+      const ok=await putState(false);
+      sync.busy=false; return ok;
+    }
+    sync.pending=false;
+    lsSet(SSTAMP_LS,row.updated_at);
+    syncSet('synced','up to date');
+    sync.busy=false; return true;
+  }catch(e){
+    sync.busy=false; sync.ready=true; netFail(e,opts.manual); return false;
   }
-  if(at(row.updated_at)>at(mine)){ applyCloud(row,false); toast('Updated from your other device'); return }
-  sync.ready=true;
-  if(at(mine)>at(row.updated_at)||sync.pending){ sync.pending=true; await pushNow(false); return }
-  syncSet('synced','up to date');
 }
 function recheck(){
-  if(!sync.key||!sync.ready||sync.state==='conflict') return;
-  if(Date.now()-sync.checked<20000) return;
-  reconcile(false);
+  if(!sync.key||!sync.ready||sync.busy||sync.state==='conflict') return;
+  if(Date.now()-sync.checked<RECHECK_MS) return;
+  syncCycle({announce:true});
 }
+/* while the app is open, notice what the other device did */
+setInterval(()=>{
+  if(typeof document!=='undefined'&&document.hidden) return;
+  if(!sync.key||!sync.ready||sync.busy||sync.state==='conflict') return;
+  if(Date.now()-sync.checked<POLL_MS-2000) return;
+  syncCycle({announce:true});
+},POLL_MS);
 
 /* ---------- connect / disconnect ---------- */
 async function connectKey(raw){
@@ -771,9 +979,13 @@ function syncBody(){
       '<button class="nbtn" data-action="sync-pull">Pull from cloud</button>'+
       '<button class="nbtn" data-action="sync-push">Push to cloud</button>'+
     '</div>'+
-    '<p class="synchint"><b>Push</b> sends this device\'s planner up under your key. <b>Pull</b> brings the cloud copy '+
-    'down and replaces what is on this device, with an Undo in the toast if you did not mean it. '+
-    'On its own the app pushes changes a moment after you make them, and takes the cloud copy only when it is newer.</p>'+
+    '<p class="synchint">Syncing runs on its own: it checks the cloud when the app opens, when you come back to it, '+
+    'when a connection returns, and every half minute or so while it is open, and it sends your changes up a moment '+
+    'after you make them. Devices are merged task by task, so two of them adding different things keep both. '+
+    'If the same task is edited in two places, the later edit is the one that stays.</p>'+
+    '<p class="synchint">The buttons are a manual override. <b>Push</b> sends this device\'s planner up and replaces '+
+    'what is under the key. <b>Pull</b> brings the cloud copy down and replaces what is on this device, with an Undo '+
+    'in the toast if you did not mean it.</p>'+
     '<p class="synchint">Anyone holding this key can read and change your planner, so treat it like a password. '+
     'Export still works as a plain file backup.</p>'+
     '<div class="mrow">'+
@@ -786,9 +998,14 @@ function syncBoot(){
   sync.key=lsGet(SKEY_LS)||'';
   if(!sync.key){ sync.ready=true; sync.state='off'; return }
   sync.state='idle';
-  reconcile(false);
+  syncCycle({});
 }
-window.addEventListener('online',()=>{ if(sync.key&&sync.pending) flushPush(); recheck() });
+window.addEventListener('online',()=>{
+  if(!sync.key) return;
+  clearTimeout(sync.pushT); sync.checked=0;
+  syncCycle({announce:true});      /* back on a network: catch up both ways at once */
+});
+window.addEventListener('offline',()=>{ if(sync.key&&sync.state!=='conflict') syncSet('offline') });
 
 /* ================= data ops ================= */
 function day(d){
@@ -796,7 +1013,7 @@ function day(d){
   ZONES.forEach(z=>{if(!Array.isArray(state.days[d][z])) state.days[d][z]=[]});
   return state.days[d];
 }
-function mkTask(title){return {id:uid(),title:title.trim(),done:false,subtasks:[]}}
+function mkTask(title){return {id:uid(),title:title.trim(),done:false,subtasks:[],up:Date.now()}}
 function float(id){return state.floats.find(f=>f.id===id)}
 function activeFloat(){return float(state.settings.activeFloat)||state.floats[0]}
 
@@ -1504,7 +1721,11 @@ document.addEventListener('change',e=>{
       try{
         const p=JSON.parse(r.result);
         if(!p.days&&!p.floats) throw 0;
-        state={...fresh(),...p,settings:{...fresh().settings,...(p.settings||{})}};
+        const f=fresh();
+        /* an import replaces this device's planner, so whatever it brings counts as
+           the newest word on those items and whatever it drops counts as removed */
+        swapState(stampLegacy({...f,...p,settings:{...f.settings,...(p.settings||{})}}));
+        eachItem(state,(k,o)=>{ o.up=Date.now() });
         commit(); render(); toast('Imported');
       }catch(err){ toast('That file could not be read as a Headspace export') }
     };
@@ -1662,7 +1883,9 @@ if(!state.settings.stripDay) state.settings.stripDay=today();
 render();
 syncBoot();
 window.A={state,render,rollover,findTask,move,tally,streak,save:commit,
-  sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey};
+  sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey,
+  mergeStates,flatten,stateSig,readCloud,stampLegacy,syncCycle,
+  get live(){ return state }};
 </script>
 </body>
 </html>
