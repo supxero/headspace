@@ -263,6 +263,57 @@ ok(/Days, not hours/.test(q('.modal').textContent),'help explains the model');
 click('[data-action="mclose"][data-close="1"]'); await wait(20);
 ok(!q('.mback'),'help closes');
 
+console.log('— inline add field, touch behaviour —');
+S().settings.view='board'; S().settings.floatMode=false; S().days={}; A.render(); await wait(30);
+const zk='day:'+T()+':must';
+const type=(el,v)=>{el.value=v; el.dispatchEvent(new w.Event('input',{bubbles:true}))};
+const kbd=()=>w.dispatchEvent(new w.Event('resize'));   // keyboard open/close: height only
+const mustNow=()=>(S().days[T()]||{must:[]}).must.map(t=>t.title);
+click('.zadd[data-k="'+zk+'"]'); await wait(30);
+ok(!!q('.addin[data-k="'+zk+'"]'),'"+ add" opens an input');
+ok(doc.activeElement===q('.addin[data-k="'+zk+'"]'),'the input takes focus');
+ok(!!q('.zaddrow [data-action="add-cancel"]'),'the open row shows a cancel control');
+{
+  const before=q('.addin[data-k="'+zk+'"]');
+  type(before,'buy milk'); kbd(); await wait(220);
+  const after=q('.addin[data-k="'+zk+'"]');
+  ok(before===after,'the on-screen keyboard resize does not tear out the input');
+  ok(after&&after.value==='buy milk','half typed text survives a keyboard resize');
+  after.blur(); kbd(); await wait(220);
+  ok(doc.activeElement!==q('.addin[data-k="'+zk+'"]'),'focus is not stolen back after the keyboard is hidden');
+}
+q('#main').click(); await wait(40);
+ok(!q('.addin'),'tapping outside closes the field');
+ok(mustNow().join()==='buy milk','text typed before tapping outside is kept, not lost');
+
+click('.zadd[data-k="'+zk+'"]'); await wait(30);
+type(q('.addin'),'call the bank');
+q('.addin').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await wait(40);
+ok(!q('.addin'),'Enter closes the field');
+ok(mustNow().join()==='buy milk,call the bank','Enter commits the task');
+
+click('.zadd[data-k="'+zk+'"]'); await wait(30);
+type(q('.addin'),'scratch that');
+click('[data-action="add-cancel"]'); await wait(40);
+ok(!q('.addin'),'the cancel control closes the field');
+ok(mustNow().length===2,'cancel discards without adding');
+
+click('.zadd[data-k="'+zk+'"]'); await wait(30);
+q('.addin').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await wait(40);
+ok(!q('.addin'),'Escape still closes the field');
+
+console.log('— menu reach on phones —');
+{
+  const foot=q('.railfoot'), labels=[...foot.children].map(b=>b.textContent);
+  ok(labels.join(',')==='Help,Sync,Export,Import','Help, Sync, Export and Import all live in the rail foot');
+  ok(foot.parentElement.classList.contains('railhide'),'they sit inside the collapsible menu');
+  const css=q('style').textContent;
+  ok(/@media \(max-width:900px\)[\s\S]*#rail \.railfoot\{order:-1/.test(css),
+    'phones lift the rail foot to the top of the opened menu');
+  ok(!/#rail \.railfoot\{[^}]*order:-1[^}]*\}/.test(css.split('@media (max-width:900px)')[0]),
+    'desktop keeps them at the foot');
+}
+
 console.log('\nRESULT: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
 })().catch(e=>{console.error('CRASH',e);process.exit(1)});

@@ -27,9 +27,9 @@ This is a single-file day-planner web app. Read this before making changes.
 From the project root:
 - Behaviour suite (fast, no browser):
   ```
-  cd tests
-  npm install        # first time only, installs jsdom
-  node test.js       # expect: RESULT: 105 passed, 0 failed
+  cd tests && npm install   # first time only, installs jsdom
+  cd ..                     # run from the project root: test.js reads ./index.html
+  node tests/test.js        # expect: RESULT: 122 passed, 0 failed
   ```
 - Optional visual/browser suite (needs Python + Playwright; skip if not set up):
   ```

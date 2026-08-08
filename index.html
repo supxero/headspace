@@ -231,7 +231,8 @@ select option{background:var(--pearl);color:var(--txt)}
 .sbox{width:14px;height:14px;border-radius:5px;border:1.5px solid var(--line2);flex:none;margin-top:2px;display:grid;place-items:center;font-size:9px;color:transparent;transition:.15s}
 .sbox.on{background:var(--done);border-color:var(--done);color:var(--on)}
 .saddrow{display:flex;gap:5px;margin-top:3px}
-.saddrow input{flex:1;padding:5px 8px;font-size:12px;border-radius:7px}
+.saddrow input{flex:1;padding:5px 8px;font-size:12px;border-radius:7px;min-width:0}
+.zaddrow .addcancel{flex:none;padding:5px 9px;color:var(--mut)}
 [contenteditable]{outline:none;border-bottom:1.5px solid var(--denim);padding-bottom:1px}
 
 /* calendar */
@@ -306,7 +307,10 @@ select option{background:var(--pearl);color:var(--txt)}
   #rail.open .railhide{display:flex!important}
   #rail .navgrp{flex-direction:row;gap:6px;overflow-x:auto;padding-bottom:2px}
   #rail .navgrp .navbtn{width:auto;flex:none;padding:8px 12px;white-space:nowrap}
-  #rail .railfoot{margin-top:0}
+  /* phones: Help, Sync, Export and Import sit at the top of the opened menu,
+     so they are not buried under every momentum card. Desktop keeps them at the foot. */
+  #rail .railfoot{order:-1;margin-top:0;padding-top:0;padding-bottom:12px;border-bottom:1px solid var(--line)}
+  #rail .railfoot button{min-height:42px;font-size:12.5px}
   #railtoggle{display:inline-flex;margin-left:auto;font-size:12px;color:var(--mut);border:1px solid var(--line);padding:5px 10px;border-radius:8px}
   #main{overflow:visible;padding:12px 14px 40px;max-width:100vw}
   #board,#cal,#quickadd,#boardnav,#strip,#tray{max-width:100%}
@@ -388,6 +392,9 @@ select option{background:var(--pearl);color:var(--txt)}
   .task{padding:10px 11px}
   .col{box-shadow:0 2px 6px rgba(36,58,94,.1),0 12px 26px rgba(36,58,94,.12)}
   .zadd{border:1px dashed rgba(36,58,94,.3);border-radius:9px;text-align:center;padding:9px 8px;color:var(--mut)}
+  /* 16px keeps the browser from zooming the page when the field takes focus */
+  .zaddrow input{font-size:16px;padding:9px 10px;min-height:44px}
+  .zaddrow .abtn{min-height:44px}
   #strip{scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   #strip::-webkit-scrollbar{display:none}
   #strip button{scroll-snap-align:start}
@@ -467,7 +474,7 @@ const ZC={must:'var(--must)',should:'var(--should)',extra:'var(--extra)'};
 const LOCK=`<svg class="lk" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3.4" y="7.2" width="9.2" height="6.2" rx="1.5"/><path d="M5.5 7.2V5.4a2.5 2.5 0 0 1 5 0v1.8"/></svg>`;
 
 /* ================= state ================= */
-let state=null, ui={sel:null,adding:null,drag:null,cancelEdit:false,renderKey:''};
+let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:''};
 
 function fresh(){
   return {
@@ -674,7 +681,7 @@ function applyCloud(row,announce){
   sync.pending=false; sync.ready=true;
   lsSet(SSTAMP_LS,row.updated_at);
   syncSet('synced','pulled from '+clock(row.updated_at));
-  ui.sel=null; ui.adding=null; ui.renderKey='';
+  ui.sel=null; ui.adding=null; ui.addText=''; ui.renderKey='';
   render();
   if(announce) toast('Pulled from the cloud',()=>{
     try{ swapState(JSON.parse(before)) }catch(e){}
@@ -1116,8 +1123,12 @@ function dayCol(d,i){
 function addRow(dest){
   const k=dest.kind==='day'?('day:'+dest.date+':'+dest.zone):('float:'+dest.fid);
   if(ui.adding===k){
-    return '<div class="saddrow"><input class="addin" data-enter="add" data-k="'+k+'" '+
-      'placeholder="What is it?" autocomplete="off"><button class="abtn" data-action="add-commit" data-k="'+k+'">Add</button></div>';
+    /* value comes from ui.addText so a re-render never eats what is half typed */
+    return '<div class="saddrow zaddrow"><input class="addin" data-enter="add" data-k="'+k+'" '+
+      'value="'+esc(ui.addText)+'" placeholder="What is it?" autocomplete="off" '+
+      'autocapitalize="sentences" enterkeyhint="done">'+
+      '<button class="abtn" data-action="add-commit" data-k="'+k+'">Add</button>'+
+      '<button class="abtn addcancel" data-action="add-cancel" title="Close" aria-label="Close">✕</button></div>';
   }
   return '<button class="zadd" data-action="add-open" data-k="'+k+'">+ add</button>';
 }
@@ -1225,7 +1236,13 @@ function render(){
   renderQuick(); renderTray(); renderNav(); renderFocus(); renderMetrics(); grow();
   if(v==='board') renderBoard(); else renderCal();
 
-  if(ui.adding){ const el=$('.addin[data-k="'+ui.adding+'"]'); if(el) el.focus() }
+  if(ui.adding){
+    const el=$('.addin[data-k="'+ui.adding+'"]');
+    if(el&&document.activeElement!==el){
+      el.focus();
+      const n=el.value.length; try{ el.setSelectionRange(n,n) }catch(err){}
+    }
+  }
   if(ui.flash) setTimeout(()=>{ui.flash=null},700);
 }
 
@@ -1239,8 +1256,33 @@ function addFromText(text,destStr){
   return lines.length;
 }
 
+/* close the open inline add field, keeping whatever was typed */
+function closeAdd(commit){
+  const inp=ui.adding?$('.addin[data-k="'+ui.adding+'"]'):null;
+  const txt=inp?inp.value:ui.addText;
+  if(commit&&txt&&txt.trim()) addFromText(txt,ui.adding);
+  if(inp) inp.blur();          /* lets the phone keyboard drop away */
+  ui.adding=null; ui.addText='';
+}
+
 document.addEventListener('click',e=>{
-  const el=e.target.closest('[data-action]'); if(!el) return;
+  const el=e.target.closest('[data-action]');
+
+  /* tapping anywhere outside the open add row closes it. Without this there was no
+     way off a phone: no Escape key, and the delegated handler ignored plain taps. */
+  if(ui.adding&&!e.target.closest('.zaddrow')){
+    closeAdd(true);
+    if(!el){ save(); render(); return }
+    /* an action was tapped: let it run against the live DOM, then tidy up after */
+    setTimeout(()=>{
+      save();
+      const ae=document.activeElement;
+      if(ae&&ae.dataset&&ae.dataset.kind) return;   /* an inline rename just started */
+      render();
+    },0);
+  }
+
+  if(!el) return;
   const a=el.dataset.action, id=el.dataset.id, s=state.settings;
 
   switch(a){
@@ -1255,12 +1297,9 @@ document.addEventListener('click',e=>{
       if(!n) return; i.value=''; i.style.height='auto';
       toast(n===1?'Added':'Added '+n+' tasks'); break;
     }
-    case 'add-open': ui.adding=el.dataset.k; break;
-    case 'add-commit':{
-      const inp=$('.addin[data-k="'+el.dataset.k+'"]');
-      if(inp&&inp.value.trim()) addFromText(inp.value,el.dataset.k);
-      ui.adding=null; break;
-    }
+    case 'add-open': ui.adding=el.dataset.k; ui.addText=''; break;
+    case 'add-commit': closeAdd(true); break;
+    case 'add-cancel': closeAdd(false); break;
 
     case 'tick':{
       const f=findTask(id); if(!f) return;
@@ -1492,7 +1531,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
     if(['rename','subrename','floatrename','focusrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
     if($('#modalRoot').innerHTML){ $('#modalRoot').innerHTML=''; return }
-    if(ui.adding){ ui.adding=null; render(); return }
+    if(ui.adding){ closeAdd(false); render(); return }
     if(ui.sel){ ui.sel=null; render(); return }
   }
 });
@@ -1594,11 +1633,22 @@ function helpModal(){
 /* ---------- quick-add autogrow ---------- */
 function grow(){ const t=$('#qi'); if(!t) return; t.style.height='auto';
   t.style.height=Math.min(170,Math.max(44,t.scrollHeight))+'px' }
-document.addEventListener('input',e=>{ if(e.target.id==='qi') grow() });
+document.addEventListener('input',e=>{
+  if(e.target.id==='qi') grow();
+  if(e.target.classList&&e.target.classList.contains('addin')) ui.addText=e.target.value;
+});
 
 /* ---------- resize ---------- */
-let rz=null;
-window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{ui.renderKey='';render()},150)});
+/* Phones fire resize every time the on-screen keyboard opens or closes, because it
+   shrinks the layout viewport. That only ever changes the height. Re-rendering there
+   tore out the very input the keyboard belonged to, wiping the half typed text and
+   stealing focus back, so only a real width change rebuilds the board. */
+let rz=null, lastW=window.innerWidth;
+window.addEventListener('resize',()=>{
+  if(window.innerWidth===lastW) return;
+  lastW=window.innerWidth;
+  clearTimeout(rz);rz=setTimeout(()=>{ui.renderKey='';render()},150);
+});
 
 /* ---------- offline support ---------- */
 if('serviceWorker' in navigator){
