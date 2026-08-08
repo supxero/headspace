@@ -1,7 +1,7 @@
 /* Headspace day planner — offline cache.
    BUMP THIS VERSION whenever you upload a new index.html,
    otherwise phones keep serving the old copy from cache. */
-const CACHE = 'headspace-v9';
+const CACHE = 'headspace-v10';
 const FILES = ['./','./index.html','./manifest.webmanifest',
                './icon-192.png','./icon-512.png','./icon-512-maskable.png'];
 
@@ -21,6 +21,9 @@ self.addEventListener('activate', e => {
    falling back to the cache so the app still opens on a plane. */
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  /* cloud sync talks to Supabase. Never cache that, and never answer it from the
+     cache, or an offline read would come back as the index page instead of data. */
+  if (/\.supabase\.co$/.test(new URL(e.request.url).hostname)) return;
   e.respondWith(
     fetch(e.request)
       .then(res => {

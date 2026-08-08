@@ -276,6 +276,19 @@ select option{background:var(--pearl);color:var(--txt)}
 .toast button:hover{background:rgba(143,182,216,.2)}
 .empty{font-size:12px;color:var(--mut2);padding:10px 4px;font-style:italic}
 
+/* sync panel */
+.syncrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.syncrow input{flex:1;min-width:190px;font-size:12.5px;letter-spacing:.02em;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--pearl)}
+.syncstat{display:flex;align-items:flex-start;gap:9px;font-size:12.5px;line-height:1.5;color:var(--mut);
+  background:var(--pearl);border:1px solid var(--line);border-radius:var(--r2);padding:9px 11px;margin-bottom:12px}
+.syncstat .sdot{width:8px;height:8px;border-radius:50%;flex:none;margin-top:5px;background:var(--mut2)}
+.syncstat.busy .sdot{background:var(--denim)}
+.syncstat.synced .sdot{background:var(--done)}
+.syncstat.offline .sdot{background:var(--ocean)}
+.syncstat.error .sdot,.syncstat.conflict .sdot{background:var(--navy)}
+.synchint{font-size:11.5px!important;color:var(--mut2)!important;line-height:1.5}
+
 /* day strip (mobile) */
 #strip{display:none;gap:6px;overflow-x:auto;padding-bottom:9px;margin-bottom:9px}
 #strip button{flex:none;padding:7px 12px;border-radius:99px;font-size:12.5px;border:1px solid var(--line);color:var(--navy);background:var(--pearl);white-space:nowrap}
@@ -410,6 +423,7 @@ select option{background:var(--pearl);color:var(--txt)}
 
       <div class="railfoot">
         <button data-action="help">Help</button>
+        <button data-action="sync">Sync</button>
         <button data-action="export">Export</button>
         <button data-action="import">Import</button>
       </div>
@@ -493,9 +507,281 @@ function commit(){
     if(!ui.warned){ ui.warned=true;
       toast('This browser will not store data on a file:// page. Host it (see SETUP) to keep your tasks.') }
   }
+  if(!sync.applying) pushSoon();
 }
 window.addEventListener('beforeunload',()=>{clearTimeout(saveT);commit()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(saveT);commit()}});
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ clearTimeout(saveT); commit(); flushPush() }
+  else recheck();
+});
+
+/* ================= cloud sync (Supabase REST, no build step, no login) =================
+   localStorage stays the source of truth. The cloud is a copy under one private key. */
+const SUPABASE_URL='https://yldpazejxahvvhernprq.supabase.co';
+const SUPABASE_KEY='sb_publishable_QPCUCWiCX0NmgL-oJYwW_g_9Oa_Y-5Y';
+const SYNC_TABLE='planner';
+const SKEY_LS='agora_dayplanner_synckey';     /* the key this device uses */
+const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this device last agreed with */
+const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
+/* settings that describe what this screen is looking at. Never taken from another device. */
+const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay','showDone'];
+const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,pushT:null,checked:0};
+
+function lsGet(k){ try{ return localStorage.getItem(k) }catch(e){ return null } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v) }catch(e){} }
+function lsDel(k){ try{ localStorage.removeItem(k) }catch(e){} }
+const at=v=>{ const n=Date.parse(v); return isFinite(n)?n:0 };
+const clock=v=>{ const d=new Date(v);
+  return isNaN(d.getTime())?'':d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) };
+
+function newSyncKey(){
+  let out='';
+  try{
+    const a=new Uint32Array(14); (window.crypto||window.msCrypto).getRandomValues(a);
+    for(let i=0;i<a.length;i++) out+=a[i].toString(36);
+  }catch(e){
+    for(let i=0;i<12;i++) out+=Math.random().toString(36).slice(2);
+  }
+  return 'hs-'+out.slice(0,48);
+}
+
+/* ---------- status ---------- */
+function syncSet(st,note){ sync.state=st; sync.note=note||''; paintSync() }
+function syncLabel(){
+  switch(sync.state){
+    case 'off': return 'Not syncing. This device keeps your tasks locally.';
+    case 'busy': return 'Talking to the cloud…';
+    case 'synced': return 'Synced'+(sync.note?', '+sync.note:'')+'.';
+    case 'offline': return 'Offline. Everything is safe on this device and goes up when you are back.';
+    case 'error': return 'Error. '+(sync.note||'The cloud refused that request.');
+    case 'conflict': return 'That key already holds a planner and this device has its own. '+
+      'Choose Pull to take the cloud copy, or Push to overwrite it. Nothing changes until you pick.';
+    default: return 'Connected. Not pushed yet.';
+  }
+}
+function paintSync(){
+  const n=$('#syncStatus'); if(!n) return;
+  n.className='syncstat '+sync.state;
+  n.innerHTML='<i class="sdot"></i><span>'+esc(syncLabel())+'</span>';
+}
+
+/* ---------- network ---------- */
+function syncHeaders(extra){
+  return Object.assign({
+    'apikey':SUPABASE_KEY,
+    'Authorization':'Bearer '+SUPABASE_KEY,
+    'Content-Type':'application/json'
+  },extra||{});
+}
+async function cloudGet(k){
+  if(typeof fetch!=='function') throw new Error('This browser cannot reach the cloud.');
+  const url=SUPABASE_URL+'/rest/v1/'+SYNC_TABLE+'?select=data,updated_at&limit=1&sync_key=eq.'+encodeURIComponent(k);
+  const res=await fetch(url,{headers:syncHeaders({'Accept':'application/json'}),cache:'no-store'});
+  if(!res.ok) throw new Error('HTTP '+res.status+' '+(await res.text().catch(()=>'')).slice(0,120));
+  const rows=await res.json();
+  return (Array.isArray(rows)&&rows.length)?rows[0]:null;
+}
+async function cloudPut(k,data,when){
+  if(typeof fetch!=='function') throw new Error('This browser cannot reach the cloud.');
+  const res=await fetch(SUPABASE_URL+'/rest/v1/'+SYNC_TABLE,{
+    method:'POST',
+    headers:syncHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),
+    body:JSON.stringify([{sync_key:k,data:data,updated_at:when}])
+  });
+  if(!res.ok) throw new Error('HTTP '+res.status+' '+(await res.text().catch(()=>'')).slice(0,120));
+  return true;
+}
+function netFail(e,manual){
+  const m=String((e&&e.message)||e);
+  const off=(navigator&&navigator.onLine===false)||
+    /failed to fetch|networkerror|load failed|network request failed|cannot reach/i.test(m);
+  syncSet(off?'offline':'error',off?'':m.slice(0,160));
+  if(manual) toast(off?'No connection right now. Nothing was lost.':'Cloud said: '+m.slice(0,80));
+  return off;
+}
+
+/* ---------- push ---------- */
+function pushSoon(){
+  if(!sync.key) return;
+  sync.pending=true;
+  clearTimeout(sync.pushT);
+  sync.pushT=setTimeout(flushPush,1800);
+}
+function flushPush(){
+  clearTimeout(sync.pushT);
+  if(sync.key&&sync.ready&&sync.pending&&sync.state!=='conflict') pushNow(false);
+}
+async function pushNow(manual){
+  if(!sync.key) return manual?(toast('Add a sync key first'),false):false;
+  clearTimeout(sync.pushT);
+  const when=new Date().toISOString();
+  syncSet('busy');
+  try{
+    await cloudPut(sync.key,state,when);
+    sync.pending=false; sync.ready=true;
+    lsSet(SSTAMP_LS,when);
+    syncSet('synced','sent at '+clock(when));
+    if(manual) toast('Pushed to the cloud');
+    return true;
+  }catch(e){ netFail(e,manual); return false }
+}
+
+/* ---------- pull ---------- */
+async function pullNow(manual){
+  if(!sync.key) return manual?(toast('Add a sync key first'),false):false;
+  syncSet('busy');
+  let row;
+  try{ row=await cloudGet(sync.key) }
+  catch(e){ netFail(e,manual); return false }
+  if(!row){
+    sync.ready=true;
+    syncSet('synced','nothing saved under this key yet');
+    if(manual) toast('Nothing is saved under that key yet');
+    return false;
+  }
+  return applyCloud(row,manual);
+}
+function emptyPlanner(s){
+  const days=s.days||{};
+  const noDays=Object.keys(days).every(d=>ZONES.every(z=>!((days[d]||{})[z]||[]).length));
+  return noDays&&!(s.carry||[]).length&&!(s.focus||[]).length&&
+    (s.floats||[]).every(f=>!(f.tasks||[]).length);
+}
+function swapState(next){
+  Object.keys(state).forEach(k=>{ delete state[k] });
+  Object.assign(state,next);
+}
+function applyCloud(row,announce){
+  const p=row&&row.data;
+  if(!p||typeof p!=='object'||(!p.days&&!p.floats)){
+    syncSet('error','the copy in the cloud could not be read');
+    if(announce) toast('The cloud copy could not be read, so nothing was changed');
+    return false;
+  }
+  const before=JSON.stringify(state);
+  lsSet(SBACK_LS,before);
+  const f=fresh(), keep=state.settings;
+  const next={...f,...p,settings:{...f.settings,...(p.settings||{})}};
+  VIEWSET.forEach(k=>{ next.settings[k]=keep[k] });
+  if(!Array.isArray(next.floats)||!next.floats.length) next.floats=f.floats;
+  if(!Array.isArray(next.carry)) next.carry=[];
+  if(!Array.isArray(next.focus)) next.focus=[];
+  if(!next.days||typeof next.days!=='object') next.days={};
+  if(!next.floats.some(x=>x.id===next.settings.activeFloat)) next.settings.activeFloat=next.floats[0].id;
+
+  swapState(next);
+  sync.applying=true; commit(); sync.applying=false;
+  sync.pending=false; sync.ready=true;
+  lsSet(SSTAMP_LS,row.updated_at);
+  syncSet('synced','pulled from '+clock(row.updated_at));
+  ui.sel=null; ui.adding=null; ui.renderKey='';
+  render();
+  if(announce) toast('Pulled from the cloud',()=>{
+    try{ swapState(JSON.parse(before)) }catch(e){}
+    lsSet(SSTAMP_LS,new Date().toISOString());
+  });
+  return true;
+}
+
+/* ---------- reconcile: newest updated_at wins, and nothing goes silently ---------- */
+async function reconcile(manual){
+  if(!sync.key) return;
+  syncSet('busy');
+  let row;
+  try{ row=await cloudGet(sync.key) }
+  catch(e){ netFail(e,manual); sync.ready=true; if(sync.pending) pushSoon(); return }
+  sync.checked=Date.now();
+  const mine=lsGet(SSTAMP_LS);
+  if(!row){ sync.ready=true; sync.pending=true; await pushNow(false); return }
+  if(!mine){
+    /* this device has never agreed with the cloud, so do not guess */
+    if(emptyPlanner(state)){ applyCloud(row,false); return }
+    sync.ready=true; syncSet('conflict');
+    const m=$('#syncModal'); if(m) m.innerHTML=syncBody();
+    toast('Sync: this device and the cloud both hold a planner. Open Sync to choose.');
+    return;
+  }
+  if(at(row.updated_at)>at(mine)){ applyCloud(row,false); toast('Updated from your other device'); return }
+  sync.ready=true;
+  if(at(mine)>at(row.updated_at)||sync.pending){ sync.pending=true; await pushNow(false); return }
+  syncSet('synced','up to date');
+}
+function recheck(){
+  if(!sync.key||!sync.ready||sync.state==='conflict') return;
+  if(Date.now()-sync.checked<20000) return;
+  reconcile(false);
+}
+
+/* ---------- connect / disconnect ---------- */
+async function connectKey(raw){
+  const k=String(raw||'').trim();
+  if(!k){ toast('Paste a key, or press Generate'); return }
+  sync.key=k; lsSet(SKEY_LS,k); lsDel(SSTAMP_LS);
+  sync.ready=false; sync.pending=false; sync.checked=0;
+  syncSet('busy');
+  let row;
+  try{ row=await cloudGet(k) }
+  catch(e){ sync.ready=true; netFail(e,true); refreshSyncModal(); return }
+  if(!row){
+    sync.ready=true; sync.pending=true;
+    await pushNow(false);
+    toast('Key saved. This device is now the cloud copy.');
+    refreshSyncModal(); return;
+  }
+  if(emptyPlanner(state)){ applyCloud(row,false); toast('Key saved. Your planner came down from the cloud.'); refreshSyncModal(); return }
+  sync.ready=true; syncSet('conflict');
+  toast('That key already holds a planner. Choose Pull or Push.');
+  refreshSyncModal();
+}
+function forgetKey(){
+  clearTimeout(sync.pushT);
+  sync.key=''; sync.pending=false; sync.ready=true; sync.checked=0;
+  lsDel(SKEY_LS); lsDel(SSTAMP_LS);
+  syncSet('off');
+  toast('Sync turned off here. Your tasks stay on this device.');
+  refreshSyncModal();
+}
+
+/* ---------- sync panel ---------- */
+function syncModal(){
+  $('#modalRoot').innerHTML='<div class="mback" data-action="mclose"><div class="modal" id="syncModal">'+
+    syncBody()+'</div></div>';
+}
+function refreshSyncModal(){ const m=$('#syncModal'); if(m) m.innerHTML=syncBody() }
+function syncBody(){
+  return '<h3>Sync across devices</h3>'+
+    '<p>One private key, no account and no login. Put the same key on every device and this planner follows you. '+
+    'Your tasks still live on this device first, so it keeps working with no connection.</p>'+
+    '<div class="syncstat '+sync.state+'" id="syncStatus"><i class="sdot"></i><span>'+esc(syncLabel())+'</span></div>'+
+    '<div class="syncrow">'+
+      '<input id="syncKeyIn" placeholder="Paste your sync key" spellcheck="false" autocomplete="off" '+
+      'autocapitalize="off" autocorrect="off" data-enter="synckey" value="'+esc(sync.key)+'">'+
+      '<button class="nbtn" data-action="sync-gen">Generate</button>'+
+    '</div>'+
+    '<div class="syncrow">'+
+      '<button class="nbtn solid" data-action="sync-connect">Use this key</button>'+
+      '<button class="nbtn" data-action="sync-copy">Copy key</button>'+
+      '<button class="nbtn" data-action="sync-pull">Pull from cloud</button>'+
+      '<button class="nbtn" data-action="sync-push">Push to cloud</button>'+
+    '</div>'+
+    '<p class="synchint"><b>Push</b> sends this device\'s planner up under your key. <b>Pull</b> brings the cloud copy '+
+    'down and replaces what is on this device, with an Undo in the toast if you did not mean it. '+
+    'On its own the app pushes changes a moment after you make them, and takes the cloud copy only when it is newer.</p>'+
+    '<p class="synchint">Anyone holding this key can read and change your planner, so treat it like a password. '+
+    'Export still works as a plain file backup.</p>'+
+    '<div class="mrow">'+
+      (sync.key?'<button data-action="sync-forget">Disconnect</button>':'')+
+      '<button class="pri" data-action="mclose" data-close="1">Done</button>'+
+    '</div>';
+}
+
+function syncBoot(){
+  sync.key=lsGet(SKEY_LS)||'';
+  if(!sync.key){ sync.ready=true; sync.state='off'; return }
+  sync.state='idle';
+  reconcile(false);
+}
+window.addEventListener('online',()=>{ if(sync.key&&sync.pending) flushPush(); recheck() });
 
 /* ================= data ops ================= */
 function day(d){
@@ -1130,6 +1416,29 @@ document.addEventListener('click',e=>{
       URL.revokeObjectURL(a.href); toast('Exported'); return;
     }
     case 'import': $('#fileIn').click(); return;
+
+    case 'sync': syncModal(); return;
+    case 'sync-gen':{
+      const i=$('#syncKeyIn'); if(!i) return;
+      i.value=newSyncKey(); i.focus(); if(i.select) i.select();
+      toast('New key made. Press "Use this key", then copy it to your other device.'); return;
+    }
+    case 'sync-connect':{ const i=$('#syncKeyIn'); connectKey(i?i.value:''); return }
+    case 'sync-copy':{
+      const i=$('#syncKeyIn'); if(!i||!i.value.trim()) return toast('There is no key to copy yet');
+      i.focus(); if(i.select) i.select();
+      const done=()=>toast('Key copied');
+      try{
+        if(navigator.clipboard&&navigator.clipboard.writeText)
+          navigator.clipboard.writeText(i.value.trim()).then(done,()=>toast('Select the key and copy it by hand'));
+        else if(document.execCommand&&document.execCommand('copy')) done();
+        else toast('Select the key and copy it by hand');
+      }catch(err){ toast('Select the key and copy it by hand') }
+      return;
+    }
+    case 'sync-push': pushNow(true); return;
+    case 'sync-pull': pullNow(true); return;
+    case 'sync-forget': forgetKey(); return;
   }
   save(); render();
 });
@@ -1177,6 +1486,7 @@ document.addEventListener('keydown',e=>{
       const b=document.querySelector('[data-action="cal-add"][data-day="'+d.day+'"]'); if(b)b.click(); return }
     if(d.enter==='focus'){ e.preventDefault();
       const b=document.querySelector('[data-action="focus-add"]'); if(b)b.click(); return }
+    if(d.enter==='synckey'){ e.preventDefault(); connectKey(el.value); return }
     if(['rename','subrename','floatrename','focusrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
   }
   if(e.key==='Escape'){
@@ -1274,7 +1584,9 @@ function helpModal(){
     '<p><b>Carry-over.</b> At midnight, unfinished tasks slide into the tray for a morning triage. '+
     'Nothing silently disappears.</p>'+
     '<p><b>Paste a whole list</b> into the top box and every line becomes its own task.</p>'+
-    '<p><b>Saving</b> is automatic. Export and Import move your data between devices.</p>'+
+    '<p><b>Saving</b> is automatic. Export and Import move your data between devices as a file.</p>'+
+    '<p><b>Sync</b> keeps two devices on the same planner without a login. Open it, generate a key, '+
+    'then paste that same key on your phone or laptop. Changes go up on their own and the newer copy wins.</p>'+
     '<div class="mrow"><button class="pri" data-action="mclose" data-close="1">Got it</button></div>'+
     '</div></div>';
 }
@@ -1298,7 +1610,9 @@ load();
 if(state.settings.lastRoll!==today()){ const n=rollover(); if(n) setTimeout(()=>toast(n+' carried over from before'),400); commit() }
 if(!state.settings.stripDay) state.settings.stripDay=today();
 render();
-window.A={state,render,rollover,findTask,move,tally,streak,save:commit};
+syncBoot();
+window.A={state,render,rollover,findTask,move,tally,streak,save:commit,
+  sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey};
 </script>
 </body>
 </html>
