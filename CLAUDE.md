@@ -29,7 +29,7 @@ From the project root:
   ```
   cd tests && npm install   # first time only, installs jsdom
   cd ..                     # run from the project root: test.js reads ./index.html
-  node tests/test.js        # expect: RESULT: 177 passed, 0 failed
+  node tests/test.js        # expect: RESULT: 190 passed, 0 failed
   ```
 - Optional visual/browser suite (needs Python + Playwright; skip if not set up):
   ```

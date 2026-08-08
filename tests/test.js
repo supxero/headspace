@@ -314,6 +314,52 @@ console.log('— menu reach on phones —');
     'desktop keeps them at the foot');
 }
 
+console.log('— board nav on a phone viewport —');
+{
+  /* a phone shows one day column driven by stripDay, so a control that moves only
+     boardOffset changes nothing on screen. Prev and Next used to do exactly that. */
+  const phone=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+    beforeParse(win){
+      Object.defineProperty(win,'innerWidth',{value:390,writable:true,configurable:true});
+      Object.defineProperty(win,'innerHeight',{value:844,writable:true,configurable:true});
+    }});
+  const pw=phone.window, pd=pw.document;
+  await wait(300);
+  const pq=s=>pd.querySelector(s);
+  const col=()=>{ const c=pq('#board .col'); return c?c.dataset.day:null };
+  const tap=s=>{ const e=pq(s); if(!e) throw new Error('missing '+s); e.click() };
+
+  ok(pd.querySelectorAll('#board .col').length===1,'a phone shows a single day column');
+  ok(!!pq('[data-action="nav"][data-d="7"]'),'Prev and Next are on screen at phone width');
+  ok(col()===T(),'it starts on today');
+
+  tap('[data-action="nav"][data-d="7"]'); await wait(40);
+  ok(col()===plus(7),'Next moves the visible day a week on, not just the hidden offset');
+  ok(pw.A.state.settings.boardOffset===7,'and the wide screen offset moves with it');
+  ok(pw.A.state.settings.stripDay===plus(7),'the two halves of the board window stay in step');
+
+  tap('[data-action="nav"][data-d="-7"]'); tap('[data-action="nav"][data-d="-7"]'); await wait(40);
+  ok(col()===plus(-7),'Prev goes back through today into last week');
+  ok(pw.A.state.settings.boardOffset===-7,'the offset tracks it backwards too');
+
+  tap('[data-action="nav-today"]'); await wait(40);
+  ok(col()===T()&&pw.A.state.settings.boardOffset===0,'Today still returns to today');
+  tap('[data-action="strip"][data-day="'+plus(2)+'"]'); await wait(40);
+  ok(col()===plus(2)&&pw.A.state.settings.boardOffset===2,'a strip day sets both halves as well');
+  const j=pq('#jumpDate'); j.value=plus(30);
+  j.dispatchEvent(new pw.Event('change',{bubbles:true})); await wait(40);
+  ok(col()===plus(30),'Jump to reaches a far date on a phone');
+  ok(pw.A.state.settings.boardOffset===30,'and leaves the wide screen offset pointing at the same day');
+
+  /* the nav must survive the trip through Free Floating and the calendar */
+  tap('[data-action="nav-today"]'); await wait(20);
+  tap('[data-action="floattoggle"]'); await wait(20);
+  tap('[data-action="floattoggle"]'); await wait(20);
+  tap('[data-action="nav"][data-d="7"]'); await wait(40);
+  ok(col()===plus(7),'Next still works after a detour through Free Floating');
+  pw.close();
+}
+
 console.log('— export and import still round-trip —');
 {
   S().days={}; S().carry=[]; S().focus=[];

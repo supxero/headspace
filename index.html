@@ -1234,6 +1234,20 @@ function windowDays(){
   for(let i=0;i<n;i++) out.push(plus(o+i));
   return out;
 }
+/* Which days the board shows is held in two places: boardOffset drives the seven column
+   layout, stripDay drives the single column one a phone gets. A control that moves only
+   one of them works on a laptop and does nothing on a phone, so everything that moves the
+   board window goes through these two and keeps the pair in step. */
+function shiftBoard(d){
+  const s=state.settings;
+  s.boardOffset+=d;
+  s.stripDay=plus(d,s.stripDay||today());
+}
+function showDay(date){
+  const s=state.settings;
+  s.boardOffset=dayDiff(today(),date);
+  s.stripDay=date;
+}
 function renderNav(){
   if(state.settings.view!=='board'){$('#boardnav').innerHTML='';$('#strip').innerHTML='';return}
   if(state.settings.floatMode){
@@ -1579,13 +1593,11 @@ document.addEventListener('click',e=>{
     case 'tofloat': return;
     case 'goto-day':{
       s.view='board'; s.floatMode=false;
-      if(window.innerWidth<900) s.stripDay=el.dataset.day;
-      else s.boardOffset=dayDiff(today(),el.dataset.day);
-      break;
+      showDay(el.dataset.day); break;
     }
-    case 'nav': s.boardOffset+=(+el.dataset.d); break;
-    case 'nav-today': s.boardOffset=0; s.stripDay=today(); break;
-    case 'strip': s.stripDay=el.dataset.day; break;
+    case 'nav': shiftBoard(+el.dataset.d); break;
+    case 'nav-today': showDay(today()); break;
+    case 'strip': showDay(el.dataset.day); break;
 
     case 'carry-all':{
       const snap=state.carry.slice();
@@ -1711,9 +1723,7 @@ document.addEventListener('change',e=>{
     move(el.dataset.id,{kind:'day',date:el.value,zone:z}); save(); render();
   }
   if(el.id==='jumpDate'&&el.value){
-    if(window.innerWidth<900) state.settings.stripDay=el.value;
-    else state.settings.boardOffset=dayDiff(today(),el.value);
-    save(); render();
+    showDay(el.value); save(); render();
   }
   if(el.id==='fileIn'&&el.files[0]){
     const r=new FileReader();
