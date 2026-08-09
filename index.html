@@ -155,18 +155,30 @@ select option{background:var(--pearl);color:var(--txt)}
 
 /* carry tray */
 #tray:not(:empty){margin-bottom:12px}
-.tray{border:1px solid rgba(86,124,141,.42);border-left:3px solid var(--teal);border-radius:var(--r);
-  padding:11px 13px;background:linear-gradient(160deg,rgba(143,182,216,.30),rgba(207,227,241,.6));
-  animation:drop .3s ease;box-shadow:var(--shadow)}
+/* The brightest surface on the board, so it reads as the one panel asking to be dealt
+   with first: a pearl sheen over the same cloud blue the day columns use, a pearl rim
+   catching the light, a teal ring and a soft ocean glow just outside it, and more
+   elevation than a column, with a 2px lift so it sits forward of the canvas. */
+.tray{border:1px solid rgba(245,244,239,.8);border-radius:var(--r);padding:11px 13px;
+  background:linear-gradient(168deg,rgba(245,244,239,.92),rgba(245,244,239,.24) 62%),var(--cloud);
+  transform:translateY(-2px);
+  box-shadow:inset 0 1px 0 rgba(245,244,239,.95),
+    0 0 0 1px rgba(86,124,141,.30),
+    0 0 18px rgba(143,182,216,.55),
+    0 3px 8px rgba(36,58,94,.14),
+    0 14px 34px rgba(36,58,94,.22);
+  animation:traydrop .34s ease}
+@keyframes traydrop{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(-2px)}}
 @keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .trayhead{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px}
 .trayhead b{font-family:var(--fd);font-size:13.5px;color:var(--navy);display:flex;align-items:center;gap:7px}
 .trayhead b::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none}
 .trayhead .why{font-size:11.5px;color:var(--mut)}
 .trayhead .acts{margin-left:auto;display:flex;gap:6px}
-.tbtn{font-size:11.5px;padding:5px 10px;border-radius:8px;border:1px solid var(--line2);color:var(--navy);background:var(--cloud);transition:.15s}
-.tbtn:hover{background:var(--panel)}
-.trayitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid rgba(36,58,94,.10);font-size:13px}
+/* tray only: powder keeps the controls readable now the panel behind them is brighter */
+.tbtn{font-size:11.5px;padding:5px 10px;border-radius:8px;border:1px solid var(--line2);color:var(--navy);background:var(--panel);transition:.15s}
+.tbtn:hover{background:var(--panel2)}
+.trayitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid rgba(36,58,94,.13);font-size:13px}
 .trayitem .from{font-size:10.5px;color:var(--mut);background:rgba(36,58,94,.08);padding:1px 7px;border-radius:99px;white-space:nowrap}
 .trayitem .t{flex:1;min-width:0;word-break:break-word}
 
