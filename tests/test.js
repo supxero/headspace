@@ -512,6 +512,97 @@ const subNames=(s,pid)=>{ const g=A.flatten(s).sub;
   ok(names(m).join()==='made today,saved last year','old cloud data merges in without loss');
 }
 
+console.log('— carry-over across a new day and a sync —');
+{
+  const carry=(s,t)=>{ s.carry.push(t); return s };
+  const inCarry=s=>Object.keys(A.flatten(s).task)
+    .filter(id=>A.flatten(s).task[id].loc.kind==='carry').map(id=>A.flatten(s).task[id].title).sort();
+  const onDay=s=>Object.keys(A.flatten(s).task)
+    .filter(id=>A.flatten(s).task[id].loc.kind==='day').map(id=>A.flatten(s).task[id].title).sort();
+  const midnight=new Date(T()+'T00:00:00').getTime();
+
+  { /* a carried task reaches a device that has never seen it, exactly once */
+    const rolled=carry(dev(),tk('c1','left over from yesterday',midnight,{from:'Prio 0 · Fri'}));
+    const other=dev();
+    const m=A.mergeStates(other,rolled);
+    ok(inCarry(m).join()==='left over from yesterday','a carried task survives the merge');
+    ok(Object.keys(A.flatten(m).task).length===1,'and arrives exactly once');
+    ok(A.flatten(m).task.c1.from==='Prio 0 · Fri','it keeps the label saying where it came from');
+  }
+  { /* both devices rolled the same task over: still one task, still in the tray */
+    const a=carry(dev(),tk('c1','left over',midnight,{from:'Prio 0 · Fri'}));
+    const b=carry(dev(),tk('c1','left over',midnight,{from:'Prio 0 · Fri'}));
+    const m=A.mergeStates(a,b);
+    ok(Object.keys(A.flatten(m).task).length===1,'two devices rolling the same task make one, not two');
+    ok(inCarry(m).length===1,'and it is in the tray once');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'both devices agree on the rolled result');
+  }
+  { /* the important one: a device opening late must not undo a triage */
+    const triaged=put(dev(),tk('c1','left over',midnight+7200000));   /* moved to Today at 02:00 */
+    const stale=carry(dev(),tk('c1','left over',midnight,{from:'Prio 0 · Fri'}));
+    const m=A.mergeStates(triaged,stale);
+    ok(inCarry(m).length===0,'a task already triaged does not reappear in the tray');
+    ok(onDay(m).join()==='left over','it stays where it was triaged to');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(stale,triaged)),'both devices reach that same answer');
+  }
+  { /* dropped from the tray stays dropped */
+    const dropped=dev(); dropped.tomb={c1:midnight+3600000};
+    const stale=carry(dev(),tk('c1','left over',midnight));
+    ok(Object.keys(A.flatten(A.mergeStates(dropped,stale)).task).length===0,
+      'a carried task dropped on one device does not return from another');
+  }
+  { /* lastRoll belongs to the device, not the cloud */
+    const mine=dev(); mine.settings.lastRoll=plus(-1);
+    const theirs=dev(); theirs.settings.lastRoll=T();
+    ok(A.mergeStates(mine,theirs).settings.lastRoll===plus(-1),
+      'a merge does not tell this device it has already carried its days over');
+  }
+}
+
+console.log('— the day turning while the app stays open —');
+{
+  /* A phone keeps this app running for days. Simulate the clock crossing midnight
+     under a live window: yesterday's unfinished task, and a stale lastRoll. */
+  const live=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true});
+  const lw=live.window, ld=live.document||live.window.document;
+  await wait(300);
+  const LS=()=>lw.A.state;
+  const items=()=>ld.querySelectorAll('.trayitem').length;
+  LS().days={}; LS().carry=[]; LS().settings.lastRoll=T();
+  lw.A.render(); await wait(20);
+  ok(items()===0,'nothing in the tray while the day has not turned');
+
+  LS().days[plus(-1)]={must:[{id:'nite1',title:'unfinished when the day turned',done:false,subtasks:[],up:1000},
+    {id:'nite2',title:'finished before midnight',done:true,subtasks:[],up:1000}],should:[],extra:[]};
+  lw.A.save(); await wait(30);              /* saved before midnight, as it would have been */
+  LS().settings.lastRoll=plus(-1);          /* now the clock crosses midnight */
+  lw.A.render(); await wait(20);
+  ok(items()===0,'a plain re-render does not carry anything over on its own');
+
+  ld.dispatchEvent(new lw.Event('visibilitychange')); await wait(120);
+  ok(items()===1,'coming back to the app after midnight fills the tray without a reload');
+  ok(LS().carry.length===1&&LS().carry[0].id==='nite1','the unfinished task is the one carried');
+  ok(LS().settings.lastRoll===T(),'the day is marked as carried over');
+  ok((LS().days[plus(-1)].must||[]).some(t=>t.id==='nite2'),'the finished one stays on its day as history');
+  ok(/Carry-over/.test(ld.querySelector('#tray').textContent),'the tray panel is on screen');
+
+  const rolledUp=LS().carry[0].up;
+  ok(rolledUp===new Date(T()+'T00:00:00').getTime(),
+    'the move is dated midnight, so a device opening later cannot out-stamp a triage');
+
+  ld.dispatchEvent(new lw.Event('visibilitychange')); await wait(120);
+  ok(LS().carry.length===1,'checking again the same day does not carry it a second time');
+
+  /* every triage control is present and labelled */
+  const labels=[...ld.querySelectorAll('.trayitem .tbtn')].map(b=>b.textContent.trim());
+  ok(labels.length===3,'each carried task offers three triage buttons');
+  ok(labels.every(Boolean),'none of the triage buttons is blank');
+  ok(labels[0]==='Today'&&labels[1]==='Free Floating','they name where the task would go');
+  const bulk=[...ld.querySelectorAll('[data-action="carry-all"]')].map(b=>b.textContent.trim());
+  ok(bulk.join()==='All → Today,All → Free Floating','both bulk actions are offered');
+  lw.close();
+}
+
 console.log('— sync merge: end to end across two windows —');
 {
   const cloud={row:null};

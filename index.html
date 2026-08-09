@@ -155,10 +155,13 @@ select option{background:var(--pearl);color:var(--txt)}
 
 /* carry tray */
 #tray:not(:empty){margin-bottom:12px}
-.tray{border:1px solid rgba(95,134,166,.5);border-radius:var(--r);padding:11px 13px;background:linear-gradient(160deg,rgba(143,182,216,.30),rgba(207,227,241,.6));animation:drop .3s ease;box-shadow:var(--shadow)}
+.tray{border:1px solid rgba(86,124,141,.42);border-left:3px solid var(--teal);border-radius:var(--r);
+  padding:11px 13px;background:linear-gradient(160deg,rgba(143,182,216,.30),rgba(207,227,241,.6));
+  animation:drop .3s ease;box-shadow:var(--shadow)}
 @keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .trayhead{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px}
-.trayhead b{font-family:var(--fd);font-size:13.5px;color:var(--navy)}
+.trayhead b{font-family:var(--fd);font-size:13.5px;color:var(--navy);display:flex;align-items:center;gap:7px}
+.trayhead b::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none}
 .trayhead .why{font-size:11.5px;color:var(--mut)}
 .trayhead .acts{margin-left:auto;display:flex;gap:6px}
 .tbtn{font-size:11.5px;padding:5px 10px;border-radius:8px;border:1px solid var(--line2);color:var(--navy);background:var(--cloud);transition:.15s}
@@ -387,6 +390,13 @@ select option{background:var(--pearl);color:var(--txt)}
   .mrow button{min-height:44px}
   .abtn{min-height:34px;padding:6px 11px}
   .tbtn{min-height:36px}
+  /* carry tray: the task reads on its own line so the triage buttons stay tappable */
+  .trayhead .acts{margin-left:0;width:100%}
+  .trayhead .acts .tbtn{flex:1}
+  .trayitem{flex-wrap:wrap;gap:6px;padding:8px 0}
+  .trayitem .t{flex:1 1 100%;order:-1}
+  .trayitem .tbtn{flex:1}
+  .trayitem .tbtn:last-child{flex:none;min-width:46px}
   .box{width:20px;height:20px;border-radius:7px}
   .sbox{width:17px;height:17px}
   .task{padding:10px 11px}
@@ -522,7 +532,10 @@ let sigMap={};
 function snapSigs(){ const m={}; eachItem(state,(k,o,meta)=>{m[o.id]=sigOf(k,o,meta)}); sigMap=m }
 /* called on every commit: whatever changed since the last one gets a fresh stamp,
    and whatever disappeared gets a tombstone. Covers every edit path, drag and Undo alike. */
-function stampChanges(){
+/* `when` stamps this batch at a given moment instead of now. Rollover uses it to date
+   its moves to midnight, so a device that wakes up late cannot out-stamp a triage
+   another device already made. */
+function stampChanges(when){
   const t=Date.now(), next={}, seen={};
   if(!state.tomb||typeof state.tomb!=='object') state.tomb={};
   eachItem(state,(k,o,meta)=>{
@@ -530,7 +543,7 @@ function stampChanges(){
     if(state.tomb[o.id]!=null){ delete state.tomb[o.id]; o.up=t; return }  /* brought back by Undo */
     const had=sigMap[o.id];
     if(had===undefined){ if(!(+o.up>0)) o.up=t }
-    else if(had!==sig) o.up=t;
+    else if(had!==sig) o.up=when?Math.max(upOf(o),when):t;
   });
   Object.keys(sigMap).forEach(id=>{ if(!seen[id]) state.tomb[id]=t });
   Object.keys(state.tomb).forEach(id=>{ if(t-state.tomb[id]>TOMB_KEEP) delete state.tomb[id] });
@@ -597,11 +610,12 @@ function mergeStates(mine,theirs){
 function rebuild(keep,tomb,mine,theirs){
   const f=fresh(), out=f;
   out.tomb=tomb;
-  /* settings stay this device's own. lastRoll is the one exception: it marks work
-     already done to the tasks themselves, so the later marker holds for both. */
+  /* Settings stay this device's own, lastRoll included. It records that THIS device has
+     already carried its past days over, so taking another device's marker would tell a
+     device it had rolled when it had not, and its own unfinished tasks would never reach
+     the tray. Rolling on both is harmless: a task already in carry is no longer on a past
+     day, and both devices date the move to the same midnight, so they agree. */
   out.settings={...f.settings,...((mine&&mine.settings)||{})};
-  const rolls=[(mine&&mine.settings||{}).lastRoll,(theirs&&theirs.settings||{}).lastRoll].filter(Boolean).sort();
-  if(rolls.length) out.settings.lastRoll=rolls[rolls.length-1];
 
   const byOrd=(a,b)=>(a.ord-b.ord)||(a.id<b.id?-1:a.id>b.id?1:0);
   const floats=Object.keys(keep.float).map(id=>keep.float[id]).sort(byOrd)
@@ -656,8 +670,8 @@ function save(){
   clearTimeout(saveT);
   saveT=setTimeout(commit,400);
 }
-function commit(){
-  stampChanges();
+function commit(when){
+  stampChanges(when);
   try{
     localStorage.setItem(KEY,JSON.stringify(state));
     $('#save').textContent='saved'; $('#save').classList.remove('warn');
@@ -671,8 +685,10 @@ function commit(){
 window.addEventListener('beforeunload',()=>{clearTimeout(saveT);commit()});
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){ clearTimeout(saveT); commit(); flushPush() }
-  else recheck();
+  else{ rollIfNewDay(); recheck() }
 });
+/* and while it simply sits open across midnight */
+setInterval(()=>{ if(!document.hidden) rollIfNewDay() },60000);
 
 /* ================= cloud sync (Supabase REST, no build step, no login) =================
    localStorage stays the source of truth. The cloud is a copy under one private key. */
@@ -683,7 +699,8 @@ const SKEY_LS='agora_dayplanner_synckey';     /* the key this device uses */
 const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this device last agreed with */
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
-const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay','showDone'];
+const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay',
+  'showDone','lastRoll'];
 const POLL_MS=25000;                          /* look for another device's changes this often */
 const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
 const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
@@ -1069,6 +1086,26 @@ function rollover(){
   state.settings.lastRoll=t;
   return moved;
 }
+/* The day can turn while the app is still open, and a phone keeps this app running for
+   days at a time, so checking only at launch meant the tray never appeared for anyone
+   who does not close it. Checked at launch, whenever the app comes back to the front,
+   and on a slow timer, so it fires with or without cloud sync.
+   Moves are dated to midnight of the new day rather than the moment the check runs, so a
+   device that opens late cannot out-stamp a triage another device already made. */
+function rollIfNewDay(opts){
+  opts=opts||{};
+  if(!state||state.settings.lastRoll===today()) return 0;
+  if(saveT){ clearTimeout(saveT); saveT=null; commit() }   /* pending edits keep their own moment */
+  const midnight=new Date(today()+'T00:00:00').getTime();
+  const n=rollover();
+  commit(midnight);
+  if(n&&!opts.quiet){
+    const say=()=>toast(n+' carried over from before');
+    opts.delay?setTimeout(say,400):say();
+  }
+  if(!opts.boot){ ui.renderKey=''; render() }
+  return n;
+}
 
 /* ================= undo ================= */
 let undoT=null;
@@ -1222,7 +1259,7 @@ function renderTray(){
       '<span class="from">'+esc(t.from||'earlier')+'</span>'+
       '<span class="t">'+esc(t.title)+'</span>'+
       '<button class="tbtn" data-action="carry-one" data-id="'+t.id+'" data-to="today">Today</button>'+
-      '<button class="tbtn" data-action="carry-one" data-id="'+t.id+'" data-to="float"></button>'+
+      '<button class="tbtn" data-action="carry-one" data-id="'+t.id+'" data-to="float">Free Floating</button>'+
       '<button class="tbtn" data-action="carry-drop" data-id="'+t.id+'">✕</button></div>').join('')+
     '</div>';
 }
@@ -1888,7 +1925,7 @@ if('serviceWorker' in navigator){
 
 /* ---------- boot ---------- */
 load();
-if(state.settings.lastRoll!==today()){ const n=rollover(); if(n) setTimeout(()=>toast(n+' carried over from before'),400); commit() }
+rollIfNewDay({delay:true,boot:true});
 if(!state.settings.stripDay) state.settings.stripDay=today();
 render();
 syncBoot();
