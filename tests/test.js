@@ -137,8 +137,74 @@ ok(S().floats.length===2,'tab deleted');
 ok(S().floats.some(f=>f.tasks.some(t=>t.id==='ft1')),'its tasks were moved, not lost');
 click('[data-action="undo"]'); await wait(30);
 ok(S().floats.length===3,'undo restores the tab');
+ok(S().floats.some(f=>f.id===fid&&f.tasks.some(t=>t.id==='ft1')),'with its tasks back inside it');
+ok(S().floats.filter(f=>f.tasks.some(t=>t.id==='ft1')).length===1,'and not left duplicated in the other tab');
 S().floats.pop(); A.render(); await wait(20);
 ok(qa('.col.backlog [data-action="float-del"]').length===2,'last-tab guard: delete only when more than one');
+
+/* the delete control has to be on screen, not merely present in the markup */
+{
+  const heads=qa('.col.backlog .colhead .d1');
+  ok(heads.length===2,'both tabs render a header');
+  const dels=heads.map(h=>h.querySelector('[data-action="float-del"]'));
+  ok(dels.every(Boolean),'every tab header carries a delete control');
+  ok(dels.every(b=>b.textContent.trim().length>0),'and each one has a visible label, not an empty button');
+  const ren=heads[0].querySelector('[data-action="float-rename"]');
+  ok(ren.className===dels[0].className,'delete is styled to match the rename beside it');
+  ok(!!dels[0].title&&!!dels[0].getAttribute('aria-label'),'and it says what it does');
+}
+
+/* an empty tab goes straight away, with Undo */
+{
+  click('[data-action="float-new"]'); await wait(40);
+  if(doc.activeElement&&doc.activeElement.blur) doc.activeElement.blur();
+  await wait(30);
+  const n=S().floats.length, empty=S().floats[n-1];
+  ok(empty.tasks.length===0,'the new tab starts empty');
+  click('[data-action="float-del"][data-fid="'+empty.id+'"]'); await wait(30);
+  ok(!q('.mback'),'an empty tab is not worth a confirmation');
+  ok(S().floats.length===n-1,'it goes immediately');
+  ok(/Tab deleted/.test(q('#toast').textContent),'the toast says what happened');
+  ok(!!q('[data-action="undo"]'),'and offers Undo');
+  click('[data-action="undo"]'); await wait(30);
+  ok(S().floats.length===n,'undo brings the tab back');
+  ok(S().floats.some(f=>f.id===empty.id),'the same tab, not a fresh one');
+  S().floats=S().floats.filter(f=>f.id!==empty.id);
+  S().settings.activeFloat=S().floats[0].id; A.save(); A.render(); await wait(25);
+}
+
+/* the last tab can never be deleted, so there is always somewhere to put things */
+{
+  const keep=S().floats.slice();
+  S().floats=[keep[0]]; S().settings.activeFloat=keep[0].id; A.render(); await wait(25);
+  ok(qa('.col.backlog').length===1,'down to one tab');
+  ok(qa('.col.backlog [data-action="float-del"]').length===0,'the last tab shows no delete control at all');
+  ok(qa('.col.backlog [data-action="float-rename"]').length===1,'it can still be renamed');
+  S().floats=keep; S().settings.activeFloat=keep[0].id; A.save(); A.render(); await wait(25);
+  ok(qa('.col.backlog [data-action="float-del"]').length===2,'the control returns once a second tab exists');
+}
+
+/* a tab deleted here must not come back from a device that still holds it */
+{
+  click('[data-action="float-new"]'); await wait(40);
+  if(doc.activeElement&&doc.activeElement.blur) doc.activeElement.blur();
+  await wait(30);
+  const gone=S().floats[S().floats.length-1];
+  gone.tasks.push({id:'tabsync1',title:'inside the doomed tab',done:false,subtasks:[]});
+  A.save(); await wait(30);
+  const otherDevice=JSON.parse(JSON.stringify(w.A.state));   /* still has the tab and its task */
+  click('[data-action="float-del"][data-fid="'+gone.id+'"]'); await wait(30);
+  click('[data-action="float-del-move"][data-fid="'+gone.id+'"]'); await wait(30);
+  A.save(); await wait(30);
+  ok(!S().floats.some(f=>f.id===gone.id),'the tab is gone on this device');
+  ok(!!S().tomb[gone.id],'the deletion is recorded so other devices learn of it');
+  const merged=A.mergeStates(w.A.state,otherDevice);
+  ok(!merged.floats.some(f=>f.id===gone.id),'and it does not reappear when the other device syncs');
+  ok(merged.floats.length===S().floats.length,'no stray tab comes back from the merge');
+  ok(A.stateSig(merged)===A.stateSig(A.mergeStates(otherDevice,w.A.state)),'both devices agree it is gone');
+  ok(Object.keys(A.flatten(merged).task).some(id=>id==='tabsync1'),'the task it held is kept, not deleted with it');
+  q('#toast').innerHTML='';
+}
 
 /* deleting a task inside a tab, the same way a day task is deleted */
 {
