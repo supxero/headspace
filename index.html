@@ -236,7 +236,11 @@ select option{background:var(--pearl);color:var(--txt)}
 .abtn.m{color:#2F4156;border-color:rgba(47,65,86,.4)}
 .abtn.s{color:#3F6488;border-color:rgba(95,134,166,.45)}
 .abtn.e{color:#3C6A8E;border-color:rgba(127,167,204,.5)}
-.abtn.del{color:var(--mut)}
+/* the one destructive control in the bar, on a day card and inside a Free Floating tab
+   alike, so it reads as deliberate instead of as another neutral button. Navy inversion,
+   the same idiom the day strip already uses. */
+.abtn.del{color:var(--navy);border-color:var(--line2)}
+.abtn.del:active{background:var(--navy);border-color:var(--navy);color:var(--on)}
 .acts select{font-size:11px;padding:3px 6px;border-radius:7px}
 .sbody{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
 .sub{display:flex;align-items:flex-start;gap:7px;font-size:12.5px;padding:2px 0}
@@ -370,6 +374,7 @@ select option{background:var(--pearl);color:var(--txt)}
 @media (hover:hover){
   .nbtn:hover,.tbtn:hover,.railfoot button:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(36,58,94,.18)}
   .abtn:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(36,58,94,.14)}
+  .abtn.del:hover{background:var(--navy);border-color:var(--navy);color:var(--on)}
   .navbtn:hover{transform:translateX(3px)}
   .navbtn.on:hover{transform:none}
   .zadd:hover{background:rgba(36,58,94,.07)}
@@ -401,6 +406,9 @@ select option{background:var(--pearl);color:var(--txt)}
   .fadd button{min-height:40px}
   .mrow button{min-height:44px}
   .abtn{min-height:34px;padding:6px 11px}
+  /* the action bar wraps rather than overflowing, so nothing in it may outgrow the card */
+  .acts{gap:5px}
+  .acts input[type=date],.acts select{max-width:100%}
   .tbtn{min-height:36px}
   /* carry tray: the task reads on its own line so the triage buttons stay tappable */
   .trayhead .acts{margin-left:0;width:100%}
@@ -1427,7 +1435,8 @@ function card(t,loc){
     if(loc.kind==='day'){
       ZONES.forEach(z=>{ if(z!==loc.zone)
         h+='<button class="abtn '+z[0]+'" data-action="zone" data-id="'+t.id+'" data-day="'+loc.date+'" data-zone="'+z+'">'+ZSHORT[z]+'</button>' });
-      h+='<button class="abtn" data-action="bump" data-id="'+t.id+'">→ Tmrw</button>';
+      h+='<button class="abtn" data-action="bump" data-id="'+t.id+'" data-d="-1">← Ystdy</button>'+
+         '<button class="abtn" data-action="bump" data-id="'+t.id+'" data-d="1">→ Tmrw</button>';
     }else{
       ZONES.forEach(z=>h+='<button class="abtn '+z[0]+'" data-action="zone" data-id="'+t.id+'" data-day="'+today()+'" data-zone="'+z+'">'+ZSHORT[z]+'</button>');
     }
@@ -1437,7 +1446,8 @@ function card(t,loc){
     h+='<button class="abtn" data-action="reorder" data-id="'+t.id+'" data-d="-1">↑</button>'+
        '<button class="abtn" data-action="reorder" data-id="'+t.id+'" data-d="1">↓</button>'+
        '<button class="abtn" data-action="rename" data-id="'+t.id+'">✎</button>'+
-       '<button class="abtn del" data-action="del" data-id="'+t.id+'">✕</button></div>';
+       '<button class="abtn del" data-action="del" data-id="'+t.id+'" '+
+         'title="Delete task" aria-label="Delete task">✕</button></div>';
 
     h+='<div class="sbody">'+
       t.subtasks.map(s=>'<div class="sub'+(s.done?' done':'')+'" draggable="true" data-sub="'+s.id+'" data-parent="'+t.id+'">'+
@@ -1591,7 +1601,8 @@ document.addEventListener('click',e=>{
     case 'zone': move(id,{kind:'day',date:el.dataset.day,zone:el.dataset.zone}); break;
     case 'bump':{
       const f=findTask(id); if(!f||f.from.kind!=='day') return;
-      move(id,{kind:'day',date:plus(1,f.from.date),zone:f.from.zone}); break;
+      const step=+el.dataset.d||1;                 /* -1 back a day, 1 forward */
+      move(id,{kind:'day',date:plus(step,f.from.date),zone:f.from.zone}); break;
     }
     case 'reorder':{
       const f=findTask(id); if(!f) return;

@@ -83,8 +83,25 @@ click('[data-action="zone"][data-id="'+tid+'"][data-zone="should"]'); await wait
 ok(S().days[T()].should.some(t=>t.id===tid),'S moves it to Should');
 ok(!S().days[T()].must.some(t=>t.id===tid),'and out of Must');
 await select(tid);
-click('[data-action="bump"][data-id="'+tid+'"]'); await wait(25);
+click('[data-action="bump"][data-id="'+tid+'"][data-d="1"]'); await wait(25);
 ok(S().days[plus(1)].should.some(t=>t.id===tid),'→ Tmrw bumps a day forward');
+await select(tid);
+click('[data-action="bump"][data-id="'+tid+'"][data-d="-1"]'); await wait(25);
+ok(S().days[T()].should.some(t=>t.id===tid),'← Ystdy moves it back a day');
+ok(!S().days[plus(1)].should.some(t=>t.id===tid),'and off the day it came from');
+{
+  await select(tid);
+  const pair=qa('.task.sel .acts [data-action="bump"]');
+  ok(pair.length===2,'a day card offers both directions');
+  ok(pair.map(b=>b.textContent.trim()).join()==='← Ystdy,→ Tmrw',
+    'back sits before forward, so the pair reads naturally');
+  ok(pair.every(b=>b.className==='abtn'),'both use the same action button styling');
+  /* one more step back reaches yesterday, which sits outside the board window */
+  click('[data-action="bump"][data-id="'+tid+'"][data-d="-1"]'); await wait(25);
+  ok(S().days[plus(-1)].should.some(t=>t.id===tid),'stepping back again reaches yesterday');
+  ok(!S().days[plus(-1)].must.some(t=>t.id===tid),'and it stays in the zone it was in');
+  A.move(tid,{kind:'day',date:T(),zone:'should'}); A.save(); A.render(); await wait(25);
+}
 const mustIds=S().days[T()].must.map(t=>t.id);
 await select(mustIds[1]);
 click('[data-action="reorder"][data-id="'+mustIds[1]+'"][data-d="-1"]'); await wait(20);
@@ -122,6 +139,34 @@ click('[data-action="undo"]'); await wait(30);
 ok(S().floats.length===3,'undo restores the tab');
 S().floats.pop(); A.render(); await wait(20);
 ok(qa('.col.backlog [data-action="float-del"]').length===2,'last-tab guard: delete only when more than one');
+
+/* deleting a task inside a tab, the same way a day task is deleted */
+{
+  const tabId=S().floats[0].id;
+  S().floats[0].tasks.push({id:'fdel1',title:'inbox task to remove',done:false,subtasks:[]},
+                           {id:'fdel2',title:'inbox task that stays',done:false,subtasks:[]});
+  A.render(); await wait(25);
+  await select('fdel1');
+  const bar=qa('.task.sel .acts [data-action]').map(n=>n.dataset.action);
+  ok(bar.indexOf('del')>-1,'a card in a tab offers the same delete button a day card has');
+  ok(!!q('.task.sel [data-action="del"]').title,'the delete button says what it does');
+  ok(q('.task.sel [data-action="del"]').className==='abtn del','it carries the destructive styling');
+  ok(!qa('.task.sel .acts [data-action="bump"]').length,'an undated card gets no day move buttons');
+
+  click('[data-action="del"][data-id="fdel1"]'); await wait(30);
+  ok(!S().floats[0].tasks.some(t=>t.id==='fdel1'),'the task is removed from the tab');
+  ok(S().floats[0].tasks.some(t=>t.id==='fdel2'),'the other task in the tab is untouched');
+  ok(!q('.mback'),'no confirmation modal, the same as deleting a day task');
+  ok(/Deleted/.test(q('#toast').textContent),'the toast names what went');
+  ok(!!q('[data-action="undo"]'),'and offers Undo');
+  click('[data-action="undo"]'); await wait(30);
+  ok(S().floats[0].tasks.some(t=>t.id==='fdel1'),'undo puts it back in the tab');
+  ok(S().floats[0].id===tabId&&S().floats.length===2,'undoing a task delete leaves the tabs alone');
+  ok(S().floats[0].tasks.map(t=>t.id).join().indexOf('fdel1')>-1,'and it is back among its neighbours');
+  /* tidy up so later tests see the tab as they expect */
+  S().floats[0].tasks=S().floats[0].tasks.filter(t=>t.id!=='fdel1'&&t.id!=='fdel2');
+  A.save(); A.render(); await wait(20);
+}
 click('[data-action="floattoggle"]'); await wait(30);
 ok(S().settings.floatMode===false,'float mode off');
 
