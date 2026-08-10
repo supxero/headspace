@@ -876,28 +876,129 @@ async function runProfile(browser, base, prof) {
        so there is nothing for the bin to keep, and that is true of tasks too */
     await A(() => window.A.save());
     await act({ css: '.noterow', text: 'Packing list' });
-    const selBody = await page.$eval('#noteBody', el => el.value);
+    const selBody = await page.$eval('#noteBody', el => el.textContent);
     check('notes: picking a row swaps the editor', selBody === 'socks and passport', selBody);
 
     /* the quiet meta line: orientation, never chrome */
     const meta = await A(() => (document.getElementById('noteMeta') || {}).textContent || '');
     check('notes: the meta line reads edited-today and a count', /Edited today/.test(meta) && /word/.test(meta), meta);
 
-    /* the measure: on wide layouts the page is a bounded, centred column */
+    /* the layout: the page sits directly beside the list, one continuous surface,
+       and the reading measure is the text column INSIDE the page */
     if (!narrow) {
       const m = await A(() => {
+        const l = document.querySelector('.notelist').getBoundingClientRect();
         const p = document.querySelector('.notepage').getBoundingClientRect();
-        const e = document.querySelector('.noteed').getBoundingClientRect();
-        return { w: Math.round(p.width), off: Math.round(Math.abs((p.left - e.left) - (e.right - p.right))) };
+        const t = document.querySelector('.notewrap').getBoundingClientRect();
+        return { gap: Math.round(p.left - l.right), tw: Math.round(t.width) };
       });
-      check('notes: the page keeps a bounded measure', m.w <= 660, 'w=' + m.w);
-      check('notes: and sits centred in its canvas', m.off <= 40, 'off=' + m.off);
+      check('notes: no dead gap between list and page', m.gap <= 30, 'gap=' + m.gap);
+      check('notes: the text column keeps a bounded measure', m.tw <= 660, 'w=' + m.tw);
     }
 
-    /* autogrow: a long body sizes the box to the text, no inner scrollbar ever */
+    /* ---- formatting, driven through the real editing engine ---- */
+    const selectWord = word => page.evaluate(wd => {
+      const ed = document.getElementById('noteBody');
+      const walker = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = walker.nextNode())) {
+        const i = n.data.indexOf(wd);
+        if (i > -1) {
+          const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + wd.length);
+          const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+          ed.focus(); return true;
+        }
+      }
+      return false;
+    }, word);
+    const noteBody = () => A(() =>
+      (window.A.state.notes.find(x => x.title === 'Packing list') || {}).body || '');
+
+    check('notes: word found to format', await selectWord('socks'));
+    await act({ css: '.ntb[data-cmd="bold"]' });
+    check('notes: bold wraps the selection', /<b>socks<\/b>/.test(await noteBody()), await noteBody());
+    check('notes: the body committed as the sanitized subset', /^<div/.test(await noteBody()));
+    await selectWord('passport');
+    await act({ css: '.ntb[data-cmd="italic"]' });
+    check('notes: italic', /<i>passport<\/i>/.test(await noteBody()), await noteBody());
+    await selectWord('and');
+    await act({ css: '.ntb[data-cmd="underline"]' });
+    check('notes: underline', /<u>and<\/u>/.test(await noteBody()));
+    await selectWord('socks');
+    await act({ css: '.ntb[data-cmd="strike"]' });
+    check('notes: strikethrough', /<s>/.test(await noteBody()), await noteBody());
+    /* the toolbar mirrors the caret */
+    await selectWord('passport');
+    await sleep(250);
+    const tstate = await A(() => (document.querySelector('.ntb[data-cmd="italic"]') || {}).className || '');
+    check('notes: the toolbar lights up under formatted text', /\bon\b/.test(tstate), tstate);
+    /* highlight: a palette colour, measured as painted */
+    await selectWord('passport');
+    await act({ css: '.ntb[data-cmd="hl-powder"]' });
+    check('notes: highlight stores its class', /class="hl-powder"/.test(await noteBody()), await noteBody());
+    const hlbg = await A(() => { const s = document.querySelector('#noteBody .hl-powder');
+      return s ? getComputedStyle(s).backgroundColor : 'missing'; });
+    check('notes: highlight paints palette powder', hlbg === 'rgb(207, 227, 241)', hlbg);
+    /* size: from the existing scale, measured as painted */
+    await selectWord('and');
+    await act({ css: '.ntb[data-cmd="size-l"]' });
+    const fz = await A(() => { const s = document.querySelector('#noteBody .fz-l');
+      return s ? getComputedStyle(s).fontSize : 'missing'; });
+    check('notes: large text is the 19px scale step', fz === '19px', fz);
+    /* lists: bullet, dash, numbered */
+    await A(() => { const ed = document.getElementById('noteBody');
+      ed.innerHTML = '<div>alpha</div><div>beta</div>';
+      ed.dispatchEvent(new Event('input', { bubbles: true })); });
+    check('notes: line found for lists', await selectWord('alpha'));
+    await act({ css: '.ntb[data-cmd="ul"]' });
+    check('notes: bulleted list', /<ul><li>/.test(await noteBody()), await noteBody());
+    check('notes: caret still in the list', await selectWord('alpha'));
+    await act({ css: '.ntb[data-cmd="dash"]' });
+    check('notes: the second bullet style', /<ul class="dash">/.test(await noteBody()), await noteBody());
+    const dashMark = await A(() => { const u = document.querySelector('#noteBody ul');
+      return u ? getComputedStyle(u).listStyleType : 'missing'; });
+    check('notes: dash bullets really draw a dash', /-/.test(dashMark), dashMark);
+    check('notes: word for numbered', await selectWord('alpha'));
+    await act({ css: '.ntb[data-cmd="ol"]' });
+    check('notes: numbered list', /<ol><li>|<ol>/.test(await noteBody()), await noteBody());
+    /* page appearance: state, paint, and legibility on all three */
+    for (const pg of ['ruled', 'dot', 'plain']) {
+      await page.select('#notePage', pg);
+      await sleep(200);
+      const st = await A(() => { const ed = document.getElementById('noteBody');
+        const cs = getComputedStyle(ed);
+        return { pg: (window.A.state.notes.find(x => x.title === 'Packing list') || {}).pg || 'plain',
+                 bg: cs.backgroundImage !== 'none', ink: cs.color }; });
+      check('notes: page ' + pg + ' lands in state', st.pg === pg, st.pg);
+      check('notes: page ' + pg + ' paints ' + (pg === 'plain' ? 'nothing' : 'a background'),
+        pg === 'plain' ? !st.bg : st.bg);
+      check('notes: ink stays navy on ' + pg, st.ink === 'rgb(20, 41, 63)', st.ink);
+    }
+    await audit('notes-rich');
+    /* a foreign render mid-formatting: the caret comes back to the same character */
+    const caret = await A(() => {
+      const ed = document.getElementById('noteBody'); ed.focus();
+      const walker = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+      let n, t = null;
+      while ((n = walker.nextNode())) if (n.data.indexOf('alpha') > -1) { t = n; break; }
+      if (!t) return { ok: false };
+      const r = document.createRange(); r.setStart(t, 2); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      window.A.render();
+      const s2 = getSelection();
+      if (!s2.rangeCount) return { ok: false, why: 'no range' };
+      const r2 = s2.getRangeAt(0);
+      return { ok: true, focus: document.activeElement && document.activeElement.id,
+               text: r2.startContainer.data || '', off: r2.startOffset };
+    });
+    check('notes: a foreign render keeps focus in the editor', caret.ok && caret.focus === 'noteBody', JSON.stringify(caret));
+    check('notes: and the caret returns to the same character',
+      caret.ok && /alpha/.test(caret.text) && caret.off === 2, JSON.stringify(caret));
+
+    /* a long body grows the page; the pane scrolls, never an inner box */
     const grow = await A(() => {
       const b = document.getElementById('noteBody');
-      b.value = Array.from({ length: 40 }, (_, i) => 'line ' + i + ' of the long note').join('\n');
+      b.innerHTML = Array.from({ length: 40 }, (_, i) => '<div>line ' + i + ' of the long note</div>').join('');
       b.dispatchEvent(new Event('input', { bubbles: true }));
       return b.scrollHeight - b.clientHeight;
     });
@@ -960,6 +1061,14 @@ async function runProfile(browser, base, prof) {
         b.scrollIntoView({ block: 'end' }); const r = b.getBoundingClientRect();
         return r.bottom > 0 && r.bottom <= window.innerHeight + 4; });
       check('notes: the end of the editor can be brought into view', reach);
+      /* the toolbar stays usable with the keyboard up: toggle bold at the caret,
+         type, and the weight lands */
+      await act({ css: '.ntb[data-cmd="bold"]' });
+      await page.keyboard.type('xy');
+      const kbBold = await A(() =>
+        (window.A.state.notes.find(x => x.title === 'Packing list') || {}).body || '');
+      check('notes: the toolbar works with the keyboard up', /<b>[^<]*xy/.test(kbBold),
+        kbBold.slice(-80));
       await audit('notes-keyboard');
       await page.setViewport({ width: prof.width, height: prof.height, hasTouch: true, isMobile: true });
       await sleep(300);

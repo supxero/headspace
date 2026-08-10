@@ -2016,7 +2016,8 @@ console.log('— Notes: a plain notepad as its own view —');
 
   /* the body rides the same debounced save as everything else; no save button exists */
   ok(!qa('#notes button').some(b=>/save/i.test(b.textContent)),'no save button anywhere in the view');
-  const bo=q('#noteBody'); bo.value='socks\npassport\nchargers';
+  const bo=q('#noteBody');
+  bo.innerHTML='<div>socks</div><div>passport</div><div>chargers</div>';
   bo.dispatchEvent(new w.Event('input',{bubbles:true})); await wait(10);
   ok(S().notes[0].body==='socks\npassport\nchargers','typing in the body lands in state');
   A.save(); await wait(20);
@@ -2032,10 +2033,11 @@ console.log('— Notes: a plain notepad as its own view —');
   ok(S().notes.length===2,'a second note');
   const nid2=S().notes[0].id;
   ok(nid2!==nid,'new notes land at the top of the list');
-  ok(q('#noteBody').value==='','the editor now shows the fresh note');
+  ok(q('#noteBody').textContent==='','the editor now shows the fresh note');
   click('.noterow[data-id="'+nid+'"]'); await wait(30);
   ok(S().settings.noteSel===nid,'clicking a row selects that note');
-  ok(q('#noteBody').value==='socks\npassport\nchargers','and the editor swaps to its text');
+  ok(q('#noteBody').innerHTML==='<div>socks</div><div>passport</div><div>chargers</div>',
+    'and the editor swaps to its text, one div per line');
 
   /* the long-lived editor adds no blur cost: nothing commits on blur and nothing
      re-renders under the tap, so the FIRST click out of the body lands */
@@ -2052,7 +2054,7 @@ console.log('— Notes: a plain notepad as its own view —');
   click('[data-action="undo"]'); await wait(30);
   ok(S().notes.length===2,'Undo puts it back');
   ok(S().settings.noteSel===nid2,'selected again');
-  const bo2=q('#noteBody'); bo2.value='do not lose me';
+  const bo2=q('#noteBody'); bo2.innerHTML='<div>do not lose me</div>';
   bo2.dispatchEvent(new w.Event('input',{bubbles:true})); await wait(10);
   A.save(); await wait(10);   /* commit the body, so the bin keeps what was last typed */
   click('[data-action="note-del"][data-id="'+nid2+'"]'); await wait(30); A.save(); await wait(10);
@@ -2131,12 +2133,14 @@ console.log('— Notes: the writing surface —');
   click('.navbtn[data-v="notes"]'); await wait(30);
   ok(!!q('.noteed .notepage'),'the editor is one page surface, not bare fields');
   ok(!!q('.notepage #noteTitle')&&!!q('.notepage #noteBody'),'title and body live on the page');
-  ok(q('#noteBody').style.height!=='','the body is sized to its content on render (autogrow), not a fixed box');
+  ok(q('#noteBody').getAttribute('contenteditable')==='true','the body is an editable page');
+  ok(!q('#notes textarea'),'no boxed textarea remains in the view');
+  ok(!!q('.notepage .notewrap'),'the reading measure is a column inside the page, not the page pushed away');
   const mt=q('#noteMeta').textContent;
   ok(/^Edited today/.test(mt),'the quiet meta line shows when the note was last edited');
   ok(/3 words/.test(mt),'and a word count');
   ok(!/sav/i.test(q('.notemeta').textContent),'the meta strip never talks about saving');
-  const bo=q('#noteBody'); bo.value='one two three four'; fire(bo,'input'); await wait(10);
+  const bo=q('#noteBody'); bo.innerHTML='<div>one two three four</div>'; fire(bo,'input'); await wait(10);
   ok(/4 words/.test(q('#noteMeta').textContent),'the count follows as you type, with no re-render');
   ok(/Edited today/.test(q('#noteMeta').textContent),'and the edit time reads today mid-typing');
   ok(q('#noteBody')===bo,'typing never rebuilds the editor');
@@ -2186,7 +2190,7 @@ console.log('— Notes: search, sort by last edit, preview fallback —');
 
   /* typing does not shuffle the list; the sort catches up on the next paint */
   click('.noterow[data-id="na"]'); await wait(25);
-  const b2=q('#noteBody'); b2.value='apples and pears, plus a lemon'; fire(b2,'input'); await wait(10);
+  const b2=q('#noteBody'); b2.innerHTML='<div>apples and pears, plus a lemon</div>'; fire(b2,'input'); await wait(10);
   ok(qa('.noterow')[0].dataset.id==='nc','the list holds still while you type');
   A.save(); A.render(); await wait(25);
   ok(qa('.noterow')[0].dataset.id==='na','and lifts the fresh edit to the top on the next paint');
@@ -2271,17 +2275,184 @@ console.log('— Notes: pin merge —');
   }
 }
 
+console.log('— Notes: rich text: storage, sanitizer, commands —');
+{
+  /* storage: a body with NO formatting stays the very same plain string the plain
+     era stored, so the merge, the sig and every fixture see identical bytes */
+  click('.noterow[data-id="na"]'); await wait(25);
+  const ed=q('#noteBody');
+  ed.innerHTML='<div>first line</div><div>second line</div>';
+  fire(ed,'input'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').body==='first line\nsecond line',
+    'an unformatted body is stored as the same plain string as before');
+
+  /* formatting flips the string to the sanitized subset, still one string on dn */
+  ed.innerHTML='<div>plain <b>bold</b> and <span class="hl-ocean">marked</span></div>';
+  fire(ed,'input'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').body===
+    '<div>plain <b>bold</b> and <span class="hl-ocean">marked</span></div>',
+    'formatted content stores as the sanctioned HTML subset');
+
+  /* the sanitizer is the whole contract: hostile input dies to its text */
+  ed.innerHTML='<div>ok</div><script>window.___pwn=1</'+'script>'+
+    '<p style="color:red" onclick="x()">para<img src="x"></p>'+
+    '<span style="background-color: rgb(207, 227, 241)">powder</span>';
+  fire(ed,'input'); await wait(10);
+  const sb=S().notes.find(n=>n.id==='na').body;
+  ok(sb==='<div>ok</div><div>para</div><div><span class="hl-powder">powder</span></div>',
+    'script, attributes and unknown tags die; palette styles map to classes ('+sb+')');
+  ok(!w.___pwn,'and nothing executed');
+
+  /* Chrome's engine styles the EXISTING inline element when one wraps the whole
+     selection; those styles re-express as sanctioned spans nested inside it */
+  ed.innerHTML='<div><i style="background-color: rgb(143, 182, 216)">sea</i> '+
+    '<u style="font-size: x-large">big</u> <font size="2">tiny</font></div>';
+  fire(ed,'input'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').body===
+    '<div><i><span class="hl-ocean">sea</span></i> <u><span class="fz-l">big</span></u> <span class="fz-s">tiny</span></div>',
+    'styles set on existing inline elements survive as nested spans ('+
+    S().notes.find(n=>n.id==='na').body+')');
+
+  /* command wiring: jsdom has no editing engine, so spy on execCommand */
+  const calls=[];
+  doc.execCommand=(c,ui2,v)=>{ calls.push(c+(v!=null&&v!==''?':'+v:'')); return true };
+  ['bold','italic','underline','strike','hl-powder','size-s','size-l','ul','ol']
+    .forEach(c=>click('.ntb[data-cmd="'+c+'"]'));
+  await wait(10);
+  ok(calls.includes('bold')&&calls.includes('italic')&&calls.includes('underline')&&
+     calls.includes('strikeThrough'),'the four weights route to their commands');
+  ok(calls.includes('hiliteColor:#CFE3F1'),'highlight routes with a palette colour, never a new one');
+  ok(calls.includes('fontSize:2')&&calls.includes('fontSize:5'),'both sizes route through the font scale');
+  ok(calls.includes('insertUnorderedList')&&calls.includes('insertOrderedList'),'lists route');
+  delete doc.execCommand;
+
+  /* the dash list converts in place: pure class work, no engine involved */
+  ed.innerHTML='<ul><li>one</li><li>two</li></ul>';
+  fire(ed,'input'); await wait(10);
+  const li=ed.querySelector('li').firstChild;
+  const r0=doc.createRange(); r0.setStart(li,1); r0.collapse(true);
+  const sl0=w.getSelection(); sl0.removeAllRanges(); sl0.addRange(r0);
+  click('.ntb[data-cmd="dash"]'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').body==='<ul class="dash"><li>one</li><li>two</li></ul>',
+    'dash converts an existing list in place');
+  click('.ntb[data-cmd="ul"]'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').body==='<ul><li>one</li><li>two</li></ul>',
+    'and the bullet button converts it back');
+
+  /* page appearance: state, live class, and the content axis */
+  const pgSel=q('#notePage');
+  pgSel.value='ruled'; fire(pgSel,'change'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').pg==='ruled','the page choice lands in state');
+  ok(q('#noteBody').classList.contains('pg-ruled'),'and paints the ruling live, no re-render');
+  A.save(); await wait(10);
+  const b4=A.flatten(S()).note.na;
+  pgSel.value='dot'; fire(pgSel,'change'); await wait(10); A.save(); await wait(10);
+  const f1=A.flatten(S()).note.na;
+  ok(f1.up>b4.up&&f1.dn===b4.dn&&f1.pos===b4.pos,
+    'a page flip stamps content only: the body axis never moves');
+  ok(q('#noteBody').classList.contains('pg-dot')&&!q('#noteBody').classList.contains('pg-ruled'),
+    'dotted replaces ruled');
+  pgSel.value='plain'; fire(pgSel,'change'); await wait(10);
+  ok(!('pg' in S().notes.find(n=>n.id==='na')),'blank removes the field entirely, exports stay clean');
+
+  /* search reaches through markup, previews and counts are markup blind */
+  ed.innerHTML='<div>find the <b>golden</b> thread</div>';
+  fire(ed,'input'); await wait(10); A.save(); await wait(10);
+  const se=q('#noteSearch'); se.value='golden thread'; fire(se,'input'); await wait(10);
+  const hits=qa('.noterow').map(r=>r.dataset.id);
+  ok(hits.length===1&&hits[0]==='na',
+    'search sees through formatting: a phrase crossing a tag boundary still matches');
+  se.value=''; fire(se,'input'); await wait(10);
+  ok(q('.noterow[data-id="na"] .nsub').textContent==='find the golden thread',
+    'the row preview strips the markup');
+  ok(/4 words/.test(q('#noteMeta').textContent),'the word count reads text, not tags');
+
+  /* migration: a legacy plain body with literal markup characters stays literal */
+  S().notes.push({id:'nl',title:'Legacy',body:'use <b> tags here',
+    up:Date.now()-60000,dn:Date.now()-60000,pos:Date.now()-60000});
+  A.save(); A.render(); await wait(20);
+  click('.noterow[data-id="nl"]'); await wait(20);
+  ok(q('#noteBody').textContent==='use <b> tags here',
+    'a legacy plain body renders its markup characters as text');
+  ok(!q('#noteBody').querySelector('b'),'never as formatting');
+  fire(q('#noteBody'),'input'); await wait(10);
+  ok(S().notes.find(n=>n.id==='nl').body==='use <b> tags here',
+    'and an edit round-trips it untouched');
+
+  /* export serialization: the body string is JSON-safe rich or plain */
+  ok(JSON.parse(JSON.stringify(S())).notes.find(n=>n.id==='na').body===
+    S().notes.find(n=>n.id==='na').body,'a formatted body survives the export path byte for byte');
+
+  /* the bin keeps formatting, and Restore brings it back whole */
+  click('.noterow[data-id="na"]'); await wait(20); A.save(); await wait(10);
+  click('[data-action="note-del"][data-id="na"]'); await wait(25);
+  q('#toast').innerHTML=''; A.save(); await wait(10);
+  ok(S().bin.na.body.body==='<div>find the <b>golden</b> thread</div>','the bin keeps the markup');
+  A.restoreBin('na'); await wait(25);
+  ok(S().notes.find(n=>n.id==='na').body==='<div>find the <b>golden</b> thread</div>',
+    'Restore brings the formatting back intact');
+  q('#toast').innerHTML='';
+}
+
+console.log('— Notes: page appearance merge —');
+{
+  const ndev=()=>{const s=dev(); s.notes=[]; return s};
+  const mkn=(id,title,body,up,x)=>Object.assign(
+    {id,title:title||'',body:body||'',up:up||100,dn:up||100,pos:up||100},x||{});
+  { /* a page flip composes with a body edit made elsewhere */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','original',200));
+    const a=clone(base); a.notes[0].pg='ruled'; a.notes[0].up=now;
+    const b=clone(base); b.notes[0].body='rewritten elsewhere'; b.notes[0].dn=now-50;
+    const m=A.mergeStates(a,b);
+    ok(m.notes[0].pg==='ruled'&&m.notes[0].body==='rewritten elsewhere',
+      'a page flip on one device composes with a body edit on the other');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'and both devices agree');
+  }
+  { /* the honest limit: page flip against a later title rename, later up takes both */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','original',200));
+    const a=clone(base); a.notes[0].title='Trip to Oslo'; a.notes[0].up=now;
+    const b=clone(base); b.notes[0].pg='dot'; b.notes[0].up=now-5;
+    const m=A.mergeStates(a,b);
+    ok(m.notes[0].title==='Trip to Oslo'&&!m.notes[0].pg,
+      'page and title share the content axis: the later edit takes the whole set');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'deterministically, both ways');
+  }
+  { /* a planner that predates the field merges clean */
+    const a=dev();
+    const b=ndev(); b.notes.push(mkn('n1','Keep','body',210,{pg:'ruled'}));
+    const m=A.mergeStates(a,b);
+    ok(m.notes.length===1&&m.notes[0].pg==='ruled','a pre-pg planner drops nothing');
+  }
+}
+
 console.log('— Notes: a foreign render never steals the caret —');
 {
   /* the exact case renderNotes restores by hand: a render arriving from elsewhere
-     (a sync adopt, the midnight check) while someone is typing */
+     (a sync adopt, the midnight check) while someone is typing. The caret is kept
+     as an absolute text offset, so it survives even inside formatted spans. */
   click('.noterow[data-id="na"]'); await wait(25);
-  const bo=q('#noteBody'); bo.focus(); bo.setSelectionRange(4,9);
+  const bo=q('#noteBody'); bo.focus();
+  const tn=bo.firstChild.firstChild;   /* <div>"find the "<b>… -> the leading text node */
+  { const r=doc.createRange(); r.setStart(tn,4); r.setEnd(tn,9);
+    const sl=w.getSelection(); sl.removeAllRanges(); sl.addRange(r); }
   A.render(); await wait(20);
   const bo2=q('#noteBody');
   ok(bo2!==bo,'the render really did rebuild the field');
   ok(doc.activeElement===bo2,'yet focus stays in the body');
-  ok(bo2.selectionStart===4&&bo2.selectionEnd===9,'with the caret exactly where it was');
+  { const r=w.getSelection().getRangeAt(0);
+    ok(r.startOffset===4&&r.endOffset===9&&bo2.contains(r.startContainer),
+      'with the selection exactly where it was'); }
+
+  /* and inside a formatted run: the offset walks through the <b> boundary */
+  const bt=bo2.querySelector('b').firstChild;   /* "golden" */
+  { const r=doc.createRange(); r.setStart(bt,3); r.collapse(true);
+    const sl=w.getSelection(); sl.removeAllRanges(); sl.addRange(r); }
+  A.render(); await wait(20);
+  { const r=w.getSelection().getRangeAt(0);
+    ok(doc.activeElement===q('#noteBody')&&r.startContainer.textContent==='golden'&&r.startOffset===3,
+      'a caret parked inside bold text returns to the same character'); }
   const ti=q('#noteTitle'); ti.focus(); ti.setSelectionRange(1,3);
   A.render(); await wait(20);
   ok(doc.activeElement===q('#noteTitle')&&q('#noteTitle').selectionStart===1
@@ -2372,9 +2543,10 @@ console.log('— touch targets: the coarse-pointer block —');
     'the rail foot outranks the 42px width-media rule on touch');
   ok(/\.binrow \.nbtn\{min-height:44px\}/.test(block),
     'bin rows outrank their 40px width-media rule on touch');
-  ok(/\.nact\{min-height:44px;min-width:44px\}/.test(block),
-    'the quiet note actions (Pin, Delete) grow to 44px on touch');
+  ok(/\.nact,\.ntb\{min-height:44px;min-width:44px\}/.test(block),
+    'the quiet note actions AND the toolbar buttons grow to 44px on touch');
   ok(/#noteSearch/.test(block),'the notes search box is in the 44px input list');
+  ok(/#notePage\{min-height:44px\}/.test(block),'the page select grows to 44px on touch');
 }
 
 console.log('— the docs match reality —');
