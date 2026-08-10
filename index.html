@@ -106,11 +106,21 @@ select option{background:var(--pearl);color:var(--txt)}
   .kh[data-action]:hover .chev,.hhead[data-action]:hover .chev{color:var(--navy)}
 }
 
-/* focus */
-.frow{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-top:1px solid var(--line)}
-.frow:first-of-type{border-top:none}
-.ftxt{flex:1;font-size:13px;line-height:1.35;min-width:0;word-break:break-word}
-.frow.done .ftxt{color:var(--mut2);text-decoration:line-through}
+/* focus (True north): a statement panel, not a task list. Its presence in the
+   rail comes only from levers the app already has: the pearl surface against the
+   rail's powder, the deeper input line colour on the same 1px border, a touch
+   more padding, and the display face for the statement itself. No new colour,
+   no gradient, no stripe, no icon; row hairlines and the tick are gone because
+   a statement is read, not processed. */
+#fpanel{background:var(--pearl);border-color:var(--line2);padding:15px 15px 14px}
+.frow{display:flex;align-items:flex-start;gap:8px;padding:8px 0}
+.ftxt{flex:1;min-width:0;word-break:break-word;font-family:var(--fd);
+  font-size:15.5px;font-weight:600;letter-spacing:-.01em;line-height:1.45;color:var(--navy)}
+.frow .mini{margin-top:3px}
+/* a set-aside statement mutes and shrinks back to body type; never struck through */
+.frow.done{padding:5px 0}
+.frow.done .ftxt{font-family:var(--fb);font-size:12.5px;font-weight:500;letter-spacing:0;color:var(--mut2)}
+.frow.done .mini{margin-top:0}
 .fdate{font-size:10.5px;color:var(--mut2);display:block;margin-top:1px}
 .mini{font-size:11px;color:var(--mut2);padding:2px 5px;border-radius:6px;transition:.14s}
 .mini:hover{color:var(--navy);background:rgba(36,58,94,.08)}
@@ -766,7 +776,7 @@ const arr=x=>Array.isArray(x)?x:[];
    someone else moved it to, and neither can undo a tick.
    `from` (the carry-over origin label) is positional: rollover writes it as part of the
    move, and triage clears it as part of moving the task out.
-   `doneAt` rides with `done`, since ticking a focus item is what writes it. */
+   `doneAt` rides with `done`, since setting a focus statement aside is what writes it. */
 /* A note has no tick, so its dn axis carries the body instead: a rename on one device
    and a body edit on another then compose instead of one discarding the other. Two
    devices editing the same BODY still resolve by later-dn-wins, whole body, loser
@@ -1740,7 +1750,7 @@ function restoreBin(id){
       if(f&&f.from.kind==='float'&&f.from.fid!==tab.id){ move(tid,{kind:'float',fid:tab.id}); back++ }
     });
     dest='Free Floating'+(back?', with '+back+(back===1?' task':' tasks')+' moved back into it':'');
-  }else if(e.k==='focus'){ state.focus.push(b); dest='Focus this week' }
+  }else if(e.k==='focus'){ state.focus.push(b); dest='True north' }
   else if(e.k==='habit'){ state.habits.list.push(b); dest='the Habits panel' }
   else if(e.k==='wtask'){ state.week.list.push(b); dest='the This week list' }
   else if(e.k==='note'){ state.notes.unshift(b); state.settings.noteSel=b.id; dest='Notes' }
@@ -1769,7 +1779,7 @@ function binWhere(e){
     const n=arr(e.body.tasks).length;
     return 'Free Floating'+(n?', holding '+n+(n===1?' task':' tasks'):'');
   }
-  if(e.k==='focus') return 'Focus this week';
+  if(e.k==='focus') return 'True north';
   if(e.k==='habit') return 'the Habits panel';
   if(e.k==='wtask') return 'the This week list';
   if(e.k==='note') return 'Notes';
@@ -1855,32 +1865,46 @@ function monthTally(){
 /* ================= render: rail ================= */
 /* An empty panel earns only its header bar: chevron, label, count. Clicking the header
    opens it (ui.peek) so something can be added; once it holds an item it renders
-   expanded as always and the peek flag is dropped, so emptying it collapses it again. */
+   expanded as always and the peek flag is dropped, so emptying it collapses it again.
+   True north bends this one way on purpose: holding a current statement it is pinned
+   open and the header offers no toggle and draws no chevron, since an affordance
+   that cannot act reads worse than none. Only the empty panel collapses. Nothing
+   about collapse is persisted for it, so a statement can never load hidden. */
 function renderFocus(){
-  const open=state.focus.filter(f=>!f.done), done=state.focus.filter(f=>f.done);
-  const isEmpty=!state.focus.length;
+  /* internal names (state.focus, focus-* actions, the bin kind) predate the True
+     north rename and must stay: renaming them would orphan saved data.
+     ARCHIVE, owner may reverse (option b was chosen): "set aside" replaces the
+     tick, reusing the same done/doneAt fields, so saved data and the dn-axis
+     merge carry over untouched. To reverse to (a) no-archive: drop the aside
+     branch of frow, the Set aside section below, and the focus-aside/focus-back/
+     focus-toggle-done cases; no data migration needed either way. */
+  const held=state.focus.filter(f=>!f.done), aside=state.focus.filter(f=>f.done);
+  const isEmpty=!held.length;      /* set-aside statements do not pin the panel open */
   if(!isEmpty) delete ui.peek.focus;
   const expanded=!isEmpty||!!ui.peek.focus;
   let h='<div class="kh'+(expanded?'':' solo')+'"'+
-    (isEmpty?' data-action="panel-toggle" data-panel="focus"':'')+'>'+CHEV(expanded)+
-    'Focus this week<span class="sp">'+open.length+' open</span></div>';
+    (isEmpty?' data-action="panel-toggle" data-panel="focus"':'')+'>'+
+    (isEmpty?CHEV(expanded):'')+
+    'True north'+(isEmpty?'<span class="sp">not set</span>':'')+'</div>';
   if(expanded){
-    h+=open.length?open.map(f=>frow(f)).join(''):'<div class="empty">Nothing set. What mindset do you want this week?</div>';
-    h+='<div class="fadd"><input id="fi" placeholder="This week I will…" data-enter="focus" autocomplete="off">'+
+    h+=held.length?held.map(f=>frow(f)).join(''):'<div class="empty">Nothing held yet. A mindset, a quote, a line worth keeping in view.</div>';
+    h+='<div class="fadd"><input id="fi" placeholder="A line to steer by…" data-enter="focus" autocomplete="off">'+
        '<button data-action="focus-add">Set</button></div>';
-    if(done.length){
-      h+='<div class="fdone" data-action="focus-toggle-done">'+(state.settings.showDone?'▾':'▸')+' Completed ('+done.length+')</div>';
-      if(state.settings.showDone) h+=done.map(f=>frow(f)).join('');
+    if(aside.length){
+      h+='<div class="fdone" data-action="focus-toggle-done">'+(state.settings.showDone?'▾':'▸')+' Set aside ('+aside.length+')</div>';
+      if(state.settings.showDone) h+=aside.map(f=>frow(f)).join('');
     }
   }
   $('#fpanel').innerHTML=h;
 }
 function frow(f){
   return '<div class="frow'+(f.done?' done':'')+'">'+
-    '<button class="box'+(f.done?' on':'')+'" data-action="focus-tick" data-id="'+f.id+'">✓</button>'+
     '<div class="ftxt"><span data-action="focus-rename" data-id="'+f.id+'">'+esc(f.title)+'</span>'+
     (f.done&&f.doneAt?'<span class="fdate">held until '+f.doneAt+'</span>':'')+'</div>'+
-    '<button class="mini" data-action="focus-del" data-id="'+f.id+'" title="Remove">✕</button></div>';
+    (f.done
+      ?'<button class="mini" data-action="focus-back" data-id="'+f.id+'" title="Bring back" aria-label="Bring back">⤴</button>'
+      :'<button class="mini" data-action="focus-aside" data-id="'+f.id+'" title="Set aside" aria-label="Set aside">⤵</button>')+
+    '<button class="mini" data-action="focus-del" data-id="'+f.id+'" title="Remove" aria-label="Remove">✕</button></div>';
 }
 
 function renderMetrics(){
@@ -2165,7 +2189,7 @@ function card(t,loc){
    is only tickable on a day the habit is scheduled for; unscheduled days render a
    muted dash, so a blank box always means missed, never "not planned". */
 const HDOW=['','Mo','Tu','We','Th','Fr','Sa'];
-/* On a desktop the panel lives in the rail under Focus; on a phone the rail folds
+/* On a desktop the panel lives in the rail under True north; on a phone the rail folds
    behind Menu and the 308px column cannot hold names beside six cells and their
    controls, so the panel stays the full-width band under the day columns. Same gate
    the rest of the layout uses (innerWidth<900), so the resize handler re-homes it. */
@@ -2207,7 +2231,7 @@ function renderHabits(){
     '<span class="hdow'+(d===tdow?' now':'')+'">'+HDOW[d]+'</span>').join('');
   let h;
   if(wide){
-    /* rail: a kard like Focus above it. Six cells do not fit beside a name in 254px,
+    /* rail: a kard like True north above it. Six cells do not fit beside a name in 254px,
        so each habit takes two lines: its name with its controls, then the week. */
     h='<div class="kard hcard"><div class="kh'+(expanded?'':' solo')+'" data-action="habit-toggle">'+
       CHEV(expanded)+'Habits<span class="sp">'+
@@ -2679,13 +2703,23 @@ document.addEventListener('click',e=>{
       const i=$('#fi'); if(!i.value.trim()) return;
       state.focus.push({id:uid(),title:i.value.trim(),done:false}); i.value=''; break;
     }
-    case 'focus-tick':{
+    /* set aside / bring back write the same done/doneAt the old tick wrote, so
+       the dn axis, the merge and every saved planner carry over unchanged */
+    case 'focus-aside':{
       const f=state.focus.find(x=>x.id===id);
-      f.done=!f.done; f.doneAt=f.done?today():null; break;
+      f.done=true; f.doneAt=today();
+      /* setting the last held statement aside empties the panel; peek it open so
+         the archive does not vanish mid-gesture. Not persisted, like every peek. */
+      if(!state.focus.some(x=>!x.done)) ui.peek.focus=true;
+      break;
+    }
+    case 'focus-back':{
+      const f=state.focus.find(x=>x.id===id);
+      f.done=false; f.doneAt=null; break;
     }
     case 'focus-del':{
       const i=state.focus.findIndex(x=>x.id===id), f=state.focus.splice(i,1)[0];
-      toast('Focus removed',()=>state.focus.splice(i,0,f)); break;
+      toast('Statement removed',()=>state.focus.splice(i,0,f)); break;
     }
     case 'focus-rename':{
       el.contentEditable=true; el.dataset.kind='focusrename'; el.dataset.id=id; el.focus(); return;
@@ -3154,7 +3188,8 @@ function helpModal(){
     'or open <b>Calendar</b> and tap the day. Anything dated outside the window shows in <b>Off-board</b> so nothing hides.</p>'+
     '<p><b>Calendar view.</b> Coloured dots show open tasks per day (purple Must, blue Should, green Extra). '+
     'Tap a date to see its list and add straight into it.</p>'+
-    '<p><b>Focus</b> holds the mindset you set for the week. Tick one and it drops into <b>Completed</b>, '+
+    '<p><b>True north</b> holds the mindset you set for the week: a statement, a quote, a line to steer by. '+
+    'It stays in view while you hold it. When the week moves on, set it aside and it keeps the date, '+
     'so you can look back at what you actually held yourself to.</p>'+
     '<p><b>Subtasks.</b> Open a task to add steps. ✎ renames, ⤴ pops one out as its own task, '+
     'and on a laptop you can drag subtasks between cards.</p>'+

@@ -134,4 +134,4 @@ There is a **Help** button in the menu that covers all of this, but in short:
 - **Free Floating** holds anything with no date yet, in tabs you name.
 - **Carry-over.** Unfinished tasks from past days land in a tray for a morning triage. Nothing disappears quietly.
 - **Tap a task** to reprioritise, bump it, pick a date, file it, or add subtasks. On a laptop you can drag cards instead.
-- **Focus** holds the mindset you set for the week.
+- **True north** holds the mindset you set for the week.

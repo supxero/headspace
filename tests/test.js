@@ -431,24 +431,81 @@ ok(S().carry.length===1,'undo puts them back in the tray');
 click('[data-action="carry-all"][data-to="float"]'); await wait(30);
 ok(S().floats.some(f=>f.tasks.some(t=>t.id==='oldx')),'All → Free Floating works too');
 
-console.log('— focus panel —');
+console.log('— True north panel —');
 /* the panel is empty here, so it sits as a header bar; open it through the header */
-ok(!q('#fi'),'an empty Focus panel hides its input behind the header');
+ok(!q('#fi'),'an empty True north panel hides its input behind the header');
+ok(/True north/.test(q('#fpanel').textContent),'the header carries the new name');
+ok(/not set/.test(q('#fpanel').textContent),'and reads not set, never a count of open items');
+ok(!/open/.test(q('#fpanel').textContent),'nothing in it says open');
 click('#fpanel .kh[data-action="panel-toggle"]'); await wait(20);
+ok(q('#fi').placeholder==='A line to steer by…','the placeholder invites a statement, not a task');
 q('#fi').value='ship the report without rushing';
 click('[data-action="focus-add"]'); await wait(20);
-ok(S().focus.length===1,'focus item added');
+ok(S().focus.length===1,'statement added');
 const foid=S().focus[0].id;
-click('[data-action="focus-tick"][data-id="'+foid+'"]'); await wait(20);
-ok(S().focus[0].done===true,'focus ticks');
-ok(S().focus[0].doneAt===T(),'and records the date it landed');
-ok(/Completed \(1\)/.test(q('#fpanel').textContent),'it drops into Completed');
+ok(!q('#fpanel .box'),'no tick box anywhere in the panel');
+ok(!q('#fpanel [data-action="focus-tick"]'),'and no tick action at all');
+ok(!!q('#fpanel .frow .ftxt span[data-action="focus-rename"]'),'the statement is there to read and rename');
+
+/* uncollapsible while it holds a statement: no toggle, no chevron, and no stale
+   flag can hide it, since nothing about its collapse is persisted */
+ok(!q('#fpanel .kh[data-action="panel-toggle"]'),'with content the header offers no toggle');
+ok(!q('#fpanel .chev'),'and draws no chevron it could not honour');
+ok(!/not set/.test(q('#fpanel').textContent),'the not set tag is gone while something is held');
+{
+  A.ui.peek.focus=true; A.render(); await wait(20);
+  ok(!!q('#fi')&&!!q('#fpanel .frow'),'a stale peek flag cannot change a held panel');
+  ok(A.ui.peek.focus===undefined,'and it is dropped on render');
+  A.ui.peek.focus=false; A.render(); await wait(20);
+  ok(!!q('#fpanel .frow'),'a false one cannot hide it either');
+  delete A.ui.peek.focus;
+}
+{ /* the on-load story: collapse state is derived from content alone, so a saved
+     planner with statements can never come back hidden */
+  A.save(); const saved=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+  ok(saved.focus.length===1,'the statement is in the saved planner');
+  ok(!('focusOpen' in saved.settings)&&!('peek' in saved.settings),
+    'no collapse flag for it exists anywhere in settings to migrate or mis-load');
+}
+
+/* set aside replaces the tick: same fields, no chore framing */
+click('[data-action="focus-aside"][data-id="'+foid+'"]'); await wait(20);
+ok(S().focus[0].done===true,'set aside marks it with the same done field');
+ok(S().focus[0].doneAt===T(),'and records the date it was held until');
+ok(/Set aside \(1\)/.test(q('#fpanel').textContent),'the archive reads Set aside, not Completed');
+ok(!/Completed/.test(q('#fpanel').textContent),'Completed is gone');
 click('[data-action="focus-toggle-done"]'); await wait(20);
-ok(S().settings.showDone===true,'Completed expands');
+ok(S().settings.showDone===true,'the archive expands on the same internal flag');
+ok(/held until/.test(q('#fpanel').textContent),'an archived statement shows the date it was held until');
+ok(!!q('[data-action="focus-back"][data-id="'+foid+'"]'),'and offers a way back');
+
+/* with its only statement set aside the panel is empty again: collapsible, not pinned */
+ok(!!q('#fpanel .kh[data-action="panel-toggle"]')&&!!q('#fpanel .chev'),
+  'an archived-only panel collapses like an empty one, the statement is no longer in view anyway');
+click('[data-action="focus-back"][data-id="'+foid+'"]'); await wait(20);
+ok(S().focus[0].done===false&&S().focus[0].doneAt===null,'bring back clears both fields');
+ok(!q('#fpanel .chev'),'and the panel pins open again');
+
+/* legacy migration: a planner ticked under the old name renders under Set aside,
+   title and date intact, nothing lost and nothing resurfacing as current */
+S().focus.push({id:'oldfoc',title:'breathe first','done':true,doneAt:'2026-08-03'});
+A.save(); A.render(); await wait(20);
+ok(/Set aside \(1\)/.test(q('#fpanel').textContent),'an old ticked item files under Set aside');
+ok(/breathe first/.test(q('#fpanel').textContent)&&/held until 2026-08-03/.test(q('#fpanel').textContent),
+  'with its words and its date intact');
+ok(qa('#fpanel .frow:not(.done)').length===1,'and it does not resurface as the current statement');
+S().focus=S().focus.filter(f=>f.id!=='oldfoc'); A.save(); A.render(); await wait(20);
+
 click('[data-action="focus-del"][data-id="'+foid+'"]'); await wait(20);
-ok(S().focus.length===0,'focus removed');
+ok(S().focus.length===0,'statement removed');
+ok(/Statement removed/.test(q('#toast').textContent),'the toast speaks the new language');
 click('[data-action="undo"]'); await wait(30);
 ok(S().focus.length===1,'undo restores it');
+
+/* the rename reached every user-facing string: the raw page source no longer
+   says Focus this week anywhere, while the state key must stay focus */
+ok(!html.includes('Focus this week'),'no string in the page still says Focus this week');
+ok(html.includes('state.focus'),'while the internal state key stays focus, saved data intact');
 
 console.log('— calendar —');
 click('[data-action="view"][data-v="calendar"]'); await wait(40);
@@ -1577,7 +1634,7 @@ console.log('— habits: a commitment band under the board —');
     x.setHours(12,0,0,0);return x.toISOString().slice(0,10)})();
   ok(!!q('#habitsRail .hcard'),'at desktop width the panel sits in the rail with zero clicks');
   ok(q('#habitsRail').previousElementSibling&&q('#habitsRail').previousElementSibling.id==='fpanel',
-    'directly under Focus this week');
+    'directly under True north');
   ok(q('#habits').innerHTML==='','and the board-bottom host stays empty there');
   /* no habits yet, so the panel is a header bar; the header opens it */
   ok(!q('#habitsRail .haddrow input'),'an empty Habits panel hides its add field behind the header');
@@ -1903,15 +1960,15 @@ console.log('— empty panels collapse to a header bar —');
   ok(!q('#fpanel .chev.open')&&!q('#weekRail .chev.open'),'the empty panels point it right');
   ok(!!q('#habitsRail .chev.open'),'the habits panel, holding habits, points it down');
 
-  /* header only: no input, no empty-state text, a count that still reads */
+  /* header only: no input, no empty-state text, a tag that still reads */
   ok(!q('#fi'),'empty focus: no input behind the header');
-  ok(!/Nothing set/.test(q('#fpanel').textContent),'and no empty-state text either');
-  ok(/0 open/.test(q('#fpanel').textContent),'the count says 0 open without expanding');
-  ok(!q('#weekAdd')&&/0 open/.test(q('#weekRail').textContent),'the weekly bar reads the same way');
+  ok(!/Nothing held/.test(q('#fpanel').textContent),'and no empty-state text either');
+  ok(/not set/.test(q('#fpanel').textContent),'the True north bar reads not set, never a count');
+  ok(!q('#weekAdd')&&/0 open/.test(q('#weekRail').textContent),'the weekly bar keeps its 0 open count');
 
   click('#fpanel .kh[data-action="panel-toggle"]'); await wait(20);
   ok(!!q('#fi')&&!!q('#fpanel .chev.open'),'the header opens it: chevron down, input ready');
-  ok(/Nothing set/.test(q('#fpanel').textContent),'the empty-state text shows once opened');
+  ok(/Nothing held/.test(q('#fpanel').textContent),'the empty-state text shows once opened');
   click('#fpanel .kh[data-action="panel-toggle"]'); await wait(20);
   ok(!q('#fi'),'clicking the header again closes it');
 

@@ -790,6 +790,71 @@ async function runProfile(browser, base, prof) {
     check('collapse: adding through the opened panel works', n === 1, 'list=' + n);
   });
 
+  /* ---- I2b. True north: a statement panel, pinned open while it holds one ---- */
+  await flow('true-north', async () => {
+    if (narrow) await act('#railtoggle');
+    const p0 = await A(() => {
+      const p = document.querySelector('#fpanel');
+      return { name: /True north/.test(p.textContent), box: !!p.querySelector('.box'),
+        tick: !!p.querySelector('[data-action="focus-tick"]'), chev: !!p.querySelector('.chev'),
+        toggle: !!p.querySelector('.kh[data-action="panel-toggle"]'),
+        open: /open/.test(p.querySelector('.kh').textContent),
+        bg: getComputedStyle(p).backgroundColor };
+    });
+    check('north: header carries the new name', p0.name === true, JSON.stringify(p0));
+    check('north: no tick box and no tick action', !p0.box && !p0.tick);
+    check('north: holding a statement, no chevron and no toggle', !p0.chev && !p0.toggle);
+    check('north: the header never says open', !p0.open);
+    check('north: the panel sits on palette pearl', p0.bg === 'rgb(245, 244, 239)', p0.bg);
+    await audit('true-north', { root: '#fpanel' });
+
+    /* rename in place */
+    await act({ css: '#fpanel .ftxt span[data-action="focus-rename"]' });
+    await page.keyboard.down('Control'); await page.keyboard.press('a'); await page.keyboard.up('Control');
+    await page.keyboard.type('Steady, not rushed');
+    await page.keyboard.press('Enter');
+    await sleep(300);
+    const t1 = await A(() => window.A.state.focus[0].title);
+    check('north: rename in place commits', t1 === 'Steady, not rushed', t1);
+
+    /* add a second statement through the always-present add row */
+    await typeInto('#fi', 'Less but better');
+    await act({ css: '[data-action="focus-add"]' });
+    let n = await A(() => window.A.state.focus.length);
+    check('north: second statement added', n === 2, 'focus=' + n);
+
+    /* set one aside: date recorded, the archive appears without chore framing */
+    const sid = await A(() => window.A.state.focus[1].id);
+    await act({ css: '[data-action="focus-aside"][data-id="' + sid + '"]' });
+    const aside = await A(() => ({ done: window.A.state.focus[1].done, at: window.A.state.focus[1].doneAt,
+      label: /Set aside \(1\)/.test(document.querySelector('#fpanel').textContent),
+      completed: /Completed/.test(document.querySelector('#fpanel').textContent) }));
+    check('north: set aside stamps the held-until date', aside.done === true && !!aside.at, JSON.stringify(aside));
+    check('north: the archive reads Set aside, never Completed', aside.label && !aside.completed);
+    await act({ css: '[data-action="focus-toggle-done"]' });
+    await audit('true-north-aside', { root: '#fpanel' });
+    await act({ css: '[data-action="focus-back"][data-id="' + sid + '"]' });
+    const back = await A(() => window.A.state.focus[1].done === false && window.A.state.focus[1].doneAt === null);
+    check('north: bring back clears the aside marks', back === true);
+
+    /* delete with the same 5s undo as everything else */
+    await act({ css: '[data-action="focus-del"][data-id="' + sid + '"]' });
+    n = await A(() => window.A.state.focus.length);
+    check('north: delete removes the statement', n === 1, 'focus=' + n);
+    const toastSays = await A(() => document.querySelector('#toast').textContent);
+    check('north: the toast speaks statement language', /Statement removed/.test(toastSays),
+      toastSays.trim().slice(0, 40));
+    await act({ css: '#toast [data-action="undo"]' });
+    n = await A(() => window.A.state.focus.length);
+    check('north: undo brings it back', n === 2, 'focus=' + n);
+    await A(() => { window.A.state.focus = window.A.state.focus.slice(0, 1); window.A.save(); window.A.render(); });
+
+    /* the rename reached everything rendered */
+    const stale = await A(() => document.documentElement.outerHTML.includes('Focus this week'));
+    check('north: nothing rendered says Focus this week', stale === false);
+    if (narrow) await act('#railtoggle');
+  });
+
   /* ---- I3. notes: the plain notepad view ---- */
   await flow('notes', async () => {
     await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
