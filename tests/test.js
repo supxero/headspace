@@ -624,6 +624,115 @@ const subNames=(s,pid)=>{ const g=A.flatten(s).sub;
   ok(names(m).join()==='made today,saved last year','old cloud data merges in without loss');
 }
 
+console.log('— a new top level state key survives a merge —');
+{
+  /* the shape is the contract: adding a key to fresh() must be a deliberate decision */
+  const canon=Object.keys(A.fresh()).sort().join(),
+        declared=A.MERGED_KEYS.slice().sort().join();
+  ok(canon===declared,
+    'MERGED_KEYS matches fresh(): a new key in the canonical shape forces a choice in rebuild');
+
+  /* a key nobody taught the merge about must still come through, both directions */
+  const a=put(dev(),tk('u1','mine',200)); a.futureThing={hello:'world',n:1};
+  const b=put(dev(),tk('u2','theirs',210));
+  const ab=A.mergeStates(a,b), ba=A.mergeStates(b,a);
+  ok(!!ab.futureThing&&ab.futureThing.hello==='world','an unknown top level key survives the merge');
+  ok(!!ba.futureThing&&ba.futureThing.hello==='world','and survives it from the other side too');
+  ok(A.stateSig(ab)===A.stateSig(ba),'both devices agree on the merged planner');
+  ok(names(ab).join()==='mine,theirs','the tasks merge as usual alongside it');
+
+  /* both sides hold it and differ: still deterministic, still never dropped */
+  const c=dev(); c.futureThing={v:1};
+  const d=dev(); d.futureThing={v:2};
+  const cd=A.mergeStates(c,d), dc=A.mergeStates(d,c);
+  ok(!!cd.futureThing&&!!dc.futureThing,'a key present on both sides is never dropped');
+  ok(JSON.stringify(cd.futureThing)===JSON.stringify(dc.futureThing),
+    'and both devices resolve it the same way');
+
+  /* the unknown key must reach stateSig, or a change to it would never be pushed */
+  const e=dev(), f2=dev(); e.futureThing={v:9};
+  ok(A.stateSig(e)!==A.stateSig(f2),'a change to an unknown key shows up in the sync signature');
+}
+
+console.log('— reorder and content edits stop competing —');
+{
+  const now=Date.now();
+  const zone=(s,list)=>{ s.days[D]={must:list,should:[],extra:[]}; return s };
+  const byTitle=(s,z)=>((s.days[D]||{})[z||'must']||[]).map(t=>t.title);
+  const one=(s,id)=>A.flatten(s).task[id];
+
+  { /* device A reorders the zone, device B renames a task in it.
+       Positions are stamped explicitly on both sides, as stampChanges and the load time
+       migration always do: a rename bumps `up` and leaves `pos` where it was. */
+    const a=zone(dev(),[tk('r2','second',100),tk('r1','first',100)]);   /* A swapped them */
+    a.days[D].must[0].pos=now; a.days[D].must[1].pos=now;
+    const b=zone(dev(),[tk('r1','first renamed on B',now+1000),tk('r2','second',100)]);
+    b.days[D].must[0].pos=100; b.days[D].must[1].pos=100;               /* B moved nothing */
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(one(m,'r1').title==='first renamed on B','a reorder no longer discards the rename made elsewhere');
+    ok(byTitle(m).join()==='second,first renamed on B','and the reorder itself survives');
+    ok(A.stateSig(m)===A.stateSig(m2),'both devices reach the same order and the same text');
+  }
+  { /* the mirror: B renames first, A reorders after */
+    const b=zone(dev(),[tk('r1','renamed early',now),tk('r2','second',100)]);
+    b.days[D].must[0].pos=100; b.days[D].must[1].pos=100;
+    const a=zone(dev(),[tk('r2','second',100),tk('r1','first',100)]);
+    a.days[D].must[0].pos=now+1000; a.days[D].must[1].pos=now+1000;
+    const m=A.mergeStates(a,b);
+    ok(one(m,'r1').title==='renamed early','a later reorder still does not undo an earlier rename');
+    ok(byTitle(m).join()==='second,renamed early','while the later order is the one that holds');
+  }
+  { /* a tick is content too, so it survives a reorder made afterwards */
+    const b=zone(dev(),[tk('r1','a task',now,{done:true}),tk('r2','second',100)]);
+    b.days[D].must[0].pos=100; b.days[D].must[1].pos=100;
+    const a=zone(dev(),[tk('r2','second',100),tk('r1','a task',100)]);
+    a.days[D].must[0].pos=now+1000; a.days[D].must[1].pos=now+1000;
+    const m=A.mergeStates(a,b);
+    ok(one(m,'r1').done===true,'a tick is not undone by someone else reordering the zone');
+    ok(byTitle(m).join()==='second,a task','and the reorder still holds');
+  }
+  { /* a move between zones concurrent with an edit to the same task: both must land */
+    const a=dev();
+    a.days[D]={must:[],should:[tk('r1','a task',100)],extra:[]};
+    a.days[D].should[0].pos=now+1000;                      /* A moved it to Prio 1 */
+    const b=zone(dev(),[tk('r1','edited while it moved',now)]);   /* B renamed it in place */
+    b.days[D].must[0].pos=100;
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(byTitle(m,'should').join()==='edited while it moved',
+      'a move and a content edit both survive: the task is in the new zone with the new text');
+    ok(!byTitle(m,'must').length,'and it is not left behind in the old zone');
+    ok(A.stateSig(m)===A.stateSig(m2),'both devices agree');
+  }
+  { /* adding a step no longer restamps the parent, so it cannot outrank a rename */
+    const a=zone(dev(),[tk('r1','parent',100,{subtasks:[{id:'s9',title:'new step',done:false,up:now+2000}]})]);
+    const b=zone(dev(),[tk('r1','parent renamed',now)]);
+    const m=A.mergeStates(a,b);
+    ok(one(m,'r1').title==='parent renamed','adding a step does not outrank a rename elsewhere');
+    ok(A.flatten(m).sub.s9,'and the step still arrives');
+  }
+  { /* a reorder must not resurrect something deleted elsewhere */
+    const a=dev(); a.tomb={r1:now};
+    const b=zone(dev(),[tk('r1','moved after it was deleted',100)]);
+    b.days[D].must[0].pos=now+5000;                        /* only its position changed */
+    ok(!one(A.mergeStates(a,b),'r1'),'reordering a task somebody deleted does not bring it back');
+  }
+  { /* carry-over Exception A: rolled here, renamed on the other device after midnight */
+    const midnight=new Date(T()+'T00:00:00').getTime();
+    const rolled=dev();
+    rolled.carry=[tk('r1','a task',midnight,{from:'Prio 0 · Sun'})];
+    rolled.carry[0].pos=midnight;
+    const other=dev();
+    other.days[plus(-1)]={must:[tk('r1','renamed after midnight',midnight+36e5)],should:[],extra:[]};
+    other.days[plus(-1)].must[0].pos=1000;
+    const m=A.mergeStates(rolled,other), m2=A.mergeStates(other,rolled);
+    ok(m.carry.length===1,'a task in the tray stays in the tray when the other device renames it');
+    ok(m.carry[0].title==='renamed after midnight','and picks up that rename');
+    ok(m.carry[0].from==='Prio 0 · Sun','keeping the label saying where it came from');
+    ok(!((m.days[plus(-1)]||{}).must||[]).length,'it is not dragged back onto its old day');
+    ok(A.stateSig(m)===A.stateSig(m2),'both devices agree it belongs in the tray');
+  }
+}
+
 console.log('— carry-over across a new day and a sync —');
 {
   const carry=(s,t)=>{ s.carry.push(t); return s };
@@ -706,6 +815,36 @@ console.log('— the day turning while the app stays open —');
   ok(LS().carry.length===1,'checking again the same day does not carry it a second time');
 
   /* every triage control is present and labelled */
+  /* The gate: rollover runs once a day. Anything landing on a past day after it has run
+     waits until tomorrow. Driven through rollIfNewDay, not rollover, so the gate itself
+     is what is under test and cannot be changed silently. */
+  LS().days[plus(-2)]={must:[{id:'late1',title:'back-dated after the sweep',done:false,subtasks:[],up:1000}],
+    should:[],extra:[]};
+  lw.A.save(); await wait(30);
+  ok(LS().settings.lastRoll===T(),'today has already been carried over');
+  ok(lw.A.rollIfNewDay()===0,'rollIfNewDay is a no-op once the day is marked');
+  ok(LS().carry.length===1,'so a task back-dated afterwards does not reach the tray');
+  ok((LS().days[plus(-2)].must||[]).some(t=>t.id==='late1'),'it stays on the day it was given');
+  ld.dispatchEvent(new lw.Event('visibilitychange')); await wait(120);
+  ok(LS().carry.length===1,'returning to the app does not sweep it up either');
+
+  /* but the board nav says so, and offers to bring them in */
+  lw.A.render(); await wait(25);
+  ok(lw.A.pastOpenCount()===1,'the app knows one task is waiting on a past day');
+  const pull=ld.querySelector('[data-action="roll-now"]');
+  ok(!!pull,'the board nav shows an affordance rather than staying silent');
+  ok(/1 waiting on past days/.test(pull.textContent),'naming how many are waiting');
+  ok(pull.className==='nbtn','styled as a board nav button like Prev and Next');
+  pull.click(); await wait(40);
+  ok(LS().carry.length===2,'pressing it brings them into the tray on demand');
+  ok(LS().carry.some(t=>t.id==='late1'),'including the back-dated one');
+  ok(!ld.querySelector('[data-action="roll-now"]'),'and the affordance goes once nothing is waiting');
+  ok(lw.A.pastOpenCount()===0,'nothing left on past days');
+  /* put the tray back to one item for the checks that follow */
+  const late=LS().carry.findIndex(t=>t.id==='late1');
+  LS().carry.splice(late,1); delete LS().days[plus(-2)];
+  lw.A.save(); lw.A.render(); await wait(25);
+
   const labels=[...ld.querySelectorAll('.trayitem .tbtn')].map(b=>b.textContent.trim());
   ok(labels.length===3,'each carried task offers three triage buttons');
   ok(labels.every(Boolean),'none of the triage buttons is blank');

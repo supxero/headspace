@@ -541,8 +541,20 @@ const TOMB_KEEP=45*864e5;     /* a deletion is remembered for 45 days, then forg
 const BIN_KEEP=30*864e5;      /* a binned item waits 30 days; shorter than TOMB_KEEP, so
                                  the record of the deletion always outlives the body */
 const upOf=o=>{ const n=+(o&&o.up); return isFinite(n)&&n>0?n:LEGACY_UP };
+/* `pos` is the second stamp: when this item last MOVED, as opposed to `up`, when its
+   content last changed. Anything written before the split has no pos, so it falls back
+   to up and behaves exactly as it did. */
+const posOf=o=>{ const n=+(o&&o.pos); return isFinite(n)&&n>0?n:upOf(o) };
 const locKey=l=>l.kind==='day'?('day:'+l.date+':'+l.zone):l.kind==='float'?('float:'+l.fid):'carry';
 const arr=x=>Array.isArray(x)?x:[];
+/* Which fields belong to which stamp. Content and position are merged independently, so
+   reordering a zone can no longer outrank someone else's rename, and a rename can no
+   longer drag a task back out of the place someone else moved it to.
+   `from` (the carry-over origin label) is positional: rollover writes it as part of the
+   move, and triage clears it as part of moving the task out. */
+const CONTENTF={float:['name'],task:['title','done'],sub:['title','done'],
+  focus:['title','done','doneAt']};
+const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord']};
 
 /* one walk over every mergeable item in a state, in a stable order */
 function eachItem(s,fn){
@@ -558,14 +570,23 @@ function eachTask(t,loc,ord,fn){
   fn('task',t,{ord,loc});
   arr(t.subtasks).forEach((s,i)=>{ if(s&&s.id) fn('sub',s,{ord:i,pid:t.id}) });
 }
-/* everything about an item that belongs to the item itself, including where it sits */
-function sigOf(kind,o,m){
-  if(kind==='float') return 'F|'+m.ord+'|'+(o.name||'');
-  if(kind==='focus') return 'X|'+m.ord+'|'+(o.title||'')+'|'+(o.done?1:0)+'|'+(o.doneAt||'');
-  if(kind==='sub')   return 'S|'+m.pid+'|'+m.ord+'|'+(o.title||'')+'|'+(o.done?1:0);
-  return 'T|'+locKey(m.loc)+'|'+m.ord+'|'+(o.title||'')+'|'+(o.done?1:0)+'|'+(o.from||'')+
-    '|'+arr(o.subtasks).map(x=>x&&x.id).join(',');
+/* what the item says, ignoring where it sits. Subtasks are not listed here: they carry
+   their own records and their own parent id, so adding a step no longer restamps its
+   parent and cannot outrank an edit made to that parent elsewhere. */
+function sigC(kind,o){
+  if(kind==='float') return 'F|'+(o.name||'');
+  if(kind==='focus') return 'X|'+(o.title||'')+'|'+(o.done?1:0)+'|'+(o.doneAt||'');
+  if(kind==='sub')   return 'S|'+(o.title||'')+'|'+(o.done?1:0);
+  return 'T|'+(o.title||'')+'|'+(o.done?1:0);
 }
+/* where the item sits, ignoring what it says */
+function sigP(kind,o,m){
+  if(kind==='float') return 'f|'+m.ord;
+  if(kind==='focus') return 'x|'+m.ord;
+  if(kind==='sub')   return 's|'+m.pid+'|'+m.ord;
+  return 't|'+locKey(m.loc)+'|'+m.ord+'|'+(o.from||'');
+}
+const sigOf=(kind,o,m)=>sigC(kind,o)+''+sigP(kind,o,m);
 let sigMap={}, prevSnap=null;   /* prevSnap: the tree as of the last commit, so the bin
                                    can keep the body of whatever vanishes */
 function snapSigs(){ const m={}; eachItem(state,(k,o,meta)=>{m[o.id]=sigOf(k,o,meta)}); sigMap=m }
@@ -579,11 +600,18 @@ function stampChanges(when){
   if(!state.tomb||typeof state.tomb!=='object') state.tomb={};
   if(!state.bin||typeof state.bin!=='object') state.bin={};
   eachItem(state,(k,o,meta)=>{
-    const sig=sigOf(k,o,meta); next[o.id]=sig; seen[o.id]=1;
-    if(state.tomb[o.id]!=null){ delete state.tomb[o.id]; delete state.bin[o.id]; o.up=t; return }  /* brought back */
+    const cs=sigC(k,o), ps=sigP(k,o,meta);
+    next[o.id]=cs+''+ps; seen[o.id]=1;
+    if(state.tomb[o.id]!=null){                       /* brought back */
+      delete state.tomb[o.id]; delete state.bin[o.id]; o.up=t; o.pos=t; return;
+    }
     const had=sigMap[o.id];
-    if(had===undefined){ if(!(+o.up>0)) o.up=t }
-    else if(had!==sig) o.up=when?Math.max(upOf(o),when):t;
+    if(had===undefined){ if(!(+o.up>0)) o.up=t; if(!(+o.pos>0)) o.pos=posOf(o) }
+    else{
+      const cut=had.indexOf(''), hc=had.slice(0,cut), hp=had.slice(cut+1);
+      if(hc!==cs) o.up=when?Math.max(upOf(o),when):t;
+      if(hp!==ps) o.pos=when?Math.max(posOf(o),when):t;
+    }
   });
   const gone=Object.keys(sigMap).filter(id=>!seen[id]);
   gone.forEach(id=>{ state.tomb[id]=t });
@@ -595,7 +623,7 @@ function stampChanges(when){
   sigMap=next;
 }
 function stampLegacy(s){
-  eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP });
+  eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP; if(!(+o.pos>0)) o.pos=upOf(o) });
   if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
   Object.keys(s.tomb).forEach(id=>{ if(!(+s.tomb[id]>0)) delete s.tomb[id] });
   if(!s.bin||typeof s.bin!=='object') s.bin={};
@@ -611,21 +639,33 @@ function stampLegacy(s){
 function flatten(s){
   const g={float:{},task:{},sub:{},focus:{}};
   eachItem(s,(k,o,m)=>{
-    if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,up:upOf(o)};
+    if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,up:upOf(o),pos:posOf(o)};
     else if(k==='focus') g.focus[o.id]={id:o.id,title:o.title||'',done:!!o.done,
-      doneAt:o.doneAt||null,ord:m.ord,up:upOf(o)};
-    else if(k==='sub') g.sub[o.id]={id:o.id,title:o.title||'',done:!!o.done,pid:m.pid,ord:m.ord,up:upOf(o)};
+      doneAt:o.doneAt||null,ord:m.ord,up:upOf(o),pos:posOf(o)};
+    else if(k==='sub') g.sub[o.id]={id:o.id,title:o.title||'',done:!!o.done,pid:m.pid,ord:m.ord,
+      up:upOf(o),pos:posOf(o)};
     else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
-      loc:m.loc,ord:m.ord,subs:arr(o.subtasks).map(x=>x.id),up:upOf(o)};
+      loc:m.loc,ord:m.ord,up:upOf(o),pos:posOf(o)};
   });
   return g;
 }
-/* newer wins. Same moment on both sides: pick by content so both devices land on the same answer. */
-function pickNewer(a,b){
+/* Newer wins, but content and position are decided separately, so the two never compete.
+   Same moment on both sides: pick by the fields under that stamp, so both devices land on
+   the same answer. */
+function pickSide(a,b,stamp,fields){
+  if(a[stamp]!==b[stamp]) return a[stamp]>b[stamp]?a:b;
+  const ja=JSON.stringify(fields.map(f=>a[f])), jb=JSON.stringify(fields.map(f=>b[f]));
+  return ja<=jb?a:b;
+}
+function pickNewer(kind,a,b){
   if(!a) return b;
   if(!b) return a;
-  if(a.up!==b.up) return a.up>b.up?a:b;
-  return JSON.stringify(a)<=JSON.stringify(b)?a:b;
+  const c=pickSide(a,b,'up',CONTENTF[kind]), p=pickSide(a,b,'pos',POSF[kind]);
+  if(c===p) return c;
+  const out=Object.assign({},c);                 /* content from one side ... */
+  POSF[kind].forEach(f=>{ out[f]=p[f] });        /* ... position from the other */
+  out.pos=p.pos;
+  return out;
 }
 function mergeTombs(x,y){
   const out={};
@@ -642,6 +682,10 @@ function stateSig(s){
   Object.keys(tb).sort().forEach(id=>out.push('gone '+id+' '+tb[id]));
   const bn=(s&&s.bin)||{};
   Object.keys(bn).sort().forEach(id=>out.push('bin '+id+' '+JSON.stringify(bn[id])));
+  /* unknown top level keys count too, or a change to one would never trigger a push */
+  const known={}; MERGED_KEYS.forEach(k=>{known[k]=1});
+  Object.keys(s||{}).filter(k=>!known[k]).sort()
+    .forEach(k=>out.push('key '+k+' '+JSON.stringify(s[k])));
   return out.join('\n');
 }
 function mergeStates(mine,theirs){
@@ -652,9 +696,11 @@ function mergeStates(mine,theirs){
     const ids={};
     Object.keys(A[g]).forEach(i=>{ids[i]=1}); Object.keys(B[g]).forEach(i=>{ids[i]=1});
     Object.keys(ids).forEach(id=>{
-      const w=pickNewer(A[g][id],B[g][id]);
+      const w=pickNewer(g,A[g][id],B[g][id]);
       const gone=tomb[id];
-      if(gone!=null&&gone>=w.up) return;   /* deleted after the last edit anyone made to it */
+      /* compared against the content stamp only: editing an item asserts it should exist,
+         merely reordering or moving it does not, so a reorder cannot revive a deletion */
+      if(gone!=null&&gone>=w.up) return;
       keep[g][id]=w;
     });
   });
@@ -681,6 +727,26 @@ function mergeBins(x,y,tomb,alive){
   });
   return out;
 }
+/* Top level keys rebuild() reconstructs itself. Anything else found in either planner is
+   carried through untouched by carryUnknown(), so a key added to state in future cannot be
+   silently dropped the first time two devices merge. A test asserts this list still matches
+   fresh(), so adding a key to the canonical shape forces a deliberate choice here. */
+const MERGED_KEYS=['ver','days','carry','focus','floats','settings','tomb','bin'];
+/* No timestamps exist for a key the merge has never heard of, so there is no basis for
+   last-write-wins. Take whichever side has it, and when both differ pick by content, which
+   is arbitrary but identical on both devices, so they still converge. Nothing is lost. */
+function carryUnknown(out,mine,theirs){
+  const known={}; MERGED_KEYS.forEach(k=>{known[k]=1});
+  const seen={};
+  [mine,theirs].forEach(s=>Object.keys(s||{}).forEach(k=>{ if(!known[k]) seen[k]=1 }));
+  Object.keys(seen).forEach(k=>{
+    const a=mine?mine[k]:undefined, b=theirs?theirs[k]:undefined;
+    if(a===undefined){ out[k]=b; return }
+    if(b===undefined){ out[k]=a; return }
+    out[k]=JSON.stringify(a)<=JSON.stringify(b)?a:b;
+  });
+  return out;
+}
 function rebuild(keep,tomb,mine,theirs){
   const f=fresh(), out=f;
   out.tomb=tomb;
@@ -693,7 +759,7 @@ function rebuild(keep,tomb,mine,theirs){
 
   const byOrd=(a,b)=>(a.ord-b.ord)||(a.id<b.id?-1:a.id>b.id?1:0);
   const floats=Object.keys(keep.float).map(id=>keep.float[id]).sort(byOrd)
-    .map(x=>({id:x.id,name:x.name,tasks:[],up:x.up}));
+    .map(x=>({id:x.id,name:x.name,tasks:[],up:x.up,pos:x.pos}));
   if(floats.length) out.floats=floats;
   const fmap={}; out.floats.forEach(x=>{fmap[x.id]=x});
 
@@ -704,8 +770,9 @@ function rebuild(keep,tomb,mine,theirs){
   });
   out.days={}; out.carry=[];
   Object.keys(keep.task).map(id=>keep.task[id]).sort(byOrd).forEach(t=>{
-    const o={id:t.id,title:t.title,done:t.done,up:t.up,
-      subtasks:(subsBy[t.id]||[]).sort(byOrd).map(s=>({id:s.id,title:s.title,done:s.done,up:s.up}))};
+    const o={id:t.id,title:t.title,done:t.done,up:t.up,pos:t.pos,
+      subtasks:(subsBy[t.id]||[]).sort(byOrd)
+        .map(s=>({id:s.id,title:s.title,done:s.done,up:s.up,pos:s.pos}))};
     if(t.from) o.from=t.from;
     const l=t.loc||{kind:'carry'};
     if(l.kind==='day'){
@@ -716,9 +783,9 @@ function rebuild(keep,tomb,mine,theirs){
     }else out.carry.push(o);
   });
   out.focus=Object.keys(keep.focus).map(id=>keep.focus[id]).sort(byOrd)
-    .map(x=>({id:x.id,title:x.title,done:x.done,doneAt:x.doneAt,up:x.up}));
+    .map(x=>({id:x.id,title:x.title,done:x.done,doneAt:x.doneAt,up:x.up,pos:x.pos}));
   if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
-  return out;
+  return carryUnknown(out,mine,theirs);
 }
 function load(){
   try{
@@ -920,7 +987,7 @@ function swapState(next){
 function readCloud(p){
   if(!p||typeof p!=='object'||(!p.days&&!p.floats)) return null;
   const f=fresh();
-  const out={...f,...p,settings:{...f.settings,...(p.settings||{})}};
+  const out={...f,...p,settings:{...f.settings,...(p.settings||{})}};   /* spread: unknown keys survive */
   if(!Array.isArray(out.floats)||!out.floats.length) out.floats=f.floats;
   if(!Array.isArray(out.carry)) out.carry=[];
   if(!Array.isArray(out.focus)) out.focus=[];
@@ -1170,6 +1237,16 @@ function rollover(){
    and on a slow timer, so it fires with or without cloud sync.
    Moves are dated to midnight of the new day rather than the moment the check runs, so a
    device that opens late cannot out-stamp a triage another device already made. */
+/* unfinished tasks sitting on days already past, which rollover has not swept up because
+   it runs once a day and has already run. Drives the board nav affordance. */
+function pastOpenCount(){
+  const t=today(); let n=0;
+  for(const d in state.days){
+    if(dayDiff(d,t)<=0) continue;
+    ZONES.forEach(z=>{ n+=arr(state.days[d][z]).filter(x=>x&&!x.done).length });
+  }
+  return n;
+}
 function rollIfNewDay(opts){
   opts=opts||{};
   if(!state||state.settings.lastRoll===today()) return 0;
@@ -1518,13 +1595,19 @@ function renderNav(){
       '<span class="jl">Cards here have no date yet. Drag one onto a day to schedule it.</span>';
     $('#strip').innerHTML=''; return;
   }
-  const win=windowDays(), off=offBoard(win);
+  const win=windowDays(), off=offBoard(win), pastOpen=pastOpenCount();
   $('#boardnav').innerHTML=
     '<button class="nbtn" data-action="nav" data-d="-7">‹ Prev</button>'+
     '<button class="nbtn solid" data-action="nav-today">Today</button>'+
     '<button class="nbtn" data-action="nav" data-d="7">Next ›</button>'+
     '<span class="jl">Jump to</span><input type="date" id="jumpDate" value="'+win[0]+'">'+
-    (off.length?'<span class="offnote">'+off.length+' off-board</span>':'');
+    /* Rollover runs once a day, so anything landing on a past day after it has run waits
+       until tomorrow. Rather than sweeping continuously, which would fight a deliberate
+       back-date, say so plainly and offer to bring them in. */
+    (pastOpen
+      ? '<button class="nbtn" data-action="roll-now" title="Move them into the carry-over tray">'+
+        pastOpen+' waiting on past days</button>'
+      : (off.length?'<span class="offnote">'+off.length+' off-board</span>':''));
   /* mobile day strip */
   if(window.innerWidth<900){
     const cur=state.settings.stripDay||today();
@@ -1862,6 +1945,14 @@ document.addEventListener('click',e=>{
       s.view='board'; s.floatMode=false;
       showDay(el.dataset.day); break;
     }
+    case 'roll-now':{
+      /* a deliberate pull, so it is stamped now rather than at midnight: the user asked
+         for this on this device and it should win over another device's stale copy */
+      const n=rollover();
+      toast(n?n+(n===1?' task moved into the tray':' tasks moved into the tray')
+             :'Nothing is waiting on a past day');
+      break;
+    }
     case 'nav': shiftBoard(+el.dataset.d); break;
     case 'nav-today': showDay(today()); break;
     case 'strip': showDay(el.dataset.day); break;
@@ -2174,7 +2265,7 @@ syncBoot();
 window.A={state,render,rollover,findTask,move,tally,streak,save:commit,
   sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey,
   mergeStates,flatten,stateSig,readCloud,stampLegacy,syncCycle,
-  restoreBin,purgeBin,emptyBinNow,binList,
+  restoreBin,purgeBin,emptyBinNow,binList,fresh,MERGED_KEYS,rollIfNewDay,pastOpenCount,
   get live(){ return state }};
 </script>
 </body>

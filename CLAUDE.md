@@ -8,7 +8,7 @@ This is a single-file day-planner web app. Read this before making changes.
   - `manifest.webmanifest` — app name, icons, theme colours.
   - `sw.js` — offline cache. Has a `CACHE` version constant near the top.
   - `icon-192.png`, `icon-512.png`, `icon-512-maskable.png` — home-screen icons.
-- Hosted free on GitHub Pages. Pushing to the `main` branch redeploys it.
+- Hosted free on GitHub Pages. Pushing to the `master` branch redeploys it.
 
 ## Hard rules (do not break these)
 - Do NOT change the layout or functionality unless explicitly asked. Visual/style tweaks are fine; behaviour stays as-is.
@@ -21,7 +21,7 @@ This is a single-file day-planner web app. Read this before making changes.
 ## After ANY change to index.html
 1. Run the tests (see below). They must stay green.
 2. Bump the cache version in `sw.js` (e.g. `headspace-v8` -> `headspace-v9`). Skipping this makes installed phones keep serving the old copy. This is the single most common mistake.
-3. Commit with a short message and push to `main`.
+3. Commit with a short message and push to `master`.
 
 ## Running the tests
 From the project root:
@@ -29,7 +29,7 @@ From the project root:
   ```
   cd tests && npm install   # first time only, installs jsdom
   cd ..                     # run from the project root: test.js reads ./index.html
-  node tests/test.js        # expect: RESULT: 333 passed, 0 failed
+  node tests/test.js        # expect: RESULT: 372 passed, 0 failed
   ```
 - Optional visual/browser suite (needs Python + Playwright; skip if not set up):
   ```
