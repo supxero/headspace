@@ -389,12 +389,15 @@ select option{background:var(--pearl);color:var(--txt)}
 @media (hover:hover){ .noterow:hover{background:rgba(36,58,94,.06)} .noterow.on:hover{background:var(--pearl)} }
 .noterow:active{transform:scale(.99)}
 .noteed{flex:1;min-width:0;overflow-y:auto;padding:2px 6px 18px 0}
-/* the page sits directly beside the list, one continuous surface like board-and-rail;
-   the reading measure is the TEXT column inside it (.notewrap), not the page's position */
-.notepage{background:var(--pearl);border:1px solid var(--line2);
+/* the page sits directly beside the list, one continuous surface like board-and-rail,
+   and ENDS with its content: the text column declares the reading measure as its
+   preferred width and the page fits that (fit-content), so title, meta, toolbar and
+   body all share the same edges and the measure is written exactly once. Past the
+   page's edge the denim canvas shows, the same way it does past the board's columns. */
+.notepage{width:fit-content;max-width:100%;background:var(--pearl);border:1px solid var(--line2);
   border-radius:var(--r);box-shadow:var(--shadow);padding:22px 30px 30px;display:flex;flex-direction:column}
 .notepage:focus-within{border-color:var(--denim);box-shadow:0 0 0 3px rgba(95,134,166,.14),var(--shadow)}
-.notewrap{max-width:640px;min-width:0}
+.notewrap{width:640px;max-width:100%;min-width:0}
 #noteTitle{width:100%;min-width:0;border:none;background:transparent;box-shadow:none;border-radius:0;
   padding:0 0 6px;font-family:var(--fd);font-weight:600;font-size:19px;letter-spacing:-.02em;color:var(--navy)}
 #noteTitle:focus{border:none;box-shadow:none}
@@ -440,8 +443,8 @@ select option{background:var(--pearl);color:var(--txt)}
   #notes{flex-direction:column;overflow:visible}
   .notelist{width:100%;max-height:38vh;flex:none}
   .noteed{overflow:visible;padding:0}
-  .notepage{padding:16px 16px 24px}
-  .notewrap{max-width:none}
+  .notepage{width:auto;padding:16px 16px 24px}
+  .notewrap{width:auto;max-width:none}
   /* 16px keeps the browser from zooming the page when the field takes focus */
   #noteSearch{font-size:16px;min-height:44px}
   #noteTitle{font-size:17px;min-height:44px}

@@ -883,17 +883,28 @@ async function runProfile(browser, base, prof) {
     const meta = await A(() => (document.getElementById('noteMeta') || {}).textContent || '');
     check('notes: the meta line reads edited-today and a count', /Edited today/.test(meta) && /word/.test(meta), meta);
 
-    /* the layout: the page sits directly beside the list, one continuous surface,
-       and the reading measure is the text column INSIDE the page */
+    /* the layout: the page sits directly beside the list, one continuous surface;
+       the text column declares the reading measure and the page ENDS with it, so
+       title, toolbar and body share edges and no pearl runs on past the content */
     if (!narrow) {
       const m = await A(() => {
         const l = document.querySelector('.notelist').getBoundingClientRect();
         const p = document.querySelector('.notepage').getBoundingClientRect();
         const t = document.querySelector('.notewrap').getBoundingClientRect();
-        return { gap: Math.round(p.left - l.right), tw: Math.round(t.width) };
+        const e = document.querySelector('.noteed').getBoundingClientRect();
+        const ti = document.getElementById('noteTitle').getBoundingClientRect();
+        const tb = document.getElementById('noteTools').getBoundingClientRect();
+        const bd = document.getElementById('noteBody').getBoundingClientRect();
+        return { gap: Math.round(p.left - l.right), tw: Math.round(t.width),
+          pw: Math.round(p.width), spare: Math.round(e.right - p.right),
+          edges: Math.abs(ti.left - tb.left) < 1.5 && Math.abs(ti.left - bd.left) < 1.5 &&
+                 Math.abs(ti.right - tb.right) < 1.5 && Math.abs(ti.right - bd.right) < 1.5 };
       });
       check('notes: no dead gap between list and page', m.gap <= 30, 'gap=' + m.gap);
       check('notes: the text column keeps a bounded measure', m.tw <= 660, 'w=' + m.tw);
+      check('notes: the page ends with its content, no stranded pearl', m.pw <= 710, 'pw=' + m.pw);
+      check('notes: title, toolbar and body share the same edges', m.edges);
+      check('notes: the page never overflows its pane', m.spare >= -1, 'spare=' + m.spare);
     }
 
     /* ---- formatting, driven through the real editing engine ---- */
