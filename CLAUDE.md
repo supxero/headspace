@@ -12,7 +12,8 @@ This is a single-file day-planner web app. Read this before making changes.
 
 ## Hard rules (do not break these)
 - Do NOT change the layout or functionality unless explicitly asked. Visual/style tweaks are fine; behaviour stays as-is.
-- No pure white anywhere. The theme uses cloud blue `#EDF4FA`, powder `#CFE3F1`, dusty-denim canvas `#5F86A6`, navy `#243A5E`, and pearl `#F5F4EF`. If a light surface is needed, use pearl or cloud, never `#ffffff` / `rgb(255,255,255)`.
+- No pure white anywhere, in either theme. Cloud blue uses `#EDF4FA`, powder `#CFE3F1`, dusty-denim canvas `#5F86A6`, navy `#243A5E`, and pearl `#F5F4EF`; if a light surface is needed, use pearl or cloud, never `#ffffff` / `rgb(255,255,255)`. The Monochrome theme's brightest ink is `#F6F6F7`, deliberately short of white.
+- There are TWO themes (Cloud blue and Monochrome), selected by `data-theme="mono"` on `<html>` and stored per device under the localStorage key `agora_dayplanner_theme` (never in state, never synced; do not rename that key either). A theme is ONLY a set of CSS custom property values: `:root` holds blue, `:root[data-theme="mono"]` overrides it. Never hardcode a colour in a rule; add a variable to BOTH blocks. A test enforces this.
 - No emoji in the UI. Icons are inline SVG.
 - No em dashes in any copy.
 - The two priority tiers are labelled "Prio 0" and "Prio 1" (not Must/Should); the third is "Extra".
@@ -29,7 +30,7 @@ From the project root:
   ```
   cd tests && npm install   # first time only, installs jsdom
   cd ..                     # run from the project root: test.js reads ./index.html
-  node tests/test.js        # expect: RESULT: 771 passed, 0 failed
+  node tests/test.js        # expect: RESULT: 837 passed, 0 failed
                             # the suite checks this number itself and tells you when to bump it
   ```
 - Optional visual/browser suite (needs Python + Playwright; skip if not set up):

@@ -4,6 +4,14 @@
    touch-target size on coarse-pointer profiles, blank control labels, and any
    computed colour that is pure white.
 
+   Every audit runs TWICE, once per theme (the attribute is flipped in place and
+   restored), so each guarantee holds under Cloud blue and Monochrome alike; the
+   auditor also computes WCAG contrast for the declared variable pairs and a few
+   live composites, and under mono asserts the red accent paints nothing beyond
+   today's marker, completion and the primary action. A dedicated flow drives the
+   switch itself: rail-foot control, instant apply, persistence across a reload
+   (applied before DOMContentLoaded), and planner storage byte-identical across it.
+
    Run from the project root:  node tests/viewports.js
    Needs Chrome installed (or CHROME_PATH set) and tests/node_modules (npm install).
 
@@ -73,6 +81,13 @@ function bootstrap(seedJson) {
       localStorage.setItem('agora_dayplanner_v1', seedJson);
       localStorage.setItem('__vp_seeded', '1');
     }
+  } catch (e) {}
+  /* what the head theme script had applied by the time the DOM was ready: proves
+     the stored theme paints before first render, not after a flash of the other */
+  try {
+    document.addEventListener('DOMContentLoaded', function () {
+      window.__themeAtDCL = document.documentElement.getAttribute('data-theme');
+    });
   } catch (e) {}
 
   /* the auditor. opts: {root, coarse, noScroll, keepToast, minTarget} */
@@ -187,6 +202,104 @@ function bootstrap(seedJson) {
     }
     out.white = Object.keys(whiteMap);
 
+    /* ---- contrast: body text against its surface, the accent against whatever
+       it sits on. Declared-variable pairs first (theme-level truth), then a few
+       live composites (proof the rules actually read those variables). Canvas
+       pairs run only under mono: the blue design deliberately lets its mid-tone
+       canvas meet same-tone accents and delineates by shadow instead. ---- */
+    out.theme = document.documentElement.getAttribute('data-theme') === 'mono' ? 'mono' : 'sky';
+    out.contrast = [];
+    (function contrastPass() {
+      const rootCS = getComputedStyle(document.documentElement);
+      const parse = s => {
+        if (!s) return null;
+        let m = String(s).trim().match(/^#([0-9a-f]{6})$/i);
+        if (m) return [0, 1, 2].map(i => parseInt(m[1].slice(i * 2, i * 2 + 2), 16));
+        m = String(s).match(/rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/);
+        return m ? [+m[1], +m[2], +m[3]] : null;
+      };
+      const lin = c => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+      const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
+      const V = n => parse(rootCS.getPropertyValue(n));
+      const mono = out.theme === 'mono';
+      const PAIRS = [
+        ['--txt', '--pearl', 4.5], ['--txt', '--cloud', 4.5], ['--txt', '--tasktile', 4.5], ['--txt', '--panel', 4.5],
+        ['--mut', '--cloud', 4.5], ['--mut', '--pearl', 4.5],
+        ['--navy', '--cloud', 4.5], ['--navy', '--pearl', 4.5],
+        ['--mut2', '--cloud', 3], ['--mut2', '--pearl', 3],
+        ['--done', '--tasktile', 3], ['--done', '--cloud', 3], ['--done', '--pearl', 3],
+        ['--today', '--cloud', 3],
+        ['--onpri', '--done', 3],
+        ['--denim', '--cloud', 3], ['--denim', '--pearl', 3],
+        ['--today', '--canvas', 3, true], ['--txt', '--canvas', 4.5, true], ['--ocean', '--canvas', 3, true],
+      ];
+      for (const p of PAIRS) {
+        if (p[3] && !mono) continue;
+        const a = V(p[0]), b = V(p[1]);
+        if (!a || !b) { out.contrast.push('unreadable pair ' + p[0] + '/' + p[1]); continue; }
+        const r = ratio(a, b);
+        if (r < p[2] - 0.01) out.contrast.push(p[0] + ' on ' + p[1] + ' = ' + r.toFixed(2) + ' (needs ' + p[2] + ')');
+      }
+      /* live composites: walk up for the effective opaque backdrop */
+      const bgOf = el => {
+        const layers = [];
+        for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+          const s = getComputedStyle(n).backgroundColor;
+          const m = String(s).match(/rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:[, ]+([\d.]+))?\)/);
+          if (!m) continue;
+          const a = m[4] === undefined ? 1 : +m[4];
+          if (a === 0) continue;
+          layers.push([+m[1], +m[2], +m[3], a]);
+          if (a >= 1) break;
+        }
+        if (!layers.length || layers[layers.length - 1][3] < 1) return null;
+        let c = layers.pop().slice(0, 3);
+        while (layers.length) { const t = layers.pop(); c = c.map((v, i) => t[i] * t[3] + v * (1 - t[3])); }
+        return c;
+      };
+      const sample = (sel, min, what) => {
+        const el = document.querySelector(sel);
+        if (!el || !el.getClientRects().length) return;
+        const fg = parse(getComputedStyle(el).color), bg = bgOf(el);
+        if (!fg || !bg) return;
+        const r = ratio(fg, bg);
+        if (r < min - 0.05) out.contrast.push(what + ' = ' + r.toFixed(2) + ' (needs ' + min + ')');
+      };
+      sample('.task .ttl', 4.5, 'task title on its card');
+      sample('.colhead .meta', 4.5, 'column meta on its header');
+      sample('.zh', 4.5, 'zone label on its column');
+      sample('#noteBody', 4.5, 'note body on its page');
+      /* the whisper tier (.synchint, mut2) is deliberately quieter and asserted
+         at 3+ through the declared pairs; sample the modal's real copy here */
+      sample('.modal p:not(.synchint)', 4.5, 'modal copy on its card');
+      sample('.modal p.synchint', 3, 'modal small print on its card');
+      sample('.badge', 3, 'the TODAY badge on its tint');
+    })();
+
+    /* ---- red discipline (mono only): the accent may paint nothing beyond
+       today's marker, completion and the primary action ---- */
+    out.red = [];
+    if (out.theme === 'mono') {
+      const redHex = (rootCS => rootCS.getPropertyValue('--done').trim())(getComputedStyle(document.documentElement));
+      const m = redHex.match(/^#([0-9a-f]{6})$/i);
+      const redTriplet = m ? [0, 1, 2].map(i => parseInt(m[1].slice(i * 2, i * 2 + 2), 16)).join(', ') : null;
+      const ALLOWED = '.badge,.col.today,.box,.sbox,#qb,.fadd button,.mrow button.pri,.rp,' +
+        '.cell.today,.cell.today .n,#strip button.istoday,.hdow.now,.bar.now,.allok,.pday.today,.dotm';
+      if (redTriplet) {
+        const seen = {};
+        for (const el of document.querySelectorAll('*')) {
+          if (!el.getClientRects().length) continue;
+          const cs = getComputedStyle(el);
+          const hit = ['color', 'backgroundColor', 'borderTopColor', 'borderRightColor', 'borderBottomColor',
+            'borderLeftColor', 'outlineColor', 'stroke', 'fill']
+            .some(p => cs[p] && String(cs[p]).indexOf(redTriplet) > -1);
+          if (hit && !el.matches(ALLOWED)) seen[desc(el)] = 1;
+        }
+        out.red = Object.keys(seen);
+      }
+    }
+
     window.scrollTo(0, 0);
     return out;
   };
@@ -272,10 +385,31 @@ async function runProfile(browser, base, prof) {
   const A = fn => page.evaluate(fn);
   const audit = async (name, opts) => {
     await sleep(380);
-    const r = await page.evaluate((n, o) => window.__audit(n, o), name,
+    const run = nm => page.evaluate((n, o) => window.__audit(n, o), nm,
       Object.assign({ coarse, minTarget: MIN_TARGET }, opts || {}));
-    R.audits.push(r);
-    return r;
+    const first = await run(name);
+    R.audits.push(first);
+    /* the same surface under the other theme: a theme changes colour, type and
+       surface treatment only, so overflow, reach, size, labels, whiteness and
+       contrast must hold identically. The attribute flip is pure CSS, touches
+       no storage and no state, and is restored before the flow continues. */
+    await page.evaluate(() => {
+      const e = document.documentElement;
+      e.__themeWas = e.getAttribute('data-theme');
+      if (e.__themeWas === 'mono') e.removeAttribute('data-theme');
+      else e.setAttribute('data-theme', 'mono');
+    });
+    await sleep(140);
+    const second = await run(name + '@' + (first.theme === 'mono' ? 'sky' : 'mono'));
+    R.audits.push(second);
+    await page.evaluate(() => {
+      const e = document.documentElement;
+      if (e.__themeWas) e.setAttribute('data-theme', e.__themeWas);
+      else e.removeAttribute('data-theme');
+      delete e.__themeWas;
+    });
+    await sleep(80);
+    return first;
   };
   const flow = async (name, fn) => {
     try { await fn(); }
@@ -318,6 +452,10 @@ async function runProfile(browser, base, prof) {
       check('qd: palette popover opens on fine pointer', open);
       if (open) {
         await audit('qd-popover', { root: '#popRoot .popover', noScroll: true });
+        /* the dual-theme audit's font reflow can clamp a scrolled container, and
+           any scroll closes a popover by design; re-open before choosing */
+        const still = await A(() => !!document.querySelector('#popRoot .popover'));
+        if (!still) await act('#qd');
         await act({ css: '#popRoot .popt', text: 'Today · Prio 1' });
       }
     } else {
@@ -438,6 +576,10 @@ async function runProfile(browser, base, prof) {
       check('pickdate: date popover opens on fine pointer', open);
       if (open) {
         await audit('date-popover', { root: '#popRoot .popover', noScroll: true });
+        /* same as the qd popover: the dual-theme audit may have closed it through
+           the app's own scroll-close rule; re-open before picking */
+        const still = await A(() => !!document.querySelector('#popRoot .popover'));
+        if (!still) await act({ css: '.task.sel input[data-action="pickdate"]' });
         const inView = await page.evaluate(d =>
           !!document.querySelector('#popRoot [data-pday="' + d + '"]'), yday);
         if (!inView) await act({ css: '#popRoot [data-pnav="-1"]' });
@@ -1210,6 +1352,94 @@ async function runProfile(browser, base, prof) {
     if (narrow) await act('#railtoggle');
   });
 
+  /* ---- M. the theme switch: instant, persistent, and invisible to the planner ---- */
+  await flow('theme-switch', async () => {
+    const before = await A(() => ({
+      attr: document.documentElement.getAttribute('data-theme'),
+      planner: localStorage.getItem('agora_dayplanner_v1'),
+      sig: window.A.stateSig(window.A.state),
+    }));
+    check('theme: boots in cloud blue with no attribute', before.attr === null, String(before.attr));
+    if (narrow) await act('#railtoggle');
+    await act({ css: '.railfoot [data-action="themes"]' });
+    await page.waitForSelector('#themeModal');
+    await audit('theme-modal', { root: '#modalRoot .modal' });
+    await act({ css: '[data-action="theme-set"][data-t="mono"]' });
+    const m = await A(() => ({
+      attr: document.documentElement.getAttribute('data-theme'),
+      ls: localStorage.getItem('agora_dayplanner_theme'),
+      meta: document.querySelector('meta[name="theme-color"]').getAttribute('content'),
+      canvas: getComputedStyle(document.getElementById('main')).backgroundColor,
+      planner: localStorage.getItem('agora_dayplanner_v1'),
+      sig: window.A.stateSig(window.A.state),
+      modalOpen: !!document.querySelector('#themeModal'),
+      pressed: (document.querySelector('[data-action="theme-set"][data-t="mono"]') || { getAttribute: () => '' }).getAttribute('aria-pressed'),
+    }));
+    check('theme: applies in place with the modal still open', m.attr === 'mono' && m.modalOpen, JSON.stringify({ attr: m.attr, open: m.modalOpen }));
+    check('theme: the canvas repaints near-black in the same frame', m.canvas === 'rgb(7, 7, 8)', m.canvas);
+    check('theme: stored per device under its own key', m.ls === 'mono', String(m.ls));
+    check('theme: the theme-color meta follows', m.meta === '#070708', m.meta);
+    check('theme: planner storage byte-identical across the switch', m.planner === before.planner);
+    check('theme: state signature untouched, so sync has nothing to push', m.sig === before.sig);
+    check('theme: the modal marks the new choice', m.pressed === 'true', String(m.pressed));
+    await act({ css: '#themeModal [data-action="mclose"]' });
+    /* reload: the head script must repaint before the app boots, no flash of blue */
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('#board .col');
+    const r2 = await A(() => ({
+      atDCL: window.__themeAtDCL === undefined ? 'unset' : window.__themeAtDCL,
+      attr: document.documentElement.getAttribute('data-theme'),
+      meta: document.querySelector('meta[name="theme-color"]').getAttribute('content'),
+      canvas: getComputedStyle(document.getElementById('main')).backgroundColor,
+      planner: localStorage.getItem('agora_dayplanner_v1'),
+    }));
+    check('theme: survives the reload', r2.attr === 'mono' && r2.canvas === 'rgb(7, 7, 8)',
+      JSON.stringify({ attr: r2.attr, canvas: r2.canvas }));
+    check('theme: applied before DOMContentLoaded, so nothing flashed', r2.atDCL === 'mono', String(r2.atDCL));
+    check('theme: the meta was re-set by the head script', r2.meta === '#070708', r2.meta);
+    check('theme: the planner came through the reload intact', r2.planner === before.planner);
+    /* every view rendered while mono is the ACTIVE theme; each audit also
+       measures the sky flip, so both palettes are proven on every view */
+    await audit('mono-board');
+    await act({ css: '.navbtn[data-action="view"][data-v="calendar"]' });
+    await page.waitForSelector('.calgrid');
+    await audit('mono-calendar');
+    await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
+    await audit('mono-notes');
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+    await act({ css: '.navbtn[data-action="floattoggle"]' });
+    await audit('mono-float');
+    await act({ css: '#boardnav [data-action="floattoggle"]' });
+    /* typography: numerals and short labels lead with the dot-matrix face,
+       body text stays in the sans */
+    const faces = await A(() => {
+      const ff = s => { const el = document.querySelector(s); return el ? getComputedStyle(el).fontFamily : 'missing'; };
+      return { dow: ff('.colhead .dow'), stat: ff('.stat'), zh: ff('.zh'), ttl: ff('.task .ttl'), body: ff('body') };
+    });
+    check('theme: numerals and labels lead with Silkscreen under mono',
+      /Silkscreen/.test(faces.dow) && /Silkscreen/.test(faces.stat) && /Silkscreen/.test(faces.zh),
+      JSON.stringify(faces).slice(0, 160));
+    check('theme: body text never takes the pixel face',
+      !/Silkscreen/.test(faces.ttl) && !/Silkscreen/.test(faces.body));
+    /* back to cloud blue through the same control */
+    if (narrow) await act('#railtoggle');
+    await act({ css: '.railfoot [data-action="themes"]' });
+    await page.waitForSelector('#themeModal');
+    await act({ css: '[data-action="theme-set"][data-t="sky"]' });
+    const s2 = await A(() => ({
+      attr: document.documentElement.getAttribute('data-theme'),
+      ls: localStorage.getItem('agora_dayplanner_theme'),
+      meta: document.querySelector('meta[name="theme-color"]').getAttribute('content'),
+      canvas: getComputedStyle(document.getElementById('main')).backgroundColor,
+    }));
+    check('theme: switching back removes the attribute entirely', s2.attr === null, String(s2.attr));
+    check('theme: and stores the plain choice', s2.ls === 'sky', String(s2.ls));
+    check('theme: the canvas returns to denim at once', s2.canvas === 'rgb(95, 134, 166)', s2.canvas);
+    check('theme: the meta returns to cloud blue', s2.meta === '#CFE3F1', s2.meta);
+    await act({ css: '#themeModal [data-action="mclose"]' });
+    if (narrow) await act('#railtoggle');
+  });
+
   /* ---- L. final state ---- */
   await flow('final', async () => {
     await audit('final');
@@ -1243,12 +1473,16 @@ function summarize(results) {
       if (a.small.length) bits.push(a.small.length + ' under-' + MIN_TARGET);
       if (a.blank.length) bits.push(a.blank.length + ' blank-label');
       if (a.white.length) bits.push(a.white.length + ' white');
-      lines.push('   audit ' + a.name.padEnd(18) + ' ' + String(a.counted).padStart(3) + ' controls  ' +
+      if ((a.contrast || []).length) bits.push(a.contrast.length + ' contrast');
+      if ((a.red || []).length) bits.push(a.red.length + ' red-sprawl');
+      lines.push('   audit ' + a.name.padEnd(24) + ' ' + String(a.counted).padStart(3) + ' controls  ' +
         (bits.length ? bits.join('; ') : 'clean'));
       a.hitMisses.forEach(h => { hard++; lines.push('      HIT-MISS ' + h.el + ' -> ' + h.hit + ' @' + h.at); });
       a.small.forEach(s => { hard++; lines.push('      UNDER-' + MIN_TARGET + ' ' + s); });
       a.blank.forEach(b => { hard++; lines.push('      BLANK ' + b); });
       a.white.forEach(w => { hard++; lines.push('      WHITE ' + w); });
+      (a.contrast || []).forEach(c => { hard++; lines.push('      CONTRAST ' + c); });
+      (a.red || []).forEach(r2 => { hard++; lines.push('      RED-SPRAWL ' + r2); });
     }
   }
   lines.push('');

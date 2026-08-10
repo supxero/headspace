@@ -631,8 +631,8 @@ ok(!q('.addin'),'Escape still closes the field');
 console.log('— menu reach on phones —');
 {
   const foot=q('.railfoot'), labels=[...foot.children].map(b=>b.textContent);
-  ok(labels.map(t=>t.replace(/ · \d+$/,'')).join(',')==='Help,Sync,Export,Import,Bin',
-    'Help, Sync, Export, Import and Bin all live in the rail foot');
+  ok(labels.map(t=>t.replace(/ · \d+$/,'')).join(',')==='Help,Sync,Export,Import,Bin,Theme',
+    'Help, Sync, Export, Import, Bin and Theme all live in the rail foot');
   ok(foot.parentElement.classList.contains('railhide'),'they sit inside the collapsible menu');
   const css=q('style').textContent;
   ok(/@media \(max-width:900px\)[\s\S]*#rail \.railfoot\{order:-1/.test(css),
@@ -2572,6 +2572,142 @@ console.log('— touch targets: the coarse-pointer block —');
     'the quiet note actions AND the toolbar buttons grow to 44px on touch');
   ok(/#noteSearch/.test(block),'the notes search box is in the 44px input list');
   ok(/#notePage\{min-height:44px\}/.test(block),'the page select grows to 44px on touch');
+}
+
+console.log('— themes: the switch is instant, device-local, and invisible to state —');
+{
+  const tbtn=q('.railfoot [data-action="themes"]');
+  ok(!!tbtn&&tbtn.textContent==='Theme','the rail foot offers the Theme control beside Help, Sync, Export, Import and Bin');
+  click('.railfoot [data-action="themes"]'); await wait(25);
+  ok(!!q('#themeModal'),'it opens the theme modal');
+  const opts=qa('#themeModal [data-action="theme-set"]');
+  ok(opts.length===2,'two options, no more');
+  ok(opts.map(b=>b.textContent).join(',')==='Cloud blue,Monochrome','both named plainly');
+  ok(opts[0].getAttribute('aria-pressed')==='true','the active theme is the marked one');
+  ok(/never syncs/.test(q('#themeModal').textContent),'the modal says the choice stays on this device');
+
+  const before={planner:w.localStorage.getItem('agora_dayplanner_v1'),sig:A.stateSig(S())};
+  click('[data-action="theme-set"][data-t="mono"]'); await wait(25);
+  ok(doc.documentElement.getAttribute('data-theme')==='mono','the attribute lands on <html> in the same frame, no reload');
+  ok(w.localStorage.getItem('agora_dayplanner_theme')==='mono','the choice persists under its own localStorage key');
+  ok(q('meta[name="theme-color"]').getAttribute('content')==='#070708','the PWA theme-color meta follows the theme');
+  ok(w.localStorage.getItem('agora_dayplanner_v1')===before.planner,'the planner storage is byte-identical after the switch');
+  ok(A.stateSig(S())===before.sig,'the state signature is untouched, so sync has nothing to push');
+  ok(!('theme' in S())&&!('theme' in S().settings),'no theme field ever reaches state or settings');
+  ok(A.MERGED_KEYS.indexOf('theme')<0,'the merge whitelist has never heard of it');
+  ok(qa('#themeModal [data-action="theme-set"]')[1].getAttribute('aria-pressed')==='true','the modal marks the new choice at once');
+  ok(A.themeGet()==='mono','themeGet answers the stored choice');
+
+  click('[data-action="theme-set"][data-t="sky"]'); await wait(25);
+  ok(doc.documentElement.getAttribute('data-theme')===null,'switching back removes the attribute entirely');
+  ok(w.localStorage.getItem('agora_dayplanner_theme')==='sky','and stores the plain choice');
+  ok(q('meta[name="theme-color"]').getAttribute('content')==='#CFE3F1','the meta returns to cloud blue');
+  click('#themeModal [data-action="mclose"]'); await wait(25);
+  ok(!q('#themeModal'),'Done closes the modal');
+}
+
+console.log('— themes: one variable set, no hardcoded colour, red confined —');
+{
+  const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+  const rootBlock=(css.match(/:root\{[^}]*\}/)||[''])[0];
+  const monoBlock=(css.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0];
+  ok(rootBlock.length>500&&monoBlock.length>500,'both theme blocks exist');
+  const names=b=>[...b.matchAll(/--([a-z0-9-]+)\s*:/g)].map(m=>m[1]);
+  const rootVars=new Set(names(rootBlock)), monoVars=names(monoBlock);
+  const orphan=monoVars.filter(v=>!rootVars.has(v));
+  ok(monoVars.length>40&&orphan.length===0,
+    'mono re-declares '+monoVars.length+' variables and invents none of its own ('+orphan.join(',')+')');
+  const CORE=['bg','canvas','panel','panel2','card','cloud','pearl','tasktile','line','line2',
+    'txt','mut','mut2','navy','denim','ocean','teal','must','should','extra','done','today',
+    'on','onpri','grad','gradf','shadow','scrim','railbg','bgfx','traybg','sheen','fdx','fbx',
+    'ink-rgb','shd-rgb','denim-rgb','teal-rgb','today-rgb','pearl-rgb'];
+  const missing=CORE.filter(v=>!monoVars.includes(v));
+  ok(missing.length===0,'the mono block covers every core role ('+missing.join(',')+')');
+  ok(!/--r:|--r2:|--rail:/.test(monoBlock),'mono changes colour and type only: radii and layout variables stay shared');
+  /* the rest of the sheet reads variables only (comments are prose, not rules) */
+  const body=css.replace(rootBlock,'').replace(monoBlock,'').replace(/\/\*[\s\S]*?\*\//g,'');
+  const stray=(body.match(/#[0-9A-Fa-f]{6}\b|rgba?\((?!var\()[.0-9]/g)||[]);
+  ok(stray.length===0,'no rule outside the theme blocks hardcodes a colour ('+stray.slice(0,4).join(' ')+')');
+  /* the no-white rule holds inside the dark theme too */
+  const monoClean=monoBlock.replace(/\/\*[\s\S]*?\*\//g,'');
+  ok(!/#fff\b|#ffffff|255\s*,\s*255\s*,\s*255/i.test(monoClean),'nothing in the mono theme is pure white');
+  const monoHex=[...monoClean.matchAll(/#([0-9A-Fa-f]{6})\b/g)].map(m=>m[1]);
+  const maxCh=Math.max(...monoHex.flatMap(h=>[0,2,4].map(i=>parseInt(h.slice(i,i+2),16))));
+  ok(maxCh<0xFF,'the brightest mono channel is 0x'+maxCh.toString(16).toUpperCase()+', short of pure white in every channel');
+  /* red appears only where something must stand out */
+  const redDecls=[...monoClean.matchAll(/--([a-z0-9-]+)\s*:[^;]*#E8443C/gi)].map(m=>m[1]);
+  const allowedRed=['done','today','grad','ring1','ring2','ring3'];
+  ok(redDecls.length>0&&redDecls.every(v=>allowedRed.includes(v)),
+    'red backs only completion, today and the primary action ('+redDecls.join(',')+')');
+  const redRgb=[...monoClean.matchAll(/--([a-z0-9-]+)\s*:[^;]*232\s*,\s*68\s*,\s*60/g)].map(m=>m[1]);
+  ok(redRgb.join(',')==='today-rgb','the red channel triplet backs only the today tint');
+  ok(!/#E8443C|232\s*,\s*68\s*,\s*60/i.test(rootBlock),'cloud blue never sees the red');
+  /* flatness: the mono gradients are flat stand-ins, the washes and sheens are gone */
+  ok(/--grad:linear-gradient\(135deg,#E8443C,#E8443C\)/.test(monoClean),'the mono primary fill is flat');
+  ok(/--gradf:linear-gradient\(135deg,#E9E9EC,#E9E9EC\)/.test(monoClean),'the mono decorative fill is flat');
+  ok(/--bgfx:none/.test(monoClean)&&/--sheen:none/.test(monoClean)&&/--sheen2:none/.test(monoClean),
+    'the background washes and button sheens flatten to none');
+  /* typography: the pixel face leads only the mono label stacks, fallbacks intact */
+  ok(/--fdx:'Silkscreen','Space Grotesk'/.test(monoClean)&&/--fbx:'Silkscreen','Inter'/.test(monoClean),
+    'mono label faces lead with Silkscreen and keep the sans chain behind it');
+  ok(!/Silkscreen/.test(rootBlock),'cloud blue keeps its faces untouched');
+  ok(/family=Silkscreen/.test(html),'Silkscreen loads through the same fonts link the app already uses');
+  ok(/font-family:var\(--fdx\)/.test(body)&&/font-family:var\(--fbx\)/.test(body),
+    'numerals and short labels read the themed faces');
+  ok(!/#noteBody\{[^}]*var\(--fbx\)/.test(css)&&!/\.ttl\{[^}]*var\(--fbx\)/.test(css)&&!/\.modal p\{[^}]*var\(--fbx\)/.test(css),
+    'body text never takes the dot-matrix face');
+  /* the boot script applies the stored theme before the stylesheet exists */
+  ok(html.indexOf('agora_dayplanner_theme')<html.indexOf('<style>'),'the head boot script runs before the stylesheet, so no flash');
+}
+
+console.log('— themes: WCAG contrast holds in both palettes —');
+{
+  const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
+  const lum=h=>{h=h.replace('#','');return 0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16))};
+  const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+  const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+  const readVars=b=>{const o={};[...b.matchAll(/--([a-z0-9-]+)\s*:\s*(#[0-9A-Fa-f]{6})\b/g)].forEach(m=>o[m[1]]=m[2]);return o};
+  const skyV=readVars((css.match(/:root\{[^}]*\}/)||[''])[0]);
+  const monoV={...skyV,...readVars((css.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0])};
+  const stops=b=>{const m=b.match(/--grad:linear-gradient\([^;]*\)/);return m?m[0].match(/#[0-9A-Fa-f]{6}/g):[]};
+  const themes=[['cloud blue',skyV,stops((css.match(/:root\{[^}]*\}/)||[''])[0])],
+                ['mono',monoV,stops((css.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0])]];
+  for(const [name,v,gs] of themes){
+    const pair=(f,b)=>ratio(v[f],v[b]);
+    ok(pair('txt','pearl')>=4.5&&pair('txt','cloud')>=4.5&&pair('txt','tasktile')>=4.5&&pair('txt','panel')>=4.5&&pair('txt','card')>=4.5,
+      name+': body ink reads at 4.5+ on every surface');
+    ok(pair('mut','cloud')>=4.5&&pair('mut','pearl')>=4.5&&pair('mut','tasktile')>=4.5,
+      name+': muted ink reads at 4.5+ where it carries meaning');
+    ok(pair('mut2','cloud')>=3&&pair('mut2','pearl')>=3,name+': whisper ink stays at 3+');
+    ok(pair('navy','cloud')>=4.5&&pair('navy','pearl')>=4.5&&ratio(v.on,v.navy)>=4.5,
+      name+': strong ink and its inversion hold at 4.5+');
+    ok(pair('txt','ocean')>=4.5,name+': the deepest highlight keeps the ink legible');
+    ok(pair('done','tasktile')>=3&&pair('done','cloud')>=3&&pair('done','pearl')>=3,
+      name+': the completion fill reads against every surface it sits on');
+    ok(pair('today','cloud')>=3,name+': the today marker reads against the column');
+    ok(ratio(v.onpri,v.done)>=3,name+': the tick glyph reads on its fill');
+    ok(gs.length>0&&gs.every(s=>ratio(v.onpri,s)>=3),name+': the primary label reads on its fill');
+    ok(pair('denim','cloud')>=3&&pair('denim','pearl')>=3,name+': focus and drag cues stay visible');
+  }
+  /* mono only: the red and the ink must also carry against the near-black canvas,
+     something the blue theme never asks of its canvas */
+  ok(ratio(monoV.today,monoV.canvas)>=3,'mono: red reads on the canvas');
+  ok(ratio(monoV.txt,monoV.canvas)>=7,'mono: ink on canvas is high contrast');
+  ok(ratio(monoV.ocean,monoV.canvas)>=3,'mono: the off-board note reads on the canvas');
+}
+
+console.log('— themes: the choice survives a fresh boot —');
+{
+  const dom2=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+    beforeParse(win){ try{win.localStorage.setItem('agora_dayplanner_theme','mono')}catch(e){} }});
+  await wait(300);
+  const w2=dom2.window;
+  ok(w2.document.documentElement.getAttribute('data-theme')==='mono','a fresh boot paints mono from the head script');
+  ok(w2.document.querySelector('meta[name="theme-color"]').getAttribute('content')==='#070708','the meta is set before the app script runs');
+  ok(!!w2.A&&w2.A.themeGet()==='mono','the app agrees with the head script after boot');
+  ok(!!w2.document.querySelector('#board'),'the planner boots normally under mono');
+  ok(w2.A.state.settings.view==='board','with its settings untouched by the theme');
+  w2.close();
 }
 
 console.log('— the docs match reality —');

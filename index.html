@@ -7,6 +7,18 @@
 <meta name="description" content="A calm daily planner: musts, shoulds and free time.">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#CFE3F1">
+<script>
+/* Theme boot: the stored choice must be on <html> before the stylesheet paints,
+   or one frame of the other theme flashes. Device preference only, read from its
+   own localStorage key; the planner state never carries it and sync never sees it. */
+try{
+  if(localStorage.getItem('agora_dayplanner_theme')==='mono'){
+    document.documentElement.setAttribute('data-theme','mono');
+    var __tm=document.querySelector('meta[name="theme-color"]');
+    if(__tm) __tm.setAttribute('content','#070708');
+  }
+}catch(e){}
+</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -15,11 +27,16 @@
 <link rel="icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  /* light blue palette adapted from the three references */
+  /* light blue palette adapted from the three references.
+     A THEME IS THIS SET OF VALUES and nothing else: every colour, tint, gradient,
+     shadow and label face the stylesheet uses reads a variable declared here, and
+     [data-theme="mono"] below re-declares the same set. No rule may hardcode a
+     colour, or the other theme silently keeps the wrong one. */
   --bg:#EDF4FA;          /* Cloud Blue: the highlighted light background */
+  --canvas:#5F86A6;      /* the board's dusty-denim ground behind the columns */
   --panel:#CFE3F1;       /* Powder Sky: rails, columns, framed surfaces */
   --panel2:#C4DBEC;      /* a touch deeper for headers / active tabs */
   --card:#EDF4FA;        /* Cloud Blue again: cards that sit inside panels */
@@ -29,73 +46,153 @@
   --navy:#243A5E; --denim:#5F86A6; --ocean:#8FB6D8; --teal:#567C8D;
   --sky:#CFE3F1; --cloud:#EDF4FA; --night:#243A5E; --pearl:#F5F4EF; --tasktile:#E3EEF7;
   --must:#2F4156; --should:#5F86A6; --extra:#7FA7CC;
-  --done:#46728B;        /* completion / today, teal side of the palette */
+  --must-t:#2F4156; --should-t:#3F6488; --extra-t:#3C6A8E; /* text-safe zone inks on buttons */
+  --done:#46728B;        /* completion: the tick fill, the ring, the "done" marks */
+  --today:#567C8D;       /* today's marker: column ring, badge, calendar cell, strip */
+  --okdot:#46728B;       /* the sync panel's all-well dot; status, not completion */
   --on:#EDF4FA;          /* light ink used on dark accents (cloud blue, never white) */
+  --onpri:#EDF4FA;       /* ink on the primary action and the completion fill */
+  --oncanvas:#A9C4DB;    /* hint text sitting directly on the canvas */
+  --toastact:#8FB6D8; --toastact-rgb:143,182,216; /* the Undo button inside a toast */
   --grad:linear-gradient(135deg,#2F4156,#5F86A6);          /* text-safe */
   --gradf:linear-gradient(135deg,#2F4156,#5F86A6 55%,#8FB6D8); /* decorative */
+  --ring1:#2F4156; --ring2:#5F86A6; --ring3:#8FB6D8;       /* the progress ring's stops */
   --r:14px; --r2:10px;
   --shadow:0 1px 2px rgba(36,58,94,.09),0 8px 22px rgba(36,58,94,.08);
+  /* tint anchors: every rgba() in the sheet reads one of these channel triplets,
+     so the other theme retints every wash, cue and shadow by changing five lines.
+     ink = fills, borders and hover washes; shd = box-shadows and depth only. */
+  --ink-rgb:36,58,94; --shd-rgb:36,58,94;
+  --denim-rgb:95,134,166; --teal-rgb:86,124,141; --today-rgb:86,124,141;
+  --pearl-rgb:245,244,239; --cloud-rgb:237,244,250;
+  --must-rgb:47,65,86; --should-rgb:95,134,166; --extra-rgb:127,167,204;
+  --scrim:rgba(33,64,95,.4);
+  /* decorated surfaces, held whole so a theme can flatten them */
+  --bgfx:radial-gradient(760px 480px at 12% -6%, rgba(95,134,166,.20), transparent 62%),
+    radial-gradient(680px 520px at 92% 4%, rgba(143,182,216,.24), transparent 60%),
+    radial-gradient(720px 560px at 60% 108%, rgba(36,58,94,.08), transparent 62%);
+  --railbg:linear-gradient(180deg,rgba(207,227,241,.9),rgba(196,219,236,.75));
+  --traybg:linear-gradient(168deg,rgba(245,244,239,.92),rgba(245,244,239,.24) 62%),var(--cloud);
+  --trayrim:rgba(245,244,239,.8);
+  --trayshadow:inset 0 1px 0 rgba(245,244,239,.95),
+    0 0 0 1px rgba(86,124,141,.30),
+    0 0 18px rgba(143,182,216,.55),
+    0 3px 8px rgba(36,58,94,.14),
+    0 14px 34px rgba(36,58,94,.22);
+  --sheen:linear-gradient(180deg,rgba(245,244,239,.25),rgba(245,244,239,0) 55%);
+  --sheen2:linear-gradient(180deg,rgba(245,244,239,.18),rgba(245,244,239,0) 60%);
+  --oscheme:light;       /* native date-control rendering follows the theme */
   --fd:'Space Grotesk','Inter',system-ui,sans-serif;
   --fb:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  /* label faces: fdx where a display-face numeral or short uppercase label sits,
+     fbx where a body-face one does. In this theme they ARE the base faces; the
+     mono theme leads both with its dot-matrix face, body text untouched. */
+  --fdx:'Space Grotesk','Inter',system-ui,sans-serif;
+  --fbx:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   --rail:308px;
+}
+/* Monochrome: near-black to near-light-grey, one red, dot-matrix numerals, flat.
+   Same variable set as :root, different values, nothing else. Surfaces climb the
+   grey ramp exactly as the blue theme climbs its own: canvas darkest, then rail,
+   column, task tile, pearl brightest. Ink is near-white grey, NEVER #ffffff (the
+   brightest value in the theme is #F6F6F7). Red appears only where something must
+   stand out: today's marker (--today), completion (--done, the ring stops) and
+   the primary action (--grad). Everything decorative flattens: no background
+   washes, no sheens, no gradients (flat two-stop stand-ins), no shadow depth. */
+:root[data-theme="mono"]{
+  --bg:#070708;
+  --canvas:#070708;
+  --panel:#161619;
+  --panel2:#1C1C20;
+  --card:#212126;
+  --line:#2E2E34; --line2:#40404A;
+  --txt:#E9E9EC;
+  --mut:#ABABB3; --mut2:#85858D;
+  --navy:#ECECEF; --denim:#A9A9B3; --ocean:#616169; --teal:#8E8E99;
+  --sky:#161619; --cloud:#212126; --night:#ECECEF; --pearl:#313138; --tasktile:#28282D;
+  --must:#E4E4E8; --should:#A5A5AE; --extra:#6F6F79;
+  --must-t:#E4E4E8; --should-t:#C0C0C8; --extra-t:#9E9EA8;
+  --done:#E8443C;
+  --today:#E8443C;
+  --okdot:#8E8E99;
+  --on:#151518;
+  --onpri:#F6F6F7;
+  --oncanvas:#9B9BA5;
+  --toastact:#151518; --toastact-rgb:21,21,24;
+  --grad:linear-gradient(135deg,#E8443C,#E8443C);
+  --gradf:linear-gradient(135deg,#E9E9EC,#E9E9EC);
+  --ring1:#E8443C; --ring2:#E8443C; --ring3:#E8443C;
+  --shadow:0 0 rgba(0,0,0,0);
+  --ink-rgb:233,233,236; --shd-rgb:0,0,0;
+  --denim-rgb:169,169,179; --teal-rgb:142,142,152; --today-rgb:232,68,60;
+  --pearl-rgb:49,49,56; --cloud-rgb:22,22,25;
+  --must-rgb:228,228,232; --should-rgb:165,165,174; --extra-rgb:111,111,121;
+  --scrim:rgba(0,0,0,.55);
+  --bgfx:none;
+  --railbg:linear-gradient(180deg,#161619,#161619);
+  --traybg:#313138;
+  --trayrim:#4A4A54;
+  --trayshadow:0 0 0 1px #4A4A54;
+  --sheen:none;
+  --sheen2:none;
+  --oscheme:dark;
+  --fdx:'Silkscreen','Space Grotesk','Inter',system-ui,sans-serif;
+  --fbx:'Silkscreen','Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0;height:100%}
 body{background:var(--bg);color:var(--txt);font-family:var(--fb);font-size:14.5px;line-height:1.45;overflow:hidden}
 body::before{
   content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
-  background:
-    radial-gradient(760px 480px at 12% -6%, rgba(95,134,166,.20), transparent 62%),
-    radial-gradient(680px 520px at 92% 4%, rgba(143,182,216,.24), transparent 60%),
-    radial-gradient(720px 560px at 60% 108%, rgba(36,58,94,.08), transparent 62%);
+  background:var(--bgfx);
 }
 body::after{
   content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.045;
-  background-image:radial-gradient(rgba(36,58,94,.55) .5px, transparent .5px);
+  background-image:radial-gradient(rgba(var(--ink-rgb),.55) .5px, transparent .5px);
   background-size:3px 3px;
 }
 button,input,select,textarea{font-family:inherit;color:inherit}
 button{cursor:pointer;border:none;background:none}
 input,select{background:var(--cloud);border:1px solid var(--line2);border-radius:9px;padding:8px 10px;font-size:14px;outline:none;color:var(--txt)}
-input:focus,select:focus{border-color:var(--denim);box-shadow:0 0 0 3px rgba(95,134,166,.24)}
+input:focus,select:focus{border-color:var(--denim);box-shadow:0 0 0 3px rgba(var(--denim-rgb),.24)}
 select option{background:var(--pearl);color:var(--txt)}
 ::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-thumb{background:rgba(36,58,94,.22);border-radius:9px}
-::-webkit-scrollbar-thumb:hover{background:rgba(36,58,94,.34)}
+::-webkit-scrollbar-thumb{background:rgba(var(--ink-rgb),.22);border-radius:9px}
+::-webkit-scrollbar-thumb:hover{background:rgba(var(--ink-rgb),.34)}
 ::-webkit-scrollbar-track{background:transparent}
 
 /* shell */
 #app{position:relative;z-index:1;display:grid;grid-template-columns:var(--rail) minmax(0,1fr);height:100dvh}
 #app>*{min-width:0}
-#rail{border-right:1px solid var(--line);background:linear-gradient(180deg,rgba(207,227,241,.9),rgba(196,219,236,.75));backdrop-filter:blur(8px);padding:16px 14px 22px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
-#main{min-width:0;display:flex;flex-direction:column;overflow:hidden;padding:14px 16px 0;background:var(--denim)}
+#rail{border-right:1px solid var(--line);background:var(--railbg);backdrop-filter:blur(8px);padding:16px 14px 22px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+#main{min-width:0;display:flex;flex-direction:column;overflow:hidden;padding:14px 16px 0;background:var(--canvas)}
 
 /* brand */
 .brandrow{display:flex;align-items:center;gap:10px}
-.mark{width:34px;height:34px;border-radius:11px;background:var(--gradf);flex:none;display:grid;place-items:center;box-shadow:0 6px 18px rgba(36,58,94,.28)}
+.mark{width:34px;height:34px;border-radius:11px;background:var(--gradf);flex:none;display:grid;place-items:center;box-shadow:0 6px 18px rgba(var(--shd-rgb),.28)}
 .mark i{width:11px;height:11px;border-radius:50%;background:var(--cloud);display:block}
 .brand{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:-.015em;line-height:1.1}
-.brand span{display:block;font-family:var(--fb);font-weight:600;font-size:10.5px;color:var(--txt);letter-spacing:.09em;text-transform:uppercase}
-.savebadge{font-size:10.5px;color:var(--teal);background:rgba(86,124,141,.14);border:1px solid rgba(86,124,141,.34);padding:3px 9px;border-radius:99px;white-space:nowrap;align-self:center;margin-left:auto}
-.savebadge.warn{color:var(--navy);border-color:rgba(36,58,94,.34);background:rgba(36,58,94,.09)}
+.brand span{display:block;font-family:var(--fbx);font-weight:600;font-size:10.5px;color:var(--txt);letter-spacing:.09em;text-transform:uppercase}
+.savebadge{font-size:10.5px;color:var(--teal);background:rgba(var(--teal-rgb),.14);border:1px solid rgba(var(--teal-rgb),.34);padding:3px 9px;border-radius:99px;white-space:nowrap;align-self:center;margin-left:auto}
+.savebadge.warn{color:var(--navy);border-color:rgba(var(--ink-rgb),.34);background:rgba(var(--ink-rgb),.09)}
 
 /* rail buttons */
 .navgrp{display:flex;flex-direction:column;gap:6px}
 .navbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;border-radius:var(--r2);font-size:13.5px;font-weight:500;color:var(--mut);border:1px solid transparent;transition:.16s}
-.navbtn:hover{background:rgba(36,58,94,.06);color:var(--txt)}
+.navbtn:hover{background:rgba(var(--ink-rgb),.06);color:var(--txt)}
 .navbtn.on{background:var(--pearl);border-color:var(--line2);color:var(--navy);box-shadow:var(--shadow)}
 .navbtn .em{width:18px;flex:none;display:inline-flex;align-items:center;justify-content:center}
 .navbtn .em svg{width:17px;height:17px}
-.navbtn .cnt{margin-left:auto;font-size:11px;color:var(--mut);background:rgba(36,58,94,.08);padding:1px 7px;border-radius:99px}
-.railcap{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mut2);padding:0 2px;margin-top:2px}
+.navbtn .cnt{margin-left:auto;font-size:11px;color:var(--mut);background:rgba(var(--ink-rgb),.08);padding:1px 7px;border-radius:99px}
+.railcap{font-family:var(--fbx);font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mut2);padding:0 2px;margin-top:2px}
 .railfoot{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:10px}
 .railfoot button{flex:1 1 31%;padding:8px;border-radius:9px;font-size:12px;color:var(--mut);border:1px solid var(--line);background:var(--cloud);transition:.16s}
 .railfoot button:hover{color:var(--navy);border-color:var(--line2)}
 
 /* cards */
 .kard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px;box-shadow:var(--shadow)}
-.kh{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
-.kh .sp{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500;color:var(--mut2)}
+.kh{display:flex;align-items:center;gap:8px;font-family:var(--fbx);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
+.kh .sp{margin-left:auto;font-family:var(--fb);text-transform:none;letter-spacing:0;font-weight:500;color:var(--mut2)}
 /* the one chevron every collapsible panel header uses: right when collapsed, down when open */
 .chev{width:12px;height:12px;flex:none;color:var(--mut2);transition:transform .18s ease}
 .chev.open{transform:rotate(90deg)}
@@ -123,53 +220,59 @@ select option{background:var(--pearl);color:var(--txt)}
 .frow.done .mini{margin-top:0}
 .fdate{font-size:10.5px;color:var(--mut2);display:block;margin-top:1px}
 .mini{font-size:11px;color:var(--mut2);padding:2px 5px;border-radius:6px;transition:.14s}
-.mini:hover{color:var(--navy);background:rgba(36,58,94,.08)}
+.mini:hover{color:var(--navy);background:rgba(var(--ink-rgb),.08)}
 .box{width:17px;height:17px;border-radius:6px;border:1.6px solid var(--line2);flex:none;margin-top:1px;display:grid;place-items:center;font-size:11px;color:transparent;transition:.16s}
 .box:hover{border-color:var(--done)}
-.box.on{background:var(--done);border-color:var(--done);color:var(--on)}
+.box.on{background:var(--done);border-color:var(--done);color:var(--onpri)}
 .box.pop{animation:pop .28s ease}
 @keyframes pop{0%{transform:scale(1)}45%{transform:scale(1.28)}100%{transform:scale(1)}}
 .fadd{display:flex;gap:6px;margin-top:9px}
 .fadd input{flex:1;padding:7px 9px;font-size:13px}
-.fadd button{padding:7px 12px;border-radius:9px;background:var(--grad);color:var(--on);font-weight:600;font-size:12.5px}
+.fadd button{padding:7px 12px;border-radius:9px;background:var(--grad);color:var(--onpri);font-weight:600;font-size:12.5px}
 .fdone{margin-top:8px;font-size:11.5px;color:var(--mut2);cursor:pointer;user-select:none}
 
 /* metrics */
-.mtabs{display:flex;gap:3px;margin-left:auto;background:rgba(36,58,94,.07);padding:2px;border-radius:8px}
+.mtabs{display:flex;gap:3px;margin-left:auto;background:rgba(var(--ink-rgb),.07);padding:2px;border-radius:8px}
 .mtabs button{font-size:10.5px;padding:3px 8px;border-radius:6px;color:var(--mut);font-weight:500}
-.mtabs button.on{background:var(--cloud);color:var(--navy);box-shadow:0 1px 2px rgba(36,58,94,.12)}
+.mtabs button.on{background:var(--cloud);color:var(--navy);box-shadow:0 1px 2px rgba(var(--shd-rgb),.12)}
 .ringwrap{display:flex;align-items:center;gap:14px}
 .ring{position:relative;width:88px;height:88px;flex:none}
 .ring svg{transform:rotate(-90deg)}
 .ring .rlab{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
-.ring .rlab b{font-family:var(--fd);font-size:21px;font-weight:700;letter-spacing:-.02em;display:block;color:var(--navy)}
-.ring .rlab i{font-style:normal;font-size:9.5px;color:var(--mut2);letter-spacing:.06em;text-transform:uppercase}
+.ring .rlab b{font-family:var(--fdx);font-size:21px;font-weight:700;letter-spacing:-.02em;display:block;color:var(--navy)}
+.ring .rlab i{font-style:normal;font-family:var(--fbx);font-size:9.5px;color:var(--mut2);letter-spacing:.06em;text-transform:uppercase}
 .rp{transition:stroke-dashoffset .55s cubic-bezier(.4,0,.2,1)}
+/* the ring's paints come from the theme: the track tint, and the bar's gradient
+   stops (a flat colour in mono, where all three stops agree) */
+.ring .rt{stroke:rgba(var(--ink-rgb),.12)}
+#rg stop:nth-of-type(1){stop-color:var(--ring1)}
+#rg stop:nth-of-type(2){stop-color:var(--ring2)}
+#rg stop:nth-of-type(3){stop-color:var(--ring3)}
 .legend{display:flex;flex-direction:column;gap:6px;font-size:12px;min-width:0}
 .legend div{display:flex;align-items:center;gap:7px;color:var(--mut)}
 .legend b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
 .dotm{width:7px;height:7px;border-radius:50%;flex:none}
 .duo{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.stat{font-family:var(--fd);font-size:26px;font-weight:700;letter-spacing:-.03em;line-height:1;color:var(--navy)}
+.stat{font-family:var(--fdx);font-size:26px;font-weight:700;letter-spacing:-.03em;line-height:1;color:var(--navy)}
 .statsub{font-size:11px;color:var(--mut2);margin-top:3px}
 .bars{display:flex;align-items:flex-end;gap:6px;height:64px;margin-top:2px}
 .bar{flex:1;min-width:0;border-radius:5px 5px 3px 3px;background:var(--gradf);transition:height .45s cubic-bezier(.4,0,.2,1);min-height:3px;position:relative}
-.bar.now{box-shadow:0 0 0 1.5px var(--teal)}
-.barlbl{display:flex;gap:6px;margin-top:5px;font-size:9.5px;color:var(--mut2)}
+.bar.now{box-shadow:0 0 0 1.5px var(--today)}
+.barlbl{display:flex;gap:6px;margin-top:5px;font-family:var(--fbx);font-size:9.5px;color:var(--mut2)}
 .barlbl span{flex:1;text-align:center;min-width:0;overflow:hidden}
 .goalbar{margin-top:12px;padding-top:11px;border-top:1px solid var(--line)}
 .goalbar .gt{display:flex;font-size:11px;color:var(--mut);margin-bottom:6px}
 .goalbar .gt b{margin-left:auto;color:var(--txt);font-variant-numeric:tabular-nums}
-.track{height:7px;border-radius:99px;background:rgba(36,58,94,.10);overflow:hidden}
+.track{height:7px;border-radius:99px;background:rgba(var(--ink-rgb),.10);overflow:hidden}
 .track i{display:block;height:100%;border-radius:99px;background:var(--gradf);transition:width .55s cubic-bezier(.4,0,.2,1)}
 
 /* quick add */
 #quickadd{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 #qi{flex:1;min-width:180px;min-height:44px;padding:11px 13px;font-size:14.5px;line-height:1.4;background:var(--pearl);border:1px solid var(--line2);border-radius:var(--r2);resize:none;overflow:hidden;max-height:170px;outline:none;box-shadow:var(--shadow)}
-#qi:focus{border-color:var(--denim);box-shadow:0 0 0 3px rgba(95,134,166,.24)}
+#qi:focus{border-color:var(--denim);box-shadow:0 0 0 3px rgba(var(--denim-rgb),.24)}
 #qi::placeholder{color:var(--mut2)}
 #qd{padding:11px 10px;font-size:13px;max-width:190px;background:var(--pearl)}
-#qb{padding:11px 18px;border-radius:var(--r2);background:var(--grad);color:var(--on);font-weight:700;font-size:14px;letter-spacing:-.01em;transition:.15s;box-shadow:var(--shadow)}
+#qb{padding:11px 18px;border-radius:var(--r2);background:var(--grad);color:var(--onpri);font-weight:700;font-size:14px;letter-spacing:-.01em;transition:.15s;box-shadow:var(--shadow)}
 #qb:active{transform:scale(.97)}
 
 /* carry tray */
@@ -178,14 +281,10 @@ select option{background:var(--pearl);color:var(--txt)}
    with first: a pearl sheen over the same cloud blue the day columns use, a pearl rim
    catching the light, a teal ring and a soft ocean glow just outside it, and more
    elevation than a column, with a 2px lift so it sits forward of the canvas. */
-.tray{border:1px solid rgba(245,244,239,.8);border-radius:var(--r);padding:11px 13px;
-  background:linear-gradient(168deg,rgba(245,244,239,.92),rgba(245,244,239,.24) 62%),var(--cloud);
+.tray{border:1px solid var(--trayrim);border-radius:var(--r);padding:11px 13px;
+  background:var(--traybg);
   transform:translateY(-2px);
-  box-shadow:inset 0 1px 0 rgba(245,244,239,.95),
-    0 0 0 1px rgba(86,124,141,.30),
-    0 0 18px rgba(143,182,216,.55),
-    0 3px 8px rgba(36,58,94,.14),
-    0 14px 34px rgba(36,58,94,.22);
+  box-shadow:var(--trayshadow);
   animation:traydrop .34s ease}
 @keyframes traydrop{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(-2px)}}
 @keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
@@ -197,8 +296,8 @@ select option{background:var(--pearl);color:var(--txt)}
 /* tray only: powder keeps the controls readable now the panel behind them is brighter */
 .tbtn{font-size:11.5px;padding:5px 10px;border-radius:8px;border:1px solid var(--line2);color:var(--navy);background:var(--panel);transition:.15s}
 .tbtn:hover{background:var(--panel2)}
-.trayitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid rgba(36,58,94,.13);font-size:13px}
-.trayitem .from{font-size:10.5px;color:var(--mut);background:rgba(36,58,94,.08);padding:1px 7px;border-radius:99px;white-space:nowrap}
+.trayitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid rgba(var(--ink-rgb),.13);font-size:13px}
+.trayitem .from{font-size:10.5px;color:var(--mut);background:rgba(var(--ink-rgb),.08);padding:1px 7px;border-radius:99px;white-space:nowrap}
 .trayitem .t{flex:1;min-width:0;word-break:break-word}
 
 /* recycle bin */
@@ -213,19 +312,19 @@ select option{background:var(--pearl);color:var(--txt)}
 .nbtn{padding:7px 12px;border-radius:9px;font-size:12.5px;color:var(--navy);border:1px solid var(--line);background:var(--pearl);transition:.15s;font-weight:500}
 .nbtn:active{background:var(--navy);border-color:var(--navy);color:var(--on)}
 .nbtn:hover{color:var(--navy);border-color:var(--line2)}
-.nbtn.solid{background:var(--navy);border-color:rgba(237,244,250,.32);color:var(--on)}
-#boardnav .jl{font-size:11.5px;color:#A9C4DB;margin-left:6px}
-#boardnav input[type=date]{padding:6px 9px;font-size:12.5px;color-scheme:light}
-.offnote{font-size:11.5px;color:#8FB6D8;margin-left:auto;font-weight:600}
+.nbtn.solid{background:var(--navy);border-color:rgba(var(--cloud-rgb),.32);color:var(--on)}
+#boardnav .jl{font-size:11.5px;color:var(--oncanvas);margin-left:6px}
+#boardnav input[type=date]{padding:6px 9px;font-size:12.5px;color-scheme:var(--oscheme)}
+.offnote{font-size:11.5px;color:var(--ocean);margin-left:auto;font-weight:600}
 
 /* board */
 #board{display:flex;gap:12px;overflow-x:auto;overflow-y:hidden;padding-bottom:16px;flex:1;min-width:0;align-items:flex-start}
 .col{width:268px;flex:none;display:flex;flex-direction:column;max-height:100%;background:var(--cloud);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
 .anim .col{animation:rise .34s cubic-bezier(.2,.7,.3,1) backwards}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-.col.today{border-color:var(--teal);box-shadow:0 0 0 1px rgba(86,124,141,.35),var(--shadow)}
+.col.today{border-color:var(--today);box-shadow:0 0 0 1px rgba(var(--today-rgb),.35),var(--shadow)}
 .col.past{opacity:.66}
-.colhead{padding:11px 12px 9px;border-bottom:1px solid var(--line);flex:none;background:rgba(36,58,94,.03)}
+.colhead{padding:11px 12px 9px;border-bottom:1px solid var(--line);flex:none;background:rgba(var(--ink-rgb),.03)}
 /* a Free Floating tab header is the tab's drag handle; day column headers are not */
 .backlog .colhead{cursor:grab}
 .backlog .colhead:active{cursor:grabbing}
@@ -242,15 +341,15 @@ select option{background:var(--pearl);color:var(--txt)}
 .colhead .d1{display:flex;align-items:baseline;gap:7px}
 /* rename and delete sit together in a tab header, so they need to match each other */
 .backlog .colhead .mini{align-self:center;display:inline-flex;align-items:center;justify-content:center;min-width:21px}
-.colhead .dow{font-family:var(--fd);font-size:14px;font-weight:600;letter-spacing:-.01em;color:var(--navy);text-transform:uppercase}
-.colhead .dnum{font-size:11.5px;color:var(--mut);text-transform:uppercase}
-.badge{margin-left:auto;font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:2px 7px;border-radius:99px;background:rgba(86,124,141,.2);color:var(--teal);border:1px solid rgba(86,124,141,.42)}
+.colhead .dow{font-family:var(--fdx);font-size:14px;font-weight:600;letter-spacing:-.01em;color:var(--navy);text-transform:uppercase}
+.colhead .dnum{font-family:var(--fbx);font-size:11.5px;color:var(--mut);text-transform:uppercase}
+.badge{margin-left:auto;font-family:var(--fbx);font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:2px 7px;border-radius:99px;background:rgba(var(--today-rgb),.2);color:var(--today);border:1px solid rgba(var(--today-rgb),.42)}
 .colhead .meta{font-size:11px;color:var(--mut);margin-top:3px}
-.heavy{margin-top:7px;font-size:11px;padding:5px 8px;border-radius:8px;background:rgba(36,58,94,.10);border:1px solid rgba(36,58,94,.32);color:var(--navy)}
+.heavy{margin-top:7px;font-size:11px;padding:5px 8px;border-radius:8px;background:rgba(var(--ink-rgb),.10);border:1px solid rgba(var(--ink-rgb),.32);color:var(--navy)}
 .colbody{overflow-y:auto;padding:9px;display:flex;flex-direction:column;gap:11px;min-height:60px}
 .zone{border-radius:var(--r2);padding:2px}
-.zone.drop{outline:1.5px dashed var(--denim);outline-offset:2px;background:rgba(95,134,166,.12)}
-.zh{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);padding:2px 3px 6px}
+.zone.drop{outline:1.5px dashed var(--denim);outline-offset:2px;background:rgba(var(--denim-rgb),.12)}
+.zh{display:flex;align-items:center;gap:6px;font-family:var(--fbx);font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);padding:2px 3px 6px}
 .zh .pip{width:6px;height:6px;border-radius:50%;flex:none}
 .zh .lk{width:12px;height:12px;margin-left:2px;color:var(--denim);flex:none}
 .zh .n{margin-left:auto;font-weight:500;letter-spacing:0;font-size:10.5px}
@@ -258,25 +357,25 @@ select option{background:var(--pearl);color:var(--txt)}
 .lockmsg{font-size:11px;color:var(--mut2);padding:4px 4px 6px;font-style:italic}
 .freego{font-size:11px;color:var(--teal);padding:4px 4px 6px;font-weight:600}
 .zadd{width:100%;text-align:left;font-size:11.5px;color:var(--mut2);padding:5px 6px;border-radius:7px;transition:.14s;margin-top:2px}
-.zadd:hover{background:rgba(36,58,94,.06);color:var(--navy)}
+.zadd:hover{background:rgba(var(--ink-rgb),.06);color:var(--navy)}
 
 /* task card */
-.task{background:var(--tasktile);border:1px solid var(--line);border-radius:var(--r2);padding:8px 9px;margin-bottom:6px;transition:.15s;box-shadow:0 1px 1px rgba(36,58,94,.06)}
+.task{background:var(--tasktile);border:1px solid var(--line);border-radius:var(--r2);padding:8px 9px;margin-bottom:6px;transition:.15s;box-shadow:0 1px 1px rgba(var(--shd-rgb),.06)}
 .task:hover{border-color:var(--line2);transform:translateY(-1px);box-shadow:var(--shadow)}
-.task.sel{border-color:var(--denim);background:var(--cloud);box-shadow:0 0 0 1px rgba(95,134,166,.4),var(--shadow)}
+.task.sel{border-color:var(--denim);background:var(--cloud);box-shadow:0 0 0 1px rgba(var(--denim-rgb),.4),var(--shadow)}
 .task.dragging{opacity:.4}
 .task.flash{animation:flash .7s ease}
-@keyframes flash{0%{background:rgba(95,134,166,.4)}100%{background:var(--tasktile)}}
+@keyframes flash{0%{background:rgba(var(--denim-rgb),.4)}100%{background:var(--tasktile)}}
 .trow{display:flex;align-items:flex-start;gap:8px}
 .ttl{flex:1;min-width:0;font-size:13.5px;line-height:1.35;word-break:break-word;cursor:pointer}
 .task.done .ttl{color:var(--mut2);text-decoration:line-through}
-.subn{font-size:10.5px;color:var(--mut2);white-space:nowrap;margin-top:2px}
+.subn{font-family:var(--fbx);font-size:10.5px;color:var(--mut2);white-space:nowrap;margin-top:2px}
 .acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
 .abtn{font-size:11px;padding:4px 8px;border-radius:7px;border:1px solid var(--line);color:var(--mut);background:var(--panel);transition:.14s;white-space:nowrap}
 .abtn:hover{color:var(--navy);border-color:var(--line2);background:var(--panel2)}
-.abtn.m{color:#2F4156;border-color:rgba(47,65,86,.4)}
-.abtn.s{color:#3F6488;border-color:rgba(95,134,166,.45)}
-.abtn.e{color:#3C6A8E;border-color:rgba(127,167,204,.5)}
+.abtn.m{color:var(--must-t);border-color:rgba(var(--must-rgb),.4)}
+.abtn.s{color:var(--should-t);border-color:rgba(var(--should-rgb),.45)}
+.abtn.e{color:var(--extra-t);border-color:rgba(var(--extra-rgb),.5)}
 /* the one destructive control in the bar, on a day card and inside a Free Floating tab
    alike, so it reads as deliberate instead of as another neutral button. Navy inversion,
    the same idiom the day strip already uses. */
@@ -289,7 +388,7 @@ select option{background:var(--pearl);color:var(--txt)}
 .sub .st{flex:1;min-width:0;word-break:break-word;line-height:1.3}
 .sub.done .st{color:var(--mut2);text-decoration:line-through}
 .sbox{width:14px;height:14px;border-radius:5px;border:1.5px solid var(--line2);flex:none;margin-top:2px;display:grid;place-items:center;font-size:9px;color:transparent;transition:.15s}
-.sbox.on{background:var(--done);border-color:var(--done);color:var(--on)}
+.sbox.on{background:var(--done);border-color:var(--done);color:var(--onpri)}
 .saddrow{display:flex;gap:5px;margin-top:3px}
 .saddrow input{flex:1;padding:5px 8px;font-size:12px;border-radius:7px;min-width:0}
 .zaddrow .addcancel{flex:none;padding:5px 9px;color:var(--mut)}
@@ -306,10 +405,10 @@ select option{background:var(--pearl);color:var(--txt)}
 .hhead .hcnt{margin-left:auto;color:var(--mut2)}
 .hgridwrap{overflow-x:auto;margin-top:9px}
 .hgrid{display:grid;grid-template-columns:minmax(110px,1fr) repeat(6,40px) auto auto;gap:3px 4px;align-items:center}
-.hdow{text-align:center;font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2)}
-.hdow.now{color:var(--teal)}
+.hdow{text-align:center;font-family:var(--fbx);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2)}
+.hdow.now{color:var(--today)}
 .hname{font-size:13px;line-height:1.3;word-break:break-word;padding:2px 4px;border-radius:6px;cursor:pointer}
-.hname:hover{background:rgba(36,58,94,.06)}
+.hname:hover{background:rgba(var(--ink-rgb),.06)}
 .hbox{width:19px;height:19px;justify-self:center;margin-top:0}
 .hdash{text-align:center;color:var(--mut2);opacity:.55;font-size:12px;user-select:none}
 .hday{font-size:10px;padding:4px 0;border-radius:7px;border:1px solid var(--line);color:var(--mut);background:var(--cloud);transition:.14s}
@@ -346,21 +445,21 @@ select option{background:var(--pearl);color:var(--txt)}
 #cal{flex:1;overflow-y:auto;padding-bottom:16px;min-width:0}
 .calbar{display:flex;align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap}
 .calbar h2{font-family:var(--fd);font-size:19px;font-weight:600;letter-spacing:-.02em;margin:0;color:var(--navy)}
-.chip{font-size:11.5px;padding:4px 10px;border-radius:99px;background:rgba(86,124,141,.18);border:1px solid rgba(86,124,141,.38);color:var(--teal);display:inline-flex;align-items:center;gap:7px}
+.chip{font-size:11.5px;padding:4px 10px;border-radius:99px;background:rgba(var(--teal-rgb),.18);border:1px solid rgba(var(--teal-rgb),.38);color:var(--teal);display:inline-flex;align-items:center;gap:7px}
 .calgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
 .caldow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-bottom:6px}
-.caldow div{text-align:center;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--mut2);padding:2px}
+.caldow div{text-align:center;font-family:var(--fbx);font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--mut2);padding:2px}
 .cell{min-height:74px;border-radius:var(--r2);padding:6px 7px;border:1px solid var(--line);background:var(--card);transition:.15s;display:flex;flex-direction:column;gap:5px;cursor:pointer}
 .cell:hover{background:var(--panel)}
 .cell.blank{border:none;background:none;cursor:default;min-height:0}
-.cell.today{border-color:var(--teal)}
-.cell.sel{border-color:var(--denim);background:rgba(95,134,166,.14)}
-.cell .n{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums}
-.cell.today .n{color:var(--teal);font-weight:700}
+.cell.today{border-color:var(--today)}
+.cell.sel{border-color:var(--denim);background:rgba(var(--denim-rgb),.14)}
+.cell .n{font-family:var(--fbx);font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums}
+.cell.today .n{color:var(--today);font-weight:700}
 .dots{display:flex;flex-wrap:wrap;gap:3px}
 .dots i{width:6px;height:6px;border-radius:50%;display:block}
 .dots .more{font-size:9px;color:var(--mut2);line-height:6px}
-.cell .allok{font-size:11px;color:var(--teal)}
+.cell .allok{font-size:11px;color:var(--today)}
 .dpanel{margin-top:16px}
 .dphead{display:flex;align-items:center;gap:9px;margin-bottom:9px;flex-wrap:wrap}
 .dphead b{font-family:var(--fd);font-size:15px;font-weight:600;color:var(--navy)}
@@ -386,7 +485,7 @@ select option{background:var(--pearl);color:var(--txt)}
 .noterow .nt svg{width:11px;height:11px;flex:none;color:var(--denim)}
 .noterow .ntx,.noterow .nsub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .noterow .nsub{font-size:11px;color:var(--mut2)}
-@media (hover:hover){ .noterow:hover{background:rgba(36,58,94,.06)} .noterow.on:hover{background:var(--pearl)} }
+@media (hover:hover){ .noterow:hover{background:rgba(var(--ink-rgb),.06)} .noterow.on:hover{background:var(--pearl)} }
 .noterow:active{transform:scale(.99)}
 .noteed{flex:1;min-width:0;overflow-y:auto;padding:2px 6px 18px 0}
 /* the page sits directly beside the list, one continuous surface like board-and-rail,
@@ -396,7 +495,7 @@ select option{background:var(--pearl);color:var(--txt)}
    page's edge the denim canvas shows, the same way it does past the board's columns. */
 .notepage{width:fit-content;max-width:100%;background:var(--pearl);border:1px solid var(--line2);
   border-radius:var(--r);box-shadow:var(--shadow);padding:22px 30px 30px;display:flex;flex-direction:column}
-.notepage:focus-within{border-color:var(--denim);box-shadow:0 0 0 3px rgba(95,134,166,.14),var(--shadow)}
+.notepage:focus-within{border-color:var(--denim);box-shadow:0 0 0 3px rgba(var(--denim-rgb),.14),var(--shadow)}
 .notewrap{width:640px;max-width:100%;min-width:0}
 #noteTitle{width:100%;min-width:0;border:none;background:transparent;box-shadow:none;border-radius:0;
   padding:0 0 6px;font-family:var(--fd);font-weight:600;font-size:19px;letter-spacing:-.02em;color:var(--navy)}
@@ -416,7 +515,7 @@ select option{background:var(--pearl);color:var(--txt)}
   color:var(--mut);border:1px solid transparent;transition:.15s;line-height:1.25}
 @media (hover:hover){ .ntb:hover{color:var(--navy);border-color:var(--line)} }
 .ntb:active{transform:scale(.93)}
-.ntb.on{color:var(--navy);background:rgba(36,58,94,.09);border-color:var(--line2)}
+.ntb.on{color:var(--navy);background:rgba(var(--ink-rgb),.09);border-color:var(--line2)}
 .ntb .swc{display:inline-block;width:13px;height:13px;border-radius:4px;border:1px solid var(--line2);vertical-align:-2px}
 .ntb .a1{font-size:10.5px}.ntb .a2{font-size:12.5px}.ntb .a3{font-size:15.5px}
 .ntsep{width:1px;height:15px;background:var(--line);margin:0 5px;flex:none}
@@ -435,9 +534,9 @@ select option{background:var(--pearl);color:var(--txt)}
 #noteBody ul.dash{list-style-type:circle;list-style-type:'-  '}
 /* page appearance, drawn UNDER the text: hairlines and dots from the palette, kept
    faint enough that navy ink always wins. em-based so the ruling tracks the type. */
-#noteBody.pg-ruled{background-image:linear-gradient(to top,rgba(95,134,166,.26) 1px,transparent 1px);
+#noteBody.pg-ruled{background-image:linear-gradient(to top,rgba(var(--denim-rgb),.26) 1px,transparent 1px);
   background-size:100% 1.7em;background-position:0 .12em}
-#noteBody.pg-dot{background-image:radial-gradient(rgba(36,58,94,.17) 1px,transparent 1.4px);
+#noteBody.pg-dot{background-image:radial-gradient(rgba(var(--ink-rgb),.17) 1px,transparent 1.4px);
   background-size:1.13em 1.13em;background-position:.3em .55em}
 @media (max-width:900px){
   #notes{flex-direction:column;overflow:visible}
@@ -455,26 +554,26 @@ select option{background:var(--pearl);color:var(--txt)}
    quick-add destination select, since neither can be styled and the OS blue highlight
    fights the palette. Touch devices keep the native controls. */
 .popover{position:fixed;z-index:250;background:var(--card);border:1px solid var(--line2);
-  border-radius:var(--r);padding:9px;box-shadow:0 4px 10px rgba(36,58,94,.14),0 18px 44px rgba(36,58,94,.26);
+  border-radius:var(--r);padding:9px;box-shadow:0 4px 10px rgba(var(--shd-rgb),.14),0 18px 44px rgba(var(--shd-rgb),.26);
   animation:drop .2s cubic-bezier(.2,.7,.3,1);outline:none}
 .plist{max-height:min(340px,62vh);overflow-y:auto;display:flex;flex-direction:column;gap:1px}
-.pgl{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);padding:8px 9px 4px}
+.pgl{font-family:var(--fbx);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);padding:8px 9px 4px}
 .popt{display:block;width:100%;text-align:left;font-size:13px;padding:7px 10px;border-radius:7px;
   color:var(--txt);border:1px solid transparent;transition:.14s;white-space:nowrap}
-.popt:hover,.popt.act{background:rgba(36,58,94,.07);color:var(--navy)}
-.popt.on{background:rgba(95,134,166,.16);border-color:var(--denim);color:var(--navy);font-weight:600}
+.popt:hover,.popt.act{background:rgba(var(--ink-rgb),.07);color:var(--navy)}
+.popt.on{background:rgba(var(--denim-rgb),.16);border-color:var(--denim);color:var(--navy);font-weight:600}
 .phead{display:flex;align-items:center;gap:6px;margin-bottom:7px}
 .phead b{flex:1;text-align:center;font-family:var(--fd);font-size:13.5px;font-weight:600;letter-spacing:-.01em;color:var(--navy)}
 .phead .nbtn{padding:4px 10px;font-size:12px}
 .pdow{display:grid;grid-template-columns:repeat(7,34px);gap:2px;margin-bottom:2px}
-.pdow span{text-align:center;font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);padding:2px 0}
+.pdow span{text-align:center;font-family:var(--fbx);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);padding:2px 0}
 .pgrid{display:grid;grid-template-columns:repeat(7,34px);gap:2px}
 .pday{height:31px;display:grid;place-items:center;border-radius:7px;border:1px solid transparent;
   font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--txt);transition:.14s}
 .pday:hover{background:var(--panel)}
-.pday.today{border-color:var(--teal);color:var(--teal);font-weight:700}
-.pday.on{border-color:var(--denim);background:rgba(95,134,166,.14)}
-.pday.act{border-color:var(--denim);background:rgba(95,134,166,.22)}
+.pday.today{border-color:var(--today);color:var(--today);font-weight:700}
+.pday.on{border-color:var(--denim);background:rgba(var(--denim-rgb),.14)}
+.pday.act{border-color:var(--denim);background:rgba(var(--denim-rgb),.22)}
 .pfoot{display:flex;gap:6px;margin-top:8px;padding-top:9px;border-top:1px solid var(--line)}
 .pfoot .nbtn{flex:1;padding:6px 10px;font-size:12px}
 /* the custom layer replaces the built-in popup on pointer devices, so hide its icon
@@ -488,19 +587,19 @@ select option{background:var(--pearl);color:var(--txt)}
 }
 
 /* modal / toast */
-.mback{position:fixed;inset:0;background:rgba(33,64,95,.4);backdrop-filter:blur(3px);z-index:200;display:grid;place-items:center;padding:20px;animation:fade .18s ease}
+.mback{position:fixed;inset:0;background:var(--scrim);backdrop-filter:blur(3px);z-index:200;display:grid;place-items:center;padding:20px;animation:fade .18s ease}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-.modal{background:var(--card);border:1px solid var(--line2);border-radius:18px;padding:22px;max-width:560px;width:100%;max-height:82vh;overflow-y:auto;animation:drop .24s cubic-bezier(.2,.7,.3,1);box-shadow:0 24px 60px rgba(36,58,94,.28)}
+.modal{background:var(--card);border:1px solid var(--line2);border-radius:18px;padding:22px;max-width:560px;width:100%;max-height:82vh;overflow-y:auto;animation:drop .24s cubic-bezier(.2,.7,.3,1);box-shadow:0 24px 60px rgba(var(--shd-rgb),.28)}
 .modal h3{font-family:var(--fd);font-size:19px;font-weight:600;margin:0 0 12px;letter-spacing:-.02em;color:var(--navy)}
 .modal p{font-size:13.5px;color:var(--mut);margin:0 0 11px;line-height:1.55}
 .modal p b{color:var(--txt)}
 .mrow{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 .mrow button{padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;border:1px solid var(--line2);color:var(--navy);background:var(--panel)}
-.mrow button.pri{background:var(--grad);color:var(--on);border-color:transparent}
+.mrow button.pri{background:var(--grad);color:var(--onpri);border-color:transparent}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:300}
-.toast{display:flex;align-items:center;gap:12px;padding:11px 16px;border-radius:12px;background:var(--navy);color:var(--on);border:1px solid rgba(36,58,94,.5);font-size:13px;box-shadow:0 12px 40px rgba(36,58,94,.4)}
-.toast button{font-size:12.5px;font-weight:700;color:var(--ocean);padding:3px 8px;border-radius:7px}
-.toast button:hover{background:rgba(143,182,216,.2)}
+.toast{display:flex;align-items:center;gap:12px;padding:11px 16px;border-radius:12px;background:var(--navy);color:var(--on);border:1px solid rgba(var(--ink-rgb),.5);font-size:13px;box-shadow:0 12px 40px rgba(var(--shd-rgb),.4)}
+.toast button{font-size:12.5px;font-weight:700;color:var(--toastact);padding:3px 8px;border-radius:7px}
+.toast button:hover{background:rgba(var(--toastact-rgb),.2)}
 .empty{font-size:12px;color:var(--mut2);padding:10px 4px;font-style:italic}
 
 /* sync panel */
@@ -511,7 +610,7 @@ select option{background:var(--pearl);color:var(--txt)}
   background:var(--pearl);border:1px solid var(--line);border-radius:var(--r2);padding:9px 11px;margin-bottom:12px}
 .syncstat .sdot{width:8px;height:8px;border-radius:50%;flex:none;margin-top:5px;background:var(--mut2)}
 .syncstat.busy .sdot{background:var(--denim)}
-.syncstat.synced .sdot{background:var(--done)}
+.syncstat.synced .sdot{background:var(--okdot)}
 .syncstat.offline .sdot{background:var(--ocean)}
 .syncstat.error .sdot,.syncstat.conflict .sdot{background:var(--navy)}
 .synchint{font-size:11.5px!important;color:var(--mut2)!important;line-height:1.5}
@@ -520,8 +619,8 @@ select option{background:var(--pearl);color:var(--txt)}
 #strip{display:none;gap:6px;overflow-x:auto;padding-bottom:9px;margin-bottom:9px}
 #strip button{flex:none;padding:7px 12px;border-radius:99px;font-size:12.5px;border:1px solid var(--line);color:var(--navy);background:var(--pearl);white-space:nowrap}
 #strip button:active{background:var(--navy);border-color:var(--navy);color:var(--on)}
-#strip button.on{background:var(--navy);border-color:rgba(237,244,250,.32);color:var(--on)}
-#strip button.istoday{border-color:var(--teal)}
+#strip button.on{background:var(--navy);border-color:rgba(var(--cloud-rgb),.32);color:var(--on)}
+#strip button.istoday{border-color:var(--today)}
 #railtoggle{display:none}
 
 /* responsive */
@@ -570,40 +669,41 @@ select option{background:var(--pearl);color:var(--txt)}
 .nbtn,.tbtn,.abtn,.navbtn,.railfoot button,#strip button,#qb,.fadd button,.mrow button{position:relative;overflow:hidden}
 .nbtn::after,.tbtn::after,.abtn::after,.navbtn::after,.railfoot button::after,#strip button::after,#qb::after,.fadd button::after,.mrow button::after{
   content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transform:scale(.55);
-  background:radial-gradient(closest-side at 50% 50%,rgba(36,58,94,.18),transparent 92%);
+  background:radial-gradient(closest-side at 50% 50%,rgba(var(--ink-rgb),.18),transparent 92%);
   transition:opacity .5s ease,transform .5s ease}
 #qb::after,.fadd button::after,.mrow button.pri::after,.nbtn.solid::after,#strip button.on::after{
-  background:radial-gradient(closest-side at 50% 50%,rgba(245,244,239,.55),transparent 92%)}
+  background:radial-gradient(closest-side at 50% 50%,rgba(var(--pearl-rgb),.55),transparent 92%)}
 .nbtn:active::after,.tbtn:active::after,.abtn:active::after,.navbtn:active::after,.railfoot button:active::after,#strip button:active::after,#qb:active::after,.fadd button:active::after,.mrow button:active::after{
   opacity:1;transform:scale(1.9);transition:opacity 0s,transform 0s}
-/* sheen + gradient drift on primary buttons */
+/* sheen + gradient drift on primary buttons (the sheen layer is a theme choice:
+   the flat theme sets it to none and the layered background collapses to a plain fill) */
 #qb,.fadd button,.mrow button.pri{
-  background-image:linear-gradient(180deg,rgba(245,244,239,.25),rgba(245,244,239,0) 55%),var(--grad);
+  background-image:var(--sheen),var(--grad);
   background-size:100% 100%,170% 170%;background-position:0 0,0% 50%}
-.nbtn.solid,#strip button.on{background-image:linear-gradient(180deg,rgba(245,244,239,.18),rgba(245,244,239,0) 60%)}
+.nbtn.solid,#strip button.on{background-image:var(--sheen2)}
 /* hover: pointer devices only, so phones never get sticky hover states */
 @media (hover:hover){
-  .nbtn:hover,.tbtn:hover,.railfoot button:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(36,58,94,.18)}
-  .abtn:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(36,58,94,.14)}
+  .nbtn:hover,.tbtn:hover,.railfoot button:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(var(--shd-rgb),.18)}
+  .abtn:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(var(--shd-rgb),.14)}
   .abtn.del:hover{background:var(--navy);border-color:var(--navy);color:var(--on)}
   .navbtn:hover{transform:translateX(3px)}
   .navbtn.on:hover{transform:none}
-  .zadd:hover{background:rgba(36,58,94,.07)}
+  .zadd:hover{background:rgba(var(--ink-rgb),.07)}
   .mini:hover{transform:scale(1.15)}
   .box:hover{transform:scale(1.12)}
   .sbox:hover{transform:scale(1.12);border-color:var(--done)}
   .mtabs button:hover{color:var(--navy)}
-  #qb:hover,.fadd button:hover,.mrow button.pri:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(36,58,94,.3);background-position:0 0,100% 50%}
-  .nbtn.solid:hover{box-shadow:0 6px 16px rgba(36,58,94,.35)}
-  .cell:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(36,58,94,.12)}
-  .task:hover{box-shadow:0 4px 12px rgba(36,58,94,.14)}
+  #qb:hover,.fadd button:hover,.mrow button.pri:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(var(--shd-rgb),.3);background-position:0 0,100% 50%}
+  .nbtn.solid:hover{box-shadow:0 6px 16px rgba(var(--shd-rgb),.35)}
+  .cell:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(var(--shd-rgb),.12)}
+  .task:hover{box-shadow:0 4px 12px rgba(var(--shd-rgb),.14)}
   #qd:hover,.acts select:hover{border-color:var(--line2)}
 }
 /* press feedback: every device */
 .nbtn:active,.tbtn:active,.railfoot button:active,.mtabs button:active{transform:scale(.95)}
 .abtn:active{transform:scale(.93)}
 .navbtn:active{transform:scale(.97)}
-.zadd:active{transform:scale(.98);background:rgba(36,58,94,.09)}
+.zadd:active{transform:scale(.98);background:rgba(var(--ink-rgb),.09)}
 .mini:active{transform:scale(.9)}
 .box:active,.sbox:active{transform:scale(.86)}
 #qb:active,.fadd button:active,.mrow button:active,#strip button:active{transform:scale(.94)}
@@ -637,8 +737,8 @@ select option{background:var(--pearl);color:var(--txt)}
   .box{width:20px;height:20px;border-radius:7px}
   .sbox{width:17px;height:17px}
   .task{padding:10px 11px}
-  .col{box-shadow:0 2px 6px rgba(36,58,94,.1),0 12px 26px rgba(36,58,94,.12)}
-  .zadd{border:1px dashed rgba(36,58,94,.3);border-radius:9px;text-align:center;padding:9px 8px;color:var(--mut)}
+  .col{box-shadow:0 2px 6px rgba(var(--shd-rgb),.1),0 12px 26px rgba(var(--shd-rgb),.12)}
+  .zadd{border:1px dashed rgba(var(--ink-rgb),.3);border-radius:9px;text-align:center;padding:9px 8px;color:var(--mut)}
   /* 16px keeps the browser from zooming the page when the field takes focus */
   .zaddrow input{font-size:16px;padding:9px 10px;min-height:44px}
   .zaddrow .abtn{min-height:44px}
@@ -647,7 +747,7 @@ select option{background:var(--pearl);color:var(--txt)}
   #strip button{scroll-snap-align:start}
   #main{padding-bottom:calc(40px + env(safe-area-inset-bottom))}
   .colhead{padding:12px 13px 10px}
-  .badge{box-shadow:0 2px 6px rgba(36,58,94,.18)}
+  .badge{box-shadow:0 2px 6px rgba(var(--shd-rgb),.18)}
 }
 
 /* Touch targets. On a coarse pointer every control offers a finger at least 44px in
@@ -735,6 +835,7 @@ select option{background:var(--pearl);color:var(--txt)}
         <button data-action="export">Export</button>
         <button data-action="import">Import</button>
         <button data-action="bin" id="binBtn">Bin</button>
+        <button data-action="themes">Theme</button>
       </div>
     </div>
   </aside>
@@ -1603,6 +1704,49 @@ window.addEventListener('online',()=>{
 });
 window.addEventListener('offline',()=>{ if(sync.key&&sync.state!=='conflict') syncSet('offline') });
 
+/* ================= theme =================
+   A theme is a set of CSS custom property values keyed off html[data-theme];
+   switching is one attribute write, so it applies in the same frame with no
+   reload. The choice is a DEVICE preference: it lives in its own localStorage
+   key, never in state, so it cannot sync, ride an export, or reach the merge.
+   A tiny head script applies the stored theme before first paint (no flash);
+   this section is the running app's half: the switch UI and the meta update.
+   The PWA meta theme-color follows the active theme; the manifest's colours
+   cannot (a manifest is one static file read at install time), so an installed
+   app's splash stays cloud blue whatever the theme. */
+const THEME_LS='agora_dayplanner_theme';
+const THEMES={
+  sky:{label:'Cloud blue',tc:'#CFE3F1'},
+  mono:{label:'Monochrome',tc:'#070708'}
+};
+function themeGet(){ return lsGet(THEME_LS)==='mono'?'mono':'sky' }
+function themeApply(t){
+  if(t==='mono') document.documentElement.setAttribute('data-theme','mono');
+  else document.documentElement.removeAttribute('data-theme');
+  const m=document.querySelector('meta[name="theme-color"]');
+  if(m) m.setAttribute('content',(THEMES[t]||THEMES.sky).tc);
+}
+function themeSet(t){
+  t=THEMES[t]?t:'sky';
+  lsSet(THEME_LS,t); themeApply(t); refreshThemeModal();
+}
+function themeBody(){
+  const cur=themeGet();
+  const opt=t=>'<button class="nbtn'+(cur===t?' solid':'')+'" style="flex:1" data-action="theme-set" data-t="'+t+
+    '" aria-pressed="'+(cur===t?'true':'false')+'">'+THEMES[t].label+'</button>';
+  return '<h3>Theme</h3>'+
+    '<p>How this device paints the planner. Two themes, same app: layout, spacing and every feature are identical, only colour and type change.</p>'+
+    '<div class="syncrow">'+opt('sky')+opt('mono')+'</div>'+
+    '<p class="synchint">Cloud blue is the original palette. Monochrome is near-black and near-white greys with one red accent and dot-matrix numerals.</p>'+
+    '<p class="synchint">The choice stays on this device. It is a screen preference, not planner content, so it never syncs and never rides an export.</p>'+
+    '<div class="mrow"><button class="pri" data-action="mclose" data-close="1">Done</button></div>';
+}
+function themeModal(){
+  $('#modalRoot').innerHTML='<div class="mback" data-action="mclose"><div class="modal" id="themeModal">'+
+    themeBody()+'</div></div>';
+}
+function refreshThemeModal(){ const m=$('#themeModal'); if(m) m.innerHTML=themeBody() }
+
 /* ================= data ops ================= */
 function day(d){
   if(!state.days[d]) state.days[d]={must:[],should:[],extra:[]};
@@ -2013,7 +2157,7 @@ function renderMetrics(){
       '<defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">'+
       '<stop offset="0%" stop-color="#2F4156"/><stop offset="55%" stop-color="#5F86A6"/>'+
       '<stop offset="100%" stop-color="#8FB6D8"/></linearGradient></defs>'+
-      '<circle cx="44" cy="44" r="38" fill="none" stroke="rgba(36,58,94,.12)" stroke-width="8"/>'+
+      '<circle class="rt" cx="44" cy="44" r="38" fill="none" stroke-width="8"/>'+
       '<circle class="rp" cx="44" cy="44" r="38" fill="none" stroke="url(#rg)" stroke-width="8" '+
       'stroke-linecap="round" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'"/></svg>'+
       '<div class="rlab"><div><b>'+t.pct+'%</b><i>done</i></div></div></div>'+
@@ -3172,6 +3316,10 @@ document.addEventListener('click',e=>{
     case 'bin-empty-yes': emptyBinNow(); return;
 
     case 'help': helpModal(); return;
+    /* theme cases MUST return: the choice is a device preference, not state, so
+       it may never touch save() or the render/sync path */
+    case 'themes': themeModal(); return;
+    case 'theme-set': themeSet(el.dataset.t); return;
     case 'mclose': if(e.target.classList.contains('mback')||el.dataset.close) $('#modalRoot').innerHTML=''; return;
     case 'export':{
       const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
@@ -3723,6 +3871,7 @@ if('serviceWorker' in navigator){
 
 /* ---------- boot ---------- */
 load();
+themeApply(themeGet());   /* the head script already set the attribute; this keeps the meta in step */
 rollIfNewDay({delay:true,boot:true});
 if(!state.settings.stripDay) state.settings.stripDay=today();
 render();
@@ -3731,6 +3880,7 @@ window.A={state,ui,render,rollover,findTask,move,reorderTab,tally,streak,save:co
   sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey,
   mergeStates,flatten,stateSig,readCloud,stampLegacy,syncCycle,
   restoreBin,purgeBin,emptyBinNow,binList,fresh,MERGED_KEYS,rollIfNewDay,pastOpenCount,
+  themeGet,themeSet,
   get live(){ return state }};
 </script>
 </body>
