@@ -2414,33 +2414,42 @@ function plainToHtml(t){
 const NOTE_CLS={'hl-powder':1,'hl-ocean':1,'hl-tile':1,'fz-s':1,'fz-l':1};
 /* the palette classes an element carries or implies. Chrome's editing engine sets
    highlight and size STYLES on whatever inline element already wraps the selection
-   (an <i>, a <u>), not always on a fresh span, so every element is read for them
-   and the result is re-expressed as nested sanctioned spans. */
+   (an <i>, a <u>, one of our own spans), not always on a fresh span, so every
+   element is read for them and the result is re-expressed as nested sanctioned
+   spans. When a style names a channel it is the engine's NEWEST word and overrides
+   any class the element already carried: that is exactly how a toggle-off arrives,
+   background-color transparent laid over span.hl-*, or font-size medium laid over
+   span.fz-*, and the class must yield or the formatting can never be removed. */
 function noteStyleCls(n){
-  const out=[], push=c=>{ if(c&&out.indexOf(c)<0) out.push(c) };
+  let bgSaid=false,bgCls=null,fsSaid=false,fsCls=null;
   if(n.tagName==='FONT'){
     const sz=+n.getAttribute('size')||3;
-    push(sz<=2?'fz-s':sz>=4?'fz-l':null);
+    fsSaid=true; fsCls=sz<=2?'fz-s':sz>=4?'fz-l':null;
   }
-  if(n.classList) push([...n.classList].find(c=>NOTE_CLS[c])||null);
   const st=n.style;
   if(st){
     const bg=(st.backgroundColor||'').toLowerCase();
     if(bg){
-      let b=NOTE_HL_RGB[bg]||null;
-      if(!b) Object.keys(NOTE_HL).forEach(k=>{
-        if(NOTE_HL[k].toLowerCase()===bg.replace(/\s+/g,'')) b=k });
-      push(b);
+      bgSaid=true; bgCls=NOTE_HL_RGB[bg]||null;
+      if(!bgCls) Object.keys(NOTE_HL).forEach(k=>{
+        if(NOTE_HL[k].toLowerCase()===bg.replace(/\s+/g,'')) bgCls=k });
     }
     const fs=(st.fontSize||'').toLowerCase();
     if(fs){
+      fsSaid=true;
       const KW={'xx-small':'fz-s','x-small':'fz-s','small':'fz-s',
                 'large':'fz-l','x-large':'fz-l','xx-large':'fz-l'};
-      if(KW[fs]) push(KW[fs]);
+      if(KW[fs]) fsCls=KW[fs];
       else{ const v=parseFloat(fs);
-        if(v) push(v<=13.5?'fz-s':v>=17?'fz-l':null) }
+        fsCls=v?(v<=13.5?'fz-s':v>=17?'fz-l':null):null }
     }
   }
+  const own=n.classList?[...n.classList].filter(c=>NOTE_CLS[c]):[];
+  const hl=bgSaid?bgCls:(own.find(c=>c.slice(0,3)==='hl-')||null);
+  const fz=fsSaid?fsCls:(own.find(c=>c.slice(0,3)==='fz-')||null);
+  const out=[];
+  if(hl) out.push(hl);
+  if(fz&&fz!==hl) out.push(fz);
   return out;
 }
 function noteScrubbed(src){
@@ -2630,8 +2639,17 @@ function noteCmd(cmd,ed){
   if(cmd==='bold'||cmd==='italic'||cmd==='underline'){ css(false); x(cmd) }
   else if(cmd==='strike'){ css(false); x('strikeThrough') }
   else if(NOTE_HL[cmd]){
-    const on=!!noteAncestor(ed,el=>el.classList&&el.classList.contains(cmd));
-    css(true); x('hiliteColor',on?'transparent':NOTE_HL[cmd]);
+    const cur=noteAncestor(ed,el=>el.classList&&el.classList.contains(cmd));
+    if(cur){
+      /* toggle OFF structurally: the engine's remove shapes vary (transparent laid
+         on the span, or a fresh transparent span nested INSIDE it, which leaves
+         the class standing), so unwrap the run ourselves; the text is unchanged,
+         so the caret's text offsets survive */
+      const cr0=noteCaretGet(ed);
+      while(cur.firstChild) cur.parentNode.insertBefore(cur.firstChild,cur);
+      cur.remove();
+      if(cr0) noteCaretSet(ed,cr0.s,cr0.e);
+    }else{ css(true); x('hiliteColor',NOTE_HL[cmd]) }
   }
   else if(cmd==='size-s') x('fontSize','2');
   else if(cmd==='size-l') x('fontSize','5');

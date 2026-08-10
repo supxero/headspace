@@ -855,7 +855,8 @@ async function runProfile(browser, base, prof) {
     if (narrow) await act('#railtoggle');
   });
 
-  /* ---- I3. notes: the plain notepad view ---- */
+  /* ---- I3. notes ---- */
+  let richNoteId = null;   /* set by the notes flow, restored by the bin flow */
   await flow('notes', async () => {
     await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
     const v = await A(() => window.A.state.settings.view);
@@ -875,6 +876,11 @@ async function runProfile(browser, base, prof) {
        an item created and deleted inside one save debounce never reaches any store,
        so there is nothing for the bin to keep, and that is true of tasks too */
     await A(() => window.A.save());
+    const sortTop = await A(() => ({
+      top: ([...document.querySelectorAll('.noterow')][0] || {}).dataset.id,
+      newer: (window.A.state.notes.find(n => !n.title) || {}).id }));
+    check('notes: the list sorts the newest edit first', sortTop.top === sortTop.newer,
+      JSON.stringify(sortTop));
     await act({ css: '.noterow', text: 'Packing list' });
     const selBody = await page.$eval('#noteBody', el => el.textContent);
     check('notes: picking a row swaps the editor', selBody === 'socks and passport', selBody);
@@ -956,6 +962,28 @@ async function runProfile(browser, base, prof) {
     const fz = await A(() => { const s = document.querySelector('#noteBody .fz-l');
       return s ? getComputedStyle(s).fontSize : 'missing'; });
     check('notes: large text is the 19px scale step', fz === '19px', fz);
+    /* the remaining commands: the other two highlights, the toggle-off, small, clear */
+    await selectWord('socks');
+    await act({ css: '.ntb[data-cmd="hl-ocean"]' });
+    const oc = await A(() => { const s = document.querySelector('#noteBody .hl-ocean');
+      return s ? getComputedStyle(s).backgroundColor : 'missing'; });
+    check('notes: ocean highlight paints palette ocean', oc === 'rgb(143, 182, 216)', oc);
+    await selectWord('socks');
+    await act({ css: '.ntb[data-cmd="hl-ocean"]' });
+    check('notes: the same highlight again removes it', !/hl-ocean/.test(await noteBody()), await noteBody());
+    await selectWord('passport');
+    await act({ css: '.ntb[data-cmd="hl-tile"]' });
+    const tl = await A(() => { const s = document.querySelector('#noteBody .hl-tile');
+      return s ? getComputedStyle(s).backgroundColor : 'missing'; });
+    check('notes: tile highlight paints palette tile', tl === 'rgb(227, 238, 247)', tl);
+    await selectWord('passport');
+    await act({ css: '.ntb[data-cmd="size-s"]' });
+    const fs2 = await A(() => { const s = document.querySelector('#noteBody .fz-s');
+      return s ? getComputedStyle(s).fontSize : 'missing'; });
+    check('notes: small text is the 13px scale step', fs2 === '13px', fs2);
+    await selectWord('and');
+    await act({ css: '.ntb[data-cmd="size-0"]' });
+    check('notes: body size clears the large span', !/fz-l/.test(await noteBody()), await noteBody());
     /* lists: bullet, dash, numbered */
     await A(() => { const ed = document.getElementById('noteBody');
       ed.innerHTML = '<div>alpha</div><div>beta</div>';
@@ -986,6 +1014,16 @@ async function runProfile(browser, base, prof) {
       check('notes: ink stays navy on ' + pg, st.ink === 'rgb(20, 41, 63)', st.ink);
     }
     await audit('notes-rich');
+    /* the toolbar is the densest cluster of small controls in the app: on coarse
+       profiles, measure every one of them and report the actual minimum */
+    if (coarse) {
+      const tb = await A(() => [...document.querySelectorAll('#noteTools .ntb, #notePage')]
+        .map(el => { const r = el.getBoundingClientRect();
+          return Math.round(Math.min(r.width, r.height)); }));
+      check('notes: every toolbar control offers at least 44px',
+        tb.length >= 14 && Math.min.apply(null, tb) >= 44,
+        'min=' + Math.min.apply(null, tb) + 'px across ' + tb.length + ' controls');
+    }
     /* a foreign render mid-formatting: the caret comes back to the same character */
     const caret = await A(() => {
       const ed = document.getElementById('noteBody'); ed.focus();
@@ -1093,6 +1131,18 @@ async function runProfile(browser, base, prof) {
     await A(() => window.A.save());
     const binned = await page.evaluate(id => !!(id && window.A.state.bin[id]), emptyId);
     check('notes: the deleted note waits in the bin', binned);
+    /* park a known rich body on the survivor and send it to the bin: the bin flow
+       brings it back through the real Restore button, formatting and all */
+    await act({ css: '.noterow', text: 'Packing list' });
+    await A(() => { const ed = document.getElementById('noteBody');
+      ed.innerHTML = '<div>keep <b>this bold</b> through the bin</div>';
+      ed.dispatchEvent(new Event('input', { bubbles: true })); });
+    await A(() => window.A.save());
+    richNoteId = await A(() => window.A.state.settings.noteSel);
+    await act({ css: '[data-action="note-del"]' });
+    await A(() => window.A.save());
+    const binnedRich = await page.evaluate(id => !!(id && window.A.state.bin[id]), richNoteId);
+    check('notes: the rich note waits in the bin', binnedRich);
     await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
     const back = await A(() => window.A.state.settings.view);
     check('notes: back to the board', back === 'board', back);
@@ -1115,10 +1165,20 @@ async function runProfile(browser, base, prof) {
     const ids = await A(() => window.A.binList().map(x => x.id));
     check('bin: holds this session\'s deletions', ids.length >= 2, ids.length + ' rows');
     await audit('bin-modal', { root: '#modalRoot .modal' });
-    await act({ css: '[data-action="bin-restore"][data-id="' + ids[0] + '"]' });
-    await act({ css: '[data-action="bin-purge"][data-id="' + ids[1] + '"]' });
+    /* the rich note first, through the real button: formatting must come back whole */
+    if (richNoteId) {
+      await act({ css: '[data-action="bin-restore"][data-id="' + richNoteId + '"]' });
+      const richBack = await page.evaluate(id => {
+        const n = window.A.state.notes.find(x => x.id === id); return n ? n.body : null;
+      }, richNoteId);
+      check('bin: the rich note restores with formatting intact',
+        richBack === '<div>keep <b>this bold</b> through the bin</div>', String(richBack));
+    }
+    const ids2 = await A(() => window.A.binList().map(x => x.id));
+    await act({ css: '[data-action="bin-restore"][data-id="' + ids2[0] + '"]' });
+    await act({ css: '[data-action="bin-purge"][data-id="' + ids2[1] + '"]' });
     const left = await A(() => window.A.binList().length);
-    check('bin: restore and purge both shrink the list', left === ids.length - 2, ids.length + '->' + left);
+    check('bin: restore and purge both shrink the list', left === ids2.length - 2, ids2.length + '->' + left);
     if (left > 0) {
       await act({ css: '[data-action="bin-empty"]' });
       await audit('bin-empty-confirm', { root: '#modalRoot .modal' });

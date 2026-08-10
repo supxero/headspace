@@ -1,59 +1,84 @@
-# iOS manual checklist
+# Manual device checklist
 
-Everything here needs a physical iPhone or iPad with Safari. Headless Chrome has verified these same flows work in Chromium at four viewport and input profiles; what it cannot verify is Safari's own behaviour: its PWA install and cache adoption, its tab freezing, its native pickers, and its keyboard. These are the gaps, highest risk first. When something fails, report the item number, what you saw at the exact step, and a screenshot; "item 4, step 3, the tray did not appear until I killed and reopened the app" is enough to act on.
+Everything here needs a physical device: an iPhone with Safari as the primary target, an iPad for the rotation item, and one Android tablet for the two cross-platform items (5 and 11). Headless Chrome has already verified every flow at four viewport and input profiles, with hit sizes, overflow, labels and palette measured; what it cannot verify is Safari itself (PWA install and cache adoption, tab freezing, native pickers, the on-screen keyboard and autocorrect), a real finger's accuracy against the invisible hit overlays, or two physical devices syncing. These are the gaps, highest risk first. When something fails, report the item number, the exact step, and a screenshot; "item 4, step 3, the caret jumped to the end after Bold" is enough to act on.
 
-Before starting: have the current version deployed (check the footer of a desktop tab against `sw.js`, the `CACHE` constant names the version), and know today's task list so you can tell stale data from fresh.
+Before starting: check the deployed version (the `CACHE` constant in `sw.js` names it) and know today's task list so stale data is recognisable. Items 1 and 2 need a second device, item 3 spans a night; everything else is one sitting. Budget: about 45 minutes for the sitting, 10 more for item 2, plus the overnight check.
 
-## 1. Install to the Home Screen
+## 1. Update pickup after a cache bump
 
-Steps: open the GitHub Pages URL in Safari. Share button, then "Add to Home Screen", then Add. Open it from the new icon.
-Correct: the icon is the app mark on a dark tile, not a Safari thumbnail. It opens full screen with no Safari address bar, the cloud blue theme fills the screen including behind the status bar, and your tasks from the Safari visit are there.
-Failure looks like: a generic blank icon, an address bar visible inside the app, a white flash or white bars top or bottom, or an empty planner after install when Safari had tasks.
+Stakes are higher since Notes gained formatting: a stale build does not merely lag, it shows formatted notes as raw angle-bracket markup and strips pins and page styles from its merges.
+Steps: with the app installed and a note formatted somewhere in the planner, open Notes. If you see literal `<div>` or `<b>` text, you are on a stale build. Fully close the app (app switcher, swipe away), wait ten seconds, reopen. Check again.
+Correct: after one full close and reopen at the latest, the note renders formatted and the toolbar is present above the body.
+Failure looks like: raw markup still visible after a full close, or needing to delete and reinstall the icon. Count the close cycles; that number decides whether the app needs an in-app update prompt.
 
-## 2. Update pickup after a cache bump
+## 2. Rich-text notes across two real devices
 
-Steps: with the app installed, note the current behaviour somewhere visible. Wait for a deploy that bumps `CACHE` in `sw.js`. Open the installed app and check whether the change is there. If not, swipe the app away fully (app switcher, swipe up), wait ten seconds, reopen. Check again.
-Correct: the new version appears after the full close and reopen at the latest. One stale open immediately after deploy is expected; a full close must always pick it up.
-Failure looks like: still the old version after a full close and reopen, or needing to delete and reinstall the icon to see updates. Note how many close cycles it took; this decides whether the app needs an in-app update prompt.
+Steps: connect two devices with a sync key. On A, write a note with a title, a bold word, one highlight, a dashed list, and the ruled page. Wait half a minute with B foregrounded, open the note on B. On B, add a plain sentence at the end of the same body; wait, check A. Then on A pin the note and rename its title while on B switching the page to dotted; give both a minute to settle.
+Correct: B shows the formatting exactly as A wrote it, ruling included. B's body edit arrives on A with the formatting intact (the later body wins whole; A's bold survives because it is part of that body). Pin, rename and page style all survive on both; a rename and a page flip made in the same instant may resolve to one device's pair, but nothing scrambles and markup never shows as literal text.
+Failure looks like: visible markup on either device, formatting lost after B's edit, a body reverting to an older version, or duplicated notes. Note the direction, A to B or B to A.
 
-## 3. Sync across two devices
+## 3. Carry-over tray after an overnight suspension
 
-Steps: on device A open Sync, generate a key, copy it. On device B open Sync, paste the key, connect. Add a task on A, wait half a minute with B open. Tick a task on B, wait, check A. Then put A in airplane mode, add a task, leave airplane mode, wait with both open.
-Correct: each change appears on the other device within about thirty seconds while both are open in the foreground. The airplane task arrives after reconnecting. Nothing duplicates and nothing disappears.
-Failure looks like: changes only arriving after a manual close and reopen, duplicated tasks after the airplane step, or the sync status stuck on connecting. Note which direction failed, A to B or B to A.
+Steps: in the evening leave at least one task unfinished on today. Do not close the app, just lock the phone. Next morning open it from the app switcher, not a fresh launch.
+Correct: within a moment of foregrounding, the tray appears with yesterday's unfinished task and its origin label, and today's date is current on the board, the strip and the calendar.
+Failure looks like: yesterday still showing as today, the tray missing until a kill and relaunch, or wrong origin labels. The 60 second timer does not run while iOS suspends the page; the foreground path must cover it, and this item tests exactly that.
 
-## 4. Carry-over tray after an overnight suspension
+## 4. Notes with the on-screen keyboard, autocorrect and the caret
 
-Steps: in the evening leave at least one task unfinished on today. Do not close the app, just switch away or lock the phone. Next morning, open the app from the switcher, not a fresh launch.
-Correct: within a moment of the app coming to the foreground the carry-over tray appears with yesterday's unfinished task, labelled with its origin, and today's date is current everywhere: the board header, the strip, the calendar.
-Failure looks like: the board still showing yesterday as today, the tray missing until you kill and relaunch, or the tray appearing with wrong origin labels. The 60 second timer does not run while iOS suspends the page; the foreground path is supposed to cover it. This item tests exactly that.
+Steps: open a note, tap into the middle of the body. Type a sentence with autocorrect on, letting it correct at least one word. Select a word with the native handles, tap Bold, then a highlight swatch. Keep typing after the formatted word. Scroll with the keyboard up. Switch the page style with the keyboard up. Close the note, reopen it.
+Correct: the caret lands where taps put it; autocorrected words are in the note after reopening; the toolbar formats the selected word without the selection collapsing or the keyboard dropping; typing after a bold word continues in bold; the ruling scrolls with the text.
+Failure looks like: the caret jumping to the start or end after a toolbar tap, corrected words missing after reopen (Safari composition landing outside the input event path), the keyboard closing on a toolbar tap, or the selection gone so Bold applies to nothing. No headless pass exercises Safari's IME; this surface is genuinely unverified.
 
-## 5. The date inputs
+## 5. The 44px targets under a real finger
 
-Steps: on the board tap Jump to's date field, pick a date a month away with the iOS wheel, confirm the board jumps. Then open a task's action bar, tap the mm/dd/yyyy field, pick tomorrow, confirm the task moves and keeps its Prio.
-Correct: the native iOS date wheel opens on the first tap, the chosen date applies immediately, and the action bar's date move preserves the task's zone.
-Failure looks like: a tap doing nothing (report whether a second tap works), the wheel opening and the choice not applying, or the task landing in the wrong Prio. On a phone these are the native pickers by design; the custom popover is desktop only.
+Steps: on the iPhone AND the Android tablet, tap casually, one-thumbed, without aiming: a task tick box, a subtask tick, a delete mini, each button in a task's action bar, a habit day cell and then the Days button directly above it, a collapsed panel header, every Notes toolbar button across its row, a note row, and the search box.
+Correct: every intended control fires on the first casual tap, and Days never ticks the habit cell beneath it.
+Failure looks like: any control needing a second aimed tap, or a neighbour firing instead (say which pair). The invisible hit overlays were measured at 44px in Chrome but have never met a finger; this is the item that settles them.
 
-## 6. Offline open
+## 6. Install to the Home Screen
 
-Steps: with the app installed and opened at least once, enable airplane mode. Fully close the app. Reopen it from the Home Screen. Add a task while offline. Disable airplane mode, leave it open half a minute.
-Correct: the app opens instantly with all data while offline, the new task saves, and if sync is connected it uploads after reconnecting.
-Failure looks like: a Safari cannot-connect page, an empty planner offline, or the offline task lost after reconnecting.
+Steps: open the GitHub Pages URL in Safari. Share, "Add to Home Screen", Add, open from the icon.
+Correct: the app mark on the tile, full screen with no address bar, cloud blue behind the status bar, and the Safari visit's data present.
+Failure looks like: a generic icon, an address bar, white flashes or bars, or an empty planner after install.
 
-## 7. Rapid close after typing
+## 7. The date inputs
 
-Steps: type a new task in the quick add box, press Add, and within a second swipe the app away completely. Reopen.
-Correct: the task is there. The save path commits on visibility change, before the debounce would have fired.
-Failure looks like: the task gone after reopening. If it is, also try the same with a two second pause before swiping away, and report which survived; that distinguishes the debounce window from a frozen-tab commit failure.
+Steps: tap Jump to's date field, pick a date a month out with the iOS wheel. Then open a task's action bar, tap the mm/dd/yyyy field, pick tomorrow.
+Correct: the wheel opens on the first tap both times, the board jumps, and the task moves keeping its Prio.
+Failure looks like: a dead first tap (note whether the second works), a choice not applying, or a task changing zone on the move.
 
-## 8. Copying the sync key
+## 8. Offline open
 
-Steps: in Sync, tap the copy control next to the generated key. Paste into Notes.
+Steps: with the app installed and opened once, enable airplane mode, fully close, reopen from the Home Screen, add a task, then reconnect and wait half a minute.
+Correct: instant offline open with all data, the task saves, and it uploads after reconnecting if sync is on.
+Failure looks like: a cannot-connect page, an empty planner, or the offline task lost.
+
+## 9. Rapid close after typing
+
+Steps: type a task in quick add, press Add, swipe the app away within a second, reopen. Then type half a sentence into a note body and swipe away mid-word, reopen.
+Correct: both survive. The visibility-change commit fires before the debounce would have; the note case is the wider window (typing defers the commit until a pause), so it is the sharper test.
+Failure looks like: either one gone. If the task survives and the note loses its tail, report roughly how many words vanished; that measures the deferred-commit window on real Safari.
+
+## 10. True north on a small screen
+
+Steps: open the Menu, set a True north statement, close and reopen the Menu, then try to collapse the panel by tapping its header.
+Correct: with a statement present the panel shows no chevron and the header does not collapse it; the statement is fully readable. Set it aside: once the panel holds nothing current it folds to a "not set" header bar.
+Failure looks like: a collapse with content present, a statement clipped or truncated, or the panel loading collapsed while holding a statement.
+
+## 11. Tab reorder by touch
+
+Steps: on the iPhone and the Android tablet, in Free Floating, press a tab header and drag sideways, slowly, then again fast.
+Correct: nothing reorders and nothing breaks: the page scrolls or nothing happens, no drag ghost, no cue bars, and the tab order is unchanged after both attempts. Touch reorder is a documented, deliberate gap (REVIEW risk 12), not a bug; this item verifies the gap is inert rather than destructive.
+Failure looks like: a stuck half-drag state, cue bars left behind, or the order actually changing.
+
+## 12. Copying the sync key
+
+Steps: in Sync, tap the copy control next to the generated key, paste into any notes app.
 Correct: the full key pastes.
-Failure looks like: an empty paste with the toast claiming success, or the fallback toast asking you to select the key by hand even though tapping should have copied. Safari's clipboard rules differ inside installed apps; this is the one place the app writes the clipboard.
+Failure looks like: an empty paste with a success toast, or the select-by-hand fallback appearing when the tap should have copied. Clipboard rules differ inside installed apps; this is the one place the app writes the clipboard.
 
-## 9. Rotation while typing
+## 13. Rotation while typing (iPad)
 
-Steps: on an iPad, open the inline "+ add" in a day column, type half a task, rotate the device, finish typing, commit.
-Correct: the half-typed text survives the rotation, focus stays or returns to the field, and the keyboard does not flicker away permanently.
-Failure looks like: the field closing and the text lost on rotation. A brief keyboard flicker is a known accepted quirk; text loss is not.
+Steps: open the inline "+ add" in a day column, type half a task, rotate, finish, commit. Then repeat inside a note body: type mid-sentence, rotate, keep typing.
+Correct: text survives both rotations, focus stays or returns, and in the note the caret is still where you left it.
+Failure looks like: a field closing with text lost, or the note caret jumping on rotation. A brief keyboard flicker is a known accepted quirk; text or caret loss is not.

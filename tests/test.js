@@ -2313,6 +2313,17 @@ console.log('— Notes: rich text: storage, sanitizer, commands —');
     'styles set on existing inline elements survive as nested spans ('+
     S().notes.find(n=>n.id==='na').body+')');
 
+  /* the toggle-off shape, the defect the 2026-08-10 verification pass caught: the
+     engine removes a highlight by laying background-color transparent OVER the
+     sanctioned span, and clears a size with font-size medium; the style is the
+     newest word and the carried class must yield, or formatting is permanent */
+  ed.innerHTML='<div><span class="hl-ocean" style="background-color: transparent">plain again</span> '+
+    '<span class="fz-l" style="font-size: medium">body size</span></div>';
+  fire(ed,'input'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').body==='plain again body size',
+    'a transparent or medium style overrides the carried class, and with nothing left the body collapses back to plain ('+
+    S().notes.find(n=>n.id==='na').body+')');
+
   /* command wiring: jsdom has no editing engine, so spy on execCommand */
   const calls=[];
   doc.execCommand=(c,ui2,v)=>{ calls.push(c+(v!=null&&v!==''?':'+v:'')); return true };
@@ -2338,6 +2349,20 @@ console.log('— Notes: rich text: storage, sanitizer, commands —');
   click('.ntb[data-cmd="ul"]'); await wait(10);
   ok(S().notes.find(n=>n.id==='na').body==='<ul><li>one</li><li>two</li></ul>',
     'and the bullet button converts it back');
+
+  /* highlight toggle-off is structural, no engine involved: with the caret inside
+     a highlighted run the same swatch unwraps it. The engine's own remove shapes
+     vary and can nest a transparent span INSIDE ours, leaving the class standing;
+     that was the verification pass's second catch. */
+  ed.innerHTML='<div>stay <span class="hl-ocean">lit</span> word</div>';
+  fire(ed,'input'); await wait(10);
+  const hlT=ed.querySelector('.hl-ocean').firstChild;
+  const rh=doc.createRange(); rh.setStart(hlT,1); rh.collapse(true);
+  const slh=w.getSelection(); slh.removeAllRanges(); slh.addRange(rh);
+  click('.ntb[data-cmd="hl-ocean"]'); await wait(10);
+  ok(S().notes.find(n=>n.id==='na').body==='stay lit word',
+    'the same swatch removes the highlight and the body collapses to plain ('+
+    S().notes.find(n=>n.id==='na').body+')');
 
   /* page appearance: state, live class, and the content axis */
   const pgSel=q('#notePage');
