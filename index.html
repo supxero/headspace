@@ -289,6 +289,42 @@ select option{background:var(--pearl);color:var(--txt)}
 .dpadd input{flex:1;min-width:160px}
 .dplist{max-width:640px}
 
+/* custom pickers (desktop pointer): a popover layered over the native date input and the
+   quick-add destination select, since neither can be styled and the OS blue highlight
+   fights the palette. Touch devices keep the native controls. */
+.popover{position:fixed;z-index:250;background:var(--card);border:1px solid var(--line2);
+  border-radius:var(--r);padding:9px;box-shadow:0 4px 10px rgba(36,58,94,.14),0 18px 44px rgba(36,58,94,.26);
+  animation:drop .2s cubic-bezier(.2,.7,.3,1);outline:none}
+.plist{max-height:min(340px,62vh);overflow-y:auto;display:flex;flex-direction:column;gap:1px}
+.pgl{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);padding:8px 9px 4px}
+.popt{display:block;width:100%;text-align:left;font-size:13px;padding:7px 10px;border-radius:7px;
+  color:var(--txt);border:1px solid transparent;transition:.14s;white-space:nowrap}
+.popt:hover,.popt.act{background:rgba(36,58,94,.07);color:var(--navy)}
+.popt.on{background:rgba(95,134,166,.16);border-color:var(--denim);color:var(--navy);font-weight:600}
+.phead{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.phead b{flex:1;text-align:center;font-family:var(--fd);font-size:13.5px;font-weight:600;letter-spacing:-.01em;color:var(--navy)}
+.phead .nbtn{padding:4px 10px;font-size:12px}
+.pdow{display:grid;grid-template-columns:repeat(7,34px);gap:2px;margin-bottom:2px}
+.pdow span{text-align:center;font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);padding:2px 0}
+.pgrid{display:grid;grid-template-columns:repeat(7,34px);gap:2px}
+.pday{height:31px;display:grid;place-items:center;border-radius:7px;border:1px solid transparent;
+  font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--txt);transition:.14s}
+.pday:hover{background:var(--panel)}
+.pday.today{border-color:var(--teal);color:var(--teal);font-weight:700}
+.pday.on{border-color:var(--denim);background:rgba(95,134,166,.14)}
+.pday.act{border-color:var(--denim);background:rgba(95,134,166,.22)}
+.pfoot{display:flex;gap:6px;margin-top:8px;padding-top:9px;border-top:1px solid var(--line)}
+.pfoot .nbtn{flex:1;padding:6px 10px;font-size:12px}
+/* the custom layer replaces the built-in popup on pointer devices, so hide its icon
+   there, and repaint the focused segment, which is the last place OS blue could show */
+@media (hover:hover){
+  input[type=date]::-webkit-calendar-picker-indicator{display:none}
+  input[type=date]::-webkit-datetime-edit-month-field:focus,
+  input[type=date]::-webkit-datetime-edit-day-field:focus,
+  input[type=date]::-webkit-datetime-edit-year-field:focus{
+    background:var(--denim);color:var(--on);border-radius:3px}
+}
+
 /* modal / toast */
 .mback{position:fixed;inset:0;background:rgba(33,64,95,.4);backdrop-filter:blur(3px);z-index:200;display:grid;place-items:center;padding:20px;animation:fade .18s ease}
 @keyframes fade{from{opacity:0}to{opacity:1}}
@@ -498,6 +534,7 @@ select option{background:var(--pearl);color:var(--txt)}
 </div>
 
 <div id="modalRoot"></div>
+<div id="popRoot"></div>
 <div id="toast"></div>
 <input type="file" id="fileIn" accept="application/json" style="display:none">
 
@@ -2213,6 +2250,201 @@ document.addEventListener('drop',e=>{
   ui.drag=null; save(); render();
 });
 
+/* ================= custom pickers (desktop pointer only) =================
+   The native date popup and select dropdown cannot be styled, and their OS blue
+   highlight fights the palette. On devices with a real pointer (hover:hover, the
+   same condition the CSS keys its hover states on) a popover is layered OVER the
+   native controls: the inputs, their values and every handler that reads them stay
+   untouched, the popover just writes the value and fires the same change event.
+   Touch devices keep the native pickers, which are genuinely better there.
+   Focus stays on the trigger the whole time (arrow keys are routed from it), so
+   there is no focus to trap and nothing to restore beyond the trigger itself. */
+let pop=null;
+const finePointer=()=>ui.pointerFine!=null?ui.pointerFine
+  :!!(window.matchMedia&&window.matchMedia('(hover: hover)').matches);
+function popClose(refocus){
+  if(!pop) return;
+  const sel=pop.refocus;
+  $('#popRoot').innerHTML=''; pop=null;
+  /* preventScroll everywhere in this layer: focusing an anchor half out of a scroll
+     container would scroll it into view, and that scroll would close the popover */
+  if(refocus&&sel){ const n=$(sel); if(n) n.focus({preventScroll:true}) }
+}
+function popPlace(){
+  const p=pop.el, r=pop.anchor.getBoundingClientRect();
+  if(pop.kind==='list') p.style.minWidth=Math.max(190,r.width)+'px';
+  let x=r.left, y=r.bottom+6;
+  const pw=p.offsetWidth||0, ph=p.offsetHeight||0;
+  if(x+pw>window.innerWidth-8) x=window.innerWidth-8-pw;
+  if(x<8) x=8;
+  if(y+ph>window.innerHeight-8) y=Math.max(8,r.top-6-ph);   /* flip above the anchor */
+  p.style.left=x+'px'; p.style.top=y+'px';
+}
+function popOpen(anchor,kind,refocus){
+  popClose(false);
+  $('#popRoot').innerHTML='<div class="popover" role="dialog"></div>';
+  pop={el:$('#popRoot .popover'),anchor,kind,refocus};
+}
+/* a render may have replaced the anchor node; aim the write at the live one */
+function popAnchor(){
+  return document.contains(pop.anchor)?pop.anchor:$(pop.refocus);
+}
+
+/* date picker over #jumpDate and the per-task pickdate input */
+function dpOpen(inp){
+  const sel=inp.id==='jumpDate'?'#jumpDate'
+    :'[data-action="pickdate"][data-id="'+inp.dataset.id+'"]';
+  popOpen(inp,'date',sel);
+  pop.act=inp.value||today();
+  const d=new Date(pop.act+'T12:00:00');
+  pop.y=d.getFullYear(); pop.m=d.getMonth();
+  dpRender();
+  /* the popover holds focus while open. Focusing the date input instead would light
+     its segment highlight, which Chrome paints in OS blue and does not let CSS touch;
+     the key router works from any target, so nothing is lost */
+  pop.el.tabIndex=-1; pop.el.focus({preventScroll:true});
+}
+function dpRender(){
+  const y=pop.y, m=pop.m, val=pop.anchor.value;
+  const first=new Date(y,m,1).getDay(), len=new Date(y,m+1,0).getDate();
+  let h='<div class="phead"><button class="nbtn" data-pnav="-1" aria-label="Previous month">‹</button>'+
+    '<b>'+MON[m]+' '+y+'</b>'+
+    '<button class="nbtn" data-pnav="1" aria-label="Next month">›</button></div>'+
+    '<div class="pdow">'+DOW.map(x=>'<span>'+x.slice(0,2)+'</span>').join('')+'</div>'+
+    '<div class="pgrid">';
+  for(let i=0;i<first;i++) h+='<span></span>';
+  for(let n=1;n<=len;n++){
+    const d=iso(new Date(y,m,n));
+    h+='<button class="pday'+(d===today()?' today':'')+(d===val?' on':'')+
+      (d===pop.act?' act':'')+'" data-pday="'+d+'">'+n+'</button>';
+  }
+  h+='</div><div class="pfoot"><button class="nbtn" data-pact="today">Today</button>'+
+     '<button class="nbtn" data-pact="clear">Clear</button></div>';
+  pop.el.innerHTML=h; popPlace();
+}
+function dpMove(days){
+  pop.act=plus(days,pop.act);
+  const d=new Date(pop.act+'T12:00:00');
+  pop.y=d.getFullYear(); pop.m=d.getMonth();
+  dpRender();
+}
+function dpShift(dm){
+  const d=new Date(pop.y,pop.m+dm,1);
+  pop.y=d.getFullYear(); pop.m=d.getMonth();
+  dpRender();
+}
+function dpSet(v){
+  const a=popAnchor(), sel=pop.refocus, viaKey=pop.viaKey;
+  popClose(false);
+  if(!a) return;
+  a.value=v;
+  a.dispatchEvent(new Event('change',{bubbles:true}));
+  /* only a keyboard flow puts focus back on the date input: that is the focus the user
+     needs to continue, and the segment highlight it lights is their focus indicator.
+     After a mouse pick the input stays unfocused, so no OS blue ever shows */
+  if(viaKey){ const n=$(sel); if(n) n.focus({preventScroll:true}) }
+}
+
+/* destination list over the #qd select, built from its live optgroups so the
+   grouping and labels can never drift from what the select itself holds */
+function qdOpen(sel){
+  popOpen(sel,'list','#qd');
+  pop.opts=[];
+  let h='';
+  [...sel.querySelectorAll('optgroup,option')].forEach(n=>{
+    if(n.tagName==='OPTGROUP'){ h+='<div class="pgl">'+esc(n.label)+'</div>'; return }
+    h+='<button class="popt'+(n.value===sel.value?' on':'')+'" role="option" data-pval="'+
+      esc(n.value)+'">'+esc(n.textContent)+'</button>';
+    pop.opts.push(n.value);
+  });
+  pop.el.innerHTML='<div class="plist" role="listbox">'+h+'</div>';
+  pop.act=Math.max(0,pop.opts.indexOf(sel.value));
+  qdMark(); popPlace();
+  pop.el.tabIndex=-1; pop.el.focus({preventScroll:true});
+}
+function qdMark(){
+  $$('#popRoot .popt').forEach((b,i)=>{
+    b.classList.toggle('act',i===pop.act);
+    if(i===pop.act&&b.scrollIntoView) b.scrollIntoView({block:'nearest'});
+  });
+}
+function qdSet(v){
+  const a=popAnchor()||$('#qd');
+  popClose(false);
+  if(!a) return;
+  if(a.value!==v){ a.value=v; a.dispatchEvent(new Event('change',{bubbles:true})) }
+  a.focus({preventScroll:true});
+}
+
+const pickAnchor=t=>t.id==='qd'||t.id==='jumpDate'||(t.dataset&&t.dataset.action==='pickdate');
+document.addEventListener('mousedown',e=>{
+  const t=e.target;
+  if(pop&&!pop.el.contains(t)&&t!==pop.anchor) popClose(false);
+  if(!finePointer()||!pickAnchor(t)) return;
+  e.preventDefault();                      /* keeps the native picker shut */
+  if(pop&&pop.anchor===t){ popClose(pop.viaKey); return }
+  let a=t;
+  if(ui.adding&&!t.closest('.zaddrow')){   /* mirror the click handler's outside-tap close,
+                                              since the click below never reaches it */
+    const sel=t.id?'#'+t.id:'[data-action="pickdate"][data-id="'+t.dataset.id+'"]';
+    closeAdd(true); save(); render();
+    a=$(sel); if(!a) return;
+  }
+  if(a.id==='qd') qdOpen(a); else dpOpen(a);
+});
+/* The pickdate input carries a data-action, so its raw click would fall through the
+   delegated switch into the shared save()+render() tail: the board rebuild resets the
+   horizontal scroll, and that scroll closes the popover that mousedown just opened.
+   With the layer active the click has no job left, so stop it before the app sees it.
+   Without a fine pointer nothing is stopped and the native path is exactly as before. */
+document.addEventListener('click',e=>{
+  if(finePointer()&&pickAnchor(e.target)) e.stopPropagation();
+},true);
+/* keep a press inside the popover from stealing focus off the trigger, but leave
+   the list's scrollbar draggable */
+$('#popRoot').addEventListener('mousedown',e=>{ if(e.target.closest('button')) e.preventDefault() });
+$('#popRoot').addEventListener('click',e=>{
+  e.stopPropagation();                     /* the app's delegated handler stays out */
+  const b=e.target.closest('button'); if(!b||!pop) return;
+  if(b.dataset.pnav) dpShift(+b.dataset.pnav);
+  else if(b.dataset.pday) dpSet(b.dataset.pday);
+  else if(b.dataset.pact==='today') dpSet(today());
+  else if(b.dataset.pact==='clear') dpSet('');
+  else if(b.dataset.pval!=null) qdSet(b.dataset.pval);
+});
+/* capture phase, so an open popover owns its keys before the app-wide keydown
+   handler can act on them (Escape must not also deselect the card behind it) */
+document.addEventListener('keydown',e=>{
+  if(!pop){
+    if(!finePointer()) return;
+    const el=e.target;
+    if(el.id==='qd'&&['Enter',' ','ArrowDown','ArrowUp'].includes(e.key)){
+      e.preventDefault(); e.stopPropagation(); qdOpen(el); pop.viaKey=true; return }
+    if((el.id==='jumpDate'||(el.dataset&&el.dataset.action==='pickdate'))&&
+       (e.key==='Enter'||e.key===' ')){
+      e.preventDefault(); e.stopPropagation(); dpOpen(el); pop.viaKey=true }
+    return;
+  }
+  if(e.key==='Tab'){ popClose(false); return }
+  if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); popClose(true); return }
+  const nav={list:{ArrowDown:1,ArrowUp:-1},date:{ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7}}[pop.kind];
+  if(e.key==='Enter'||e.key===' '){
+    e.preventDefault(); e.stopPropagation();
+    if(pop.kind==='list') qdSet(pop.opts[pop.act]); else dpSet(pop.act);
+  }else if(nav[e.key]){
+    e.preventDefault(); e.stopPropagation();
+    if(pop.kind==='list'){ pop.act=Math.min(pop.opts.length-1,Math.max(0,pop.act+nav[e.key])); qdMark() }
+    else dpMove(nav[e.key]);
+  }
+},true);
+window.addEventListener('resize',()=>popClose(false));
+window.addEventListener('scroll',e=>{
+  if(!pop) return;
+  const t=e.target&&e.target.nodeType===9?document.documentElement:e.target;
+  if(t&&pop.el.contains(t)) return;        /* the list scrolling itself is fine */
+  popClose(false);
+},true);
+
 /* ---------- modals ---------- */
 function confirmTabDelete(f){
   $('#modalRoot').innerHTML='<div class="mback" data-action="mclose"><div class="modal">'+
@@ -2282,7 +2514,7 @@ rollIfNewDay({delay:true,boot:true});
 if(!state.settings.stripDay) state.settings.stripDay=today();
 render();
 syncBoot();
-window.A={state,render,rollover,findTask,move,tally,streak,save:commit,
+window.A={state,ui,render,rollover,findTask,move,tally,streak,save:commit,
   sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey,
   mergeStates,flatten,stateSig,readCloud,stampLegacy,syncCycle,
   restoreBin,purgeBin,emptyBinNow,binList,fresh,MERGED_KEYS,rollIfNewDay,pastOpenCount,

@@ -1247,6 +1247,145 @@ console.log('— sync merge: end to end across two windows —');
   ok(!tab.A.state.bin[binned[0]],'and clears the bin entry there too');
 }
 
+console.log('— custom pickers (desktop pointer) —');
+{
+  A.ui.pointerFine=true;   /* jsdom has no hover:hover, so force the desktop gate */
+  const md=el=>el.dispatchEvent(new w.MouseEvent('mousedown',{bubbles:true,cancelable:true}));
+  const kd=(el,key)=>el.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));
+  const popEl=()=>q('#popRoot .popover');
+  S().settings.view='board'; S().settings.floatMode=false;
+  S().settings.boardOffset=0; S().settings.stripDay=T(); S().settings.calSel=null;
+  A.render(); await wait(20);
+
+  /* destination list over #qd */
+  const qd=q('#qd');
+  md(qd); await wait(10);
+  ok(!!popEl(),'a pointer press on the destination select opens the custom list');
+  ok(qa('#popRoot .pgl').map(x=>x.textContent).join()==='Free Floating,Today,Tomorrow',
+    'the three groups keep their names and order');
+  ok(qa('#popRoot .popt').length===[...qd.options].length,
+    'every option of the select is in the list');
+  ok(qa('#popRoot .popt')[0].textContent===S().floats[0].name,
+    'float tab names come through as written');
+  ok(qa('#popRoot .popt').map(b=>b.dataset.pval).join()===[...qd.options].map(o=>o.value).join(),
+    'the list carries the exact option values');
+  ok(!!q('#popRoot .popt.on')&&q('#popRoot .popt.on').dataset.pval===qd.value,
+    'the current destination is the one marked selected');
+  const wantVal='day:'+plus(1)+':should';
+  q('#popRoot .popt[data-pval="'+wantVal+'"]').click(); await wait(10);
+  ok(!popEl(),'choosing closes the list');
+  ok(qd.value===wantVal,'the underlying select now holds the chosen destination');
+
+  /* keyboard on the select */
+  qd.focus();
+  kd(qd,'ArrowDown'); await wait(10);
+  ok(!!popEl(),'ArrowDown on the focused select opens the list');
+  const actIdx=()=>qa('#popRoot .popt').findIndex(b=>b.classList.contains('act'));
+  const startIdx=actIdx();
+  ok(startIdx===[...qd.options].findIndex(o=>o.value===qd.value),
+    'the cursor starts on the current value');
+  kd(qd,'ArrowDown');
+  ok(actIdx()===startIdx+1,'ArrowDown moves the cursor');
+  kd(qd,'Enter'); await wait(10);
+  ok(!popEl(),'Enter chooses and closes');
+  ok(qd.value===[...qd.options][startIdx+1].value,'the select holds what the cursor was on');
+  ok(doc.activeElement===qd,'focus is back on the select');
+
+  const before=qd.value;
+  kd(qd,'ArrowDown'); await wait(10);
+  kd(qd,'ArrowUp'); kd(qd,'Escape'); await wait(10);
+  ok(!popEl(),'Escape closes the list');
+  ok(qd.value===before,'and the value is untouched');
+  ok(doc.activeElement===qd,'focus returns to the trigger after Escape');
+
+  md(qd); await wait(10);
+  md(doc.body); await wait(10);
+  ok(!popEl(),'a press outside the list closes it');
+
+  /* date picker over Jump to */
+  const jd=()=>q('#jumpDate');
+  md(jd()); await wait(10);
+  ok(!!popEl()&&!!q('#popRoot .pgrid'),'a pointer press on Jump to opens the custom month grid');
+  ok(qa('#popRoot .pdow span').length===7,'weekday header has seven days');
+  ok(q('#popRoot .phead b').textContent.indexOf(String(new Date(T()+'T12:00:00').getFullYear()))>-1,
+    'the header names the anchored month');
+  ok(!!q('#popRoot .pday.today')&&q('#popRoot .pday.today').dataset.pday===T(),
+    'today is marked the way the calendar marks it');
+  const head1=q('#popRoot .phead b').textContent;
+  q('#popRoot [data-pnav="1"]').click(); await wait(10);
+  ok(q('#popRoot .phead b').textContent!==head1,'next month changes the header');
+  ok(!!popEl(),'and the picker stays open');
+  const pick=qa('#popRoot .pday').find(b=>b.textContent==='15').dataset.pday;
+  q('#popRoot .pday[data-pday="'+pick+'"]').click(); await wait(20);
+  ok(!popEl(),'choosing a day closes the picker');
+  ok(jd().value===pick,'the date input holds the chosen day');
+  ok(S().settings.stripDay===pick,'and the board jumped there through the existing handler');
+
+  /* keyboard on the date input. The suite's own plus() takes no start date, so shift
+     from an arbitrary day locally */
+  const shift=(d,n)=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);return x.toISOString().slice(0,10)};
+  jd().focus();
+  kd(jd(),'Enter'); await wait(10);
+  ok(!!popEl(),'Enter on the focused date input opens the picker');
+  kd(jd(),'ArrowRight');
+  ok(q('#popRoot .pday.act').dataset.pday===shift(pick,1),'ArrowRight moves the cursor a day');
+  kd(jd(),'ArrowDown');
+  ok(q('#popRoot .pday.act').dataset.pday===shift(pick,8),'ArrowDown moves it a week');
+  kd(jd(),'Enter'); await wait(20);
+  ok(!popEl()&&jd().value===shift(pick,8),'Enter chooses the cursor day');
+  ok(S().settings.stripDay===shift(pick,8),'the jump handler ran unchanged');
+  ok(doc.activeElement===jd(),'focus lands back on the date input');
+  const jval=jd().value;
+  kd(jd(),'Enter'); await wait(10); kd(jd(),'ArrowLeft'); kd(jd(),'Escape'); await wait(10);
+  ok(!popEl()&&jd().value===jval,'Escape cancels without touching the input');
+
+  /* per-task date picker drives the very same pickdate change handler */
+  S().settings.boardOffset=0; S().settings.stripDay=T(); A.render(); await wait(20);
+  q('#qi').value='picker target'; q('#qd').value='day:'+T()+':must'; click('#qb'); await wait(30);
+  const pt=S().days[T()].must.find(t=>t.title==='picker target');
+  await select(pt.id);
+  const pd=()=>q('[data-action="pickdate"][data-id="'+pt.id+'"]');
+  md(pd()); await wait(10);
+  ok(!!popEl(),'the per-task date control opens the same picker');
+  /* the input carries data-action, so the click that follows a real mousedown used to
+     fall through the delegated switch into save()+render(), rebuilding the board and
+     closing the picker through the scroll reset. Found in headless Chrome, pinned here. */
+  const node=pd(); node.__probe=1;
+  node.click(); await wait(10);
+  ok(!!popEl(),'the stray click that follows mousedown does not close the picker');
+  ok(pd().__probe===1,'and does not rebuild the board under it');
+  kd(pd(),'Escape'); await wait(10);
+  ok(!popEl(),'Escape closes it');
+  ok(!!q('.task.sel'),'without also deselecting the card behind it');
+  md(pd()); await wait(10);
+  const dest=plus(3);
+  if(!q('#popRoot .pday[data-pday="'+dest+'"]')){ q('#popRoot [data-pnav="1"]').click(); await wait(10) }
+  q('#popRoot .pday[data-pday="'+dest+'"]').click(); await wait(30);
+  const f1=A.findTask(pt.id);
+  ok(f1&&f1.from.kind==='day'&&f1.from.date===dest,'the task moved through the existing pickdate handler');
+  ok(f1.from.zone==='must','and kept its zone');
+  /* after a mouse pick the date input deliberately stays unfocused: focusing it would
+     light Chrome's segment highlight, which is hard OS blue and closed to CSS.
+     Keyboard flows refocus, asserted above on the jump input. */
+  ok(!doc.activeElement||doc.activeElement.dataset.action!=='pickdate',
+    'a mouse pick leaves the date input unfocused, keeping the OS segment highlight dark');
+  md(pd()); await wait(10);
+  q('#popRoot [data-pact="today"]').click(); await wait(30);
+  ok(A.findTask(pt.id).from.date===T(),'the Today shortcut brings the task to today');
+  md(pd()); await wait(10);
+  q('#popRoot [data-pact="clear"]').click(); await wait(30);
+  ok(!popEl(),'Clear closes the picker');
+  ok(A.findTask(pt.id).from.date===T(),'and moves nothing, matching the native clear');
+
+  /* no fine pointer: the native controls are left alone */
+  A.ui.pointerFine=false;
+  md(q('#qd')); await wait(10);
+  ok(!popEl(),'with no fine pointer the destination select stays native');
+  md(jd()); await wait(10);
+  ok(!popEl(),'and so does the date input');
+  A.ui.pointerFine=null;
+}
+
 console.log('— the docs match reality —');
 {
   /* The expected count in CLAUDE.md has drifted twice. Rather than a generator nobody
