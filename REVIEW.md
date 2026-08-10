@@ -4,23 +4,23 @@ State of the code as of the commit that added this line (2026-08-10), which fixe
 
 ## 1. Structure
 
-One file, `index.html`, 2181 lines: CSS to ~line 430, static HTML to ~500, then one `<script>` to the end. No modules, no build. `sw.js` (36 lines) is a cache-first service worker keyed on a manually bumped `CACHE` constant. Tests are `tests/test.js` (1058 lines, jsdom) plus `tests/visual.py` (109 lines, Playwright, currently unrunnable: no Python on the dev machine).
+One file, `index.html`, 2292 lines: CSS to line 451, static HTML to 504, then one `<script>` to the end. No modules, no build. `sw.js` (36 lines) is a cache-first service worker keyed on a manually bumped `CACHE` constant. Tests are `tests/test.js` (1265 lines, jsdom) plus `tests/visual.py` (109 lines, Playwright, currently unrunnable: no Python on the dev machine).
 
-Script sections in order:
+Script sections in order. These line numbers drift with every commit; regenerate with `grep -n "^/\* =\{5,\}" index.html`, which is where they came from.
 
-| Lines (approx) | Section |
+| Lines | Section |
 |---|---|
-| 505–533 | helpers, `fresh()`, state globals (`state`, `ui`) |
-| 534–608 | per-item change tracking: `eachItem`, `sigOf`, `snapSigs`, `stampChanges`, `stampLegacy` |
-| 610–721 | merge: `flatten`, `pickNewer`, `mergeTombs`, `stateSig`, `mergeStates`, `mergeBins`, `rebuild` |
-| 723–769 | `load`/`save`/`commit`, beforeunload/visibility hooks, 60s `rollIfNewDay` timer |
-| 771–1103 | Supabase sync: REST calls, `pushSoon`/`flushPush`/`putState`, `applyCloud`, `syncCycle`, 25s poll, connect/forget, sync modal |
-| 1105–1201 | data ops (`findTask`, `pull`, `place`, `move`, `rollover`, `rollIfNewDay`), toast/undo |
-| 1203–1348 | recycle bin: `binCapture`, restore/purge/empty, bin modal |
-| 1350–1743 | metrics + all render functions, master `render()` |
-| 1745–2019 | the delegated click handler and `change` handler |
-| 2021–2103 | keyboard, blur (rename commit), drag and drop |
-| 2105–2181 | modals (help, tab-delete confirm), autogrow, resize, boot |
+| 505–521 | helpers |
+| 522–533 | state globals (`state`, `ui`), `fresh()` |
+| 534–653 | per-item change tracking: `eachItem`, `sigC`/`sigD`/`sigP`, `snapSigs`, `stampChanges`, `stampLegacy` |
+| 654–857 | merge: `flatten`, `pickSide`/`pickNewer`, `mergeTombs`, `stateSig`, `mergeStates`, `mergeBins`, `carryUnknown`, `rebuild`, then `load`/`save`/`commit` and the lifecycle hooks |
+| 858–1191 | Supabase sync: REST calls, `pushSoon`/`flushPush`/`putState`, `applyCloud`, `syncCycle`, 25s poll, connect/forget, sync modal |
+| 1192–1299 | data ops (`findTask`, `pull`, `place`, `move`, `rollover`, `pastOpenCount`, `rollIfNewDay`), toast/undo |
+| 1300–1446 | recycle bin: `binCapture`, restore/purge/empty, bin modal |
+| 1447–1847 | metrics + all render functions, master `render()` |
+| 1848–2131 | the delegated click handler and `change` handler |
+| 2132–2215 | keyboard, blur (rename commit), drag and drop |
+| 2216–2292 | modals (help, tab-delete confirm), autogrow, resize, boot |
 
 State flow: every mutation goes `handler mutates state -> save() (400ms debounce) -> commit() -> stampChanges() diff -> localStorage -> pushSoon() (1800ms debounce) -> syncCycle()`. Rendering is full `innerHTML` rebuild of each region on every `render()`.
 
@@ -43,10 +43,18 @@ state = {
   settings: { view, boardOffset, floatMode, activeFloat, calSel, calOffset,
               mRange, stripDay, lastRoll, showDone }
 }
-Task = { id, title, done, subtasks:[{id,title,done,up,pos}], up, pos, from? }
+Task = { id, title, done, subtasks:[{id,title,done,up,dn,pos}], up, dn, pos, from? }
 ```
 
-Every mergeable item carries **two** stamps. `up` is when its *content* last changed (title/name, done, doneAt). `pos` is when it last *moved* (location, order within its list, and a task's `from` label, which rollover writes as part of the move). They are merged independently, see Section 3. Anything written before the split has no `pos`; `posOf()` falls back to `up`, and `stampLegacy()` backfills it at load, so the split becomes fully active after one save.
+Every mergeable item carries **three** stamps, merged independently (Section 3):
+
+| Stamp | Covers | Declared in |
+|---|---|---|
+| `up` | title, or a tab's name | `CONTENTF`, `sigC` |
+| `dn` | `done`, and a focus item's `doneAt` | `DONEF`, `sigD` |
+| `pos` | location, order in its list, a task's `from` label | `POSF`, `sigP` |
+
+Anything written before a split has only the older stamps; `posOf()`/`dnOf()` fall back to `up`, and `stampLegacy()` backfills both at load, so a split becomes fully active after one save.
 
 Synced vs local:
 
@@ -60,14 +68,14 @@ Synced vs local:
 
 Mechanics: one Supabase row per sync key, whole-state JSON in `data`, publishable API key embedded in the page. `syncCycle()` (`index.html:966`) runs on boot, focus/visibility, reconnect, a 25s poll, and 1.8s after any edit. It does GET, `mergeStates(local, cloud)`, adopts the merge if it changed anything, and PUTs if the cloud is missing anything, comparing via `stateSig`. The Push/Pull buttons are raw overwrites in both directions (documented in the sync modal); Pull backs up to `agora_dayplanner_v1_backup` and offers toast-undo.
 
-Merge rules: union by id. Per item, **content and position are resolved separately**: the side with the newer `up` supplies title/done/doneAt/name, the side with the newer `pos` supplies location, order and `from`, and `pickNewer()` splices the two together. Equal stamps break by JSON comparison of just the fields under that stamp, so both devices agree. A tombstone kills anything whose **content** stamp is older than the deletion. `stampChanges()` assigns both stamps by diffing two signatures (`sigC`, `sigP`) at commit time, so every mutation path is covered without instrumentation. Subtasks are no longer listed in their parent's signature, so adding a step does not restamp the task it belongs to. Bin entries follow their tombstones; purge markers are terminal.
+Merge rules: union by id. Per item, **title, tick and position are resolved separately**: the side with the newer `up` supplies the title, the newer `dn` supplies the tick, the newer `pos` supplies location/order/`from`, and `pickNewer()` splices the three together. Equal stamps break by JSON comparison of just the fields under that stamp, so both devices agree. A tombstone kills anything whose `up` **and** `dn` are both older than the deletion: editing or ticking asserts the item exists, moving it does not. `stampChanges()` assigns all three by diffing a structured signature (`{c,d,p}`, no separator to collide with user text) at commit time, so every mutation path is covered without instrumentation. Subtasks are not listed in their parent's signature, so adding a step does not restamp the task it belongs to. Bin entries follow their tombstones; purge markers are terminal.
 
 Cases resolved by an arbitrary rule or still able to lose data:
 
-1. **Two edits to the same item's content: later `up` wins, the loser is silently discarded.** This is now narrower than it was, since position no longer competes, but it still covers the combination that matters most: **a rename on one device and a tick on the other, on the same task, will lose one of them.** `done` and `title` share the `up` stamp. Splitting `done` onto a third axis would close it and is the obvious next step if this bites. No record, no merge UI.
-2. **Reorder vs content edit: fixed.** `sigOf` was split into `sigC`/`sigP` and each item carries `up` and `pos`. A reorder now bumps only `pos` and a rename only `up`, so neither can discard the other, in either direction, and a move between zones composes with a concurrent edit to the same task. Tested six ways, including the mirror cases and convergence.
+1. **Two edits to the same field: later stamp wins, the loser is silently discarded.** Now genuinely narrow. Rename versus tick is fixed (`dn` is its own axis), as is either versus a move. What remains is only same-field-versus-same-field: two devices **renaming the same task** to different text, two **ticking it differently** (an untick after a tick, and the later one wins), or two **moving it to different places**. One side loses, with no record and no merge UI. Renaming two *different* tasks, or renaming one while ticking or moving it, all survive intact.
+2. **Reorder vs content edit, and rename vs tick: both fixed.** The signature was split three ways (`sigC`/`sigD`/`sigP`) with a stamp each. A reorder bumps only `pos`, a rename only `up`, a tick only `dn`, so none can discard another, in any direction, and all three compose on one task at once. Tested fourteen ways, including every mirror case and convergence. Reverting either split fails six assertions each.
 3. **Move vs rename: fixed** by the same split. The task lands in the newly moved-to place carrying the newly typed text.
-4. **Edit after delete resurrects** (deliberate, tested). Ambiguous case: the edit's `up` and the tomb are compared across devices with unsynchronized clocks. **A reorder or a move no longer resurrects a deleted item**, since the tombstone is compared against the content stamp only; editing an item asserts it should exist, shuffling it does not.
+4. **Edit or tick after delete resurrects** (deliberate, tested). Ambiguous case: the stamps and the tomb are compared across devices with unsynchronized clocks. **A reorder or a move no longer resurrects a deleted item**, since the tombstone is compared against `up` and `dn` only; editing or ticking asserts the item should exist, shuffling it does not.
 5. **Clock skew skews everything.** All conflict resolution is `Date.now()` comparison. A device minutes fast wins conflicts it should lose. Nothing detects or compensates.
 6. **No optimistic concurrency on the row.** Two devices can GET the same cloud state, merge, and PUT; the second PUT overwrites the first. Nothing is destroyed locally, and the next cycle re-merges and re-pushes, but the cloud can be transiently missing one device's changes, and a device that stops syncing right after losing that race leaves the cloud stale.
 7. **Expiry horizons:** bin bodies 30d, tombstones 45d. A device offline more than 45 days resurrects its stale copy of deleted items as "edits after delete".
@@ -81,7 +89,7 @@ Cases resolved by an arbitrary rule or still able to lose data:
 
 - **`ui.skipBin` / `ui.binNote` are side-channels** between three click-handler cases (`spop`, the two drag-conversion branches, `float-del-move`) and the next `stampChanges` run, carried in mutable `ui` fields and cleared unconditionally per commit. If an unrelated commit fires inside the 400ms save debounce (e.g. a sync `adopt()`), the flags are consumed by the wrong commit: worst case a popped-out subtask also shows up in the bin as a "deleted" step. Low probability, unhandled, untested.
 - **`prevSnap`** (the deep copy backing `binCapture`) must be refreshed by every path that swaps state; today `load()` and `commit()` do it and `adopt()` gets it transitively via commit. A future state-swapping path that forgets will produce bin entries with wrong or missing bodies, silently.
-- **Two stamps per item now, and both must be maintained.** `stampChanges` writes `up` and `pos` from two signatures; a future field added to an item must be classified into `CONTENTF` or `POSF` (used by `pickNewer` for tie-breaks) *and* into `sigC` or `sigP` (used to decide which stamp moves). Miss the signature and the field never triggers a stamp, so edits to it silently lose merges. Nothing enforces the pairing.
+- **Three stamps per item now, and all three must be maintained.** `stampChanges` writes `up`, `dn` and `pos` from a three-part signature; a future field added to an item must be classified into `CONTENTF`/`DONEF`/`POSF` (used by `pickNewer` for tie-breaks) *and* into `sigC`/`sigD`/`sigP` (used to decide which stamp moves). Miss the signature and the field never triggers a stamp, so edits to it silently lose merges. Nothing enforces the pairing; a test that round-trips every field through a merge would.
 - **Two-field board position** (`boardOffset` for wide, `stripDay` for narrow) still exists; `shiftBoard()`/`showDay()` keep them in step at the five current call sites, but `windowDays()` (`index.html:1493`) still branches on `window.innerWidth<900`, so any new navigation control must go through the helpers or it will regress exactly like Prev/Next did on iOS.
 - **`paintBin()` is called from `commit()`**: a DOM write inside the persistence layer, because renders don't run on commit. Works, but it is the only place data-layer code touches the DOM besides the save badge, and it will confuse anyone refactoring commit.
 - **Copy rules are enforced by habit, not tooling.** No-white / no-emoji / no-em-dash checks live in `visual.py`, which cannot currently run (no Python). Reviews have relied on grep.
@@ -102,7 +110,7 @@ Pattern worth naming: two of the five were latent from day one and only surfaced
 
 ## 6. Test coverage
 
-372 assertions, jsdom, all logic-level. Genuinely covered: zone locking, quick add, subtasks, tabs (including delete/undo/last-tab guard), carry-over incl. the day turning under a live window, calendar add, metrics math, export/import round-trip, the merge (unit fixtures for add/edit/delete/offline/three-way/legacy, plus a two-window end-to-end with a fake fetch, offline, and bin restore propagation), the inline-add mobile behavior, phone-viewport board nav, the full bin lifecycle. Mutation-testing has been done ad hoc (revert fix, confirm failures) for each major fix.
+387 assertions, jsdom, all logic-level. **The suite asserts its own count against the `expect` line in CLAUDE.md**, so that number cannot drift again: add a test and the suite fails with the number to write down. Chosen over a generator script for the structural facts because it is self-enforcing rather than something someone has to remember to run; the line-number table in Section 1 is still hand-updated, with the `grep` that produces it recorded there. Genuinely covered: zone locking, quick add, subtasks, tabs (including delete/undo/last-tab guard), carry-over incl. the day turning under a live window, calendar add, metrics math, export/import round-trip, the merge (unit fixtures for add/edit/delete/offline/three-way/legacy, plus a two-window end-to-end with a fake fetch, offline, and bin restore propagation), the inline-add mobile behavior, phone-viewport board nav, the full bin lifecycle. Mutation-testing has been done ad hoc (revert fix, confirm failures) for each major fix.
 
 Not covered, specifically:
 
@@ -128,19 +136,19 @@ Known device-conditional behavior: layout branches at `window.innerWidth<900` in
 
 ## 8. Risk list, ranked
 
-Risks 1, 3 and 9 from the previous revision are fixed. This is the list as it now stands.
+Risks 1, 3 and 9 of the revision before last are fixed, as is risk 4 (title vs tick) of the last one. This is the list as it now stands.
 
 1. **An old client still strips newer keys during the window before every device updates.** The pass-through fix only helps clients running it. A device on a cached build older than `v19` reconstructs from its own whitelist and will drop `pos` (degrading merges gracefully back to the old combined behaviour) and `bin`. Exposure is bounded: the stripped key goes from the cloud copy, but the first updated client to sync restores it from its own local copy, so permanent loss needs the cloud to be the only holder, e.g. a fresh install that pulls before it has ever had a copy of its own. The manual cache-bump ritual decides how long the window lasts.
 2. **Clock skew** flips every last-write-wins decision, now on two axes rather than one; there is no server-time anchor at all.
 3. **`ui.skipBin`/`ui.binNote` debounce race** can misfile conversions into the bin or attribute a moved tab's annotation to the wrong commit; rare, silent, untested.
-4. **Title vs tick on the same task still has a loser** (Section 3, item 1), because `done` and `title` share the `up` stamp. Now the most likely remaining "sync ate my edit" report; splitting `done` onto a third axis would close it.
-5. **Concurrent PUT race** leaves the cloud transiently missing one device's changes with no version check; converges only if the losing device syncs again.
-6. **Untested drag and drop** sits directly on top of the merge's most subtle contract (id survival vs conversion); a regression there corrupts sync state, not just UI.
-7. **The 65-case click handler's return/break convention**: the next case added with the wrong exit either double-renders or never saves, and only manual testing would notice the latter.
-8. **A new field on an item must be classified twice** (Section 4): once into `sigC`/`sigP`, once into `CONTENTF`/`POSF`. Nothing enforces the pairing, and getting it wrong loses edits silently.
+4. **Concurrent PUT race** leaves the cloud transiently missing one device's changes with no version check; converges only if the losing device syncs again.
+5. **Untested drag and drop** sits directly on top of the merge's most subtle contract (id survival vs conversion); a regression there corrupts sync state, not just UI.
+6. **The 65-case click handler's return/break convention**: the next case added with the wrong exit either double-renders or never saves, and only manual testing would notice the latter.
+7. **A new field on an item must be classified twice** (Section 4): once into `sigC`/`sigD`/`sigP`, once into `CONTENTF`/`DONEF`/`POSF`. Nothing enforces the pairing, and getting it wrong loses edits silently.
+8. **Same-field concurrent edits still lose one side** (Section 3, item 1): two devices renaming the same task, or moving it to different places. Unavoidable without a merge UI, and now the only remaining data-loss case in the merge.
 
 ## Housekeeping notes
 
-- CLAUDE.md's expected test count (currently "333 passed") must be hand-bumped every time tests are added; it has drifted before and will again.
+- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently.
 - `SETUP.md`/`START-HERE.md` predate sync, the tray changes, and the bin, and have not been re-verified.
 - To make the tray appear on demand without waiting for midnight: `A.rollover(); A.save(); A.render()` in the console, or set `A.state.settings.lastRoll` to an older date, save, and switch away from the tab and back. Both were confirmed working on 2026-08-10.

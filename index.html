@@ -545,15 +545,21 @@ const upOf=o=>{ const n=+(o&&o.up); return isFinite(n)&&n>0?n:LEGACY_UP };
    content last changed. Anything written before the split has no pos, so it falls back
    to up and behaves exactly as it did. */
 const posOf=o=>{ const n=+(o&&o.pos); return isFinite(n)&&n>0?n:upOf(o) };
+/* `dn` is the third stamp: when the item was last ticked or unticked. Ticking is the
+   commonest edit and used to share a stamp with the title, so a rename on one device
+   silently discarded a tick made on the other. Legacy items have no dn and fall back
+   to up, exactly as they behaved before the split. */
+const dnOf=o=>{ const n=+(o&&o.dn); return isFinite(n)&&n>0?n:upOf(o) };
 const locKey=l=>l.kind==='day'?('day:'+l.date+':'+l.zone):l.kind==='float'?('float:'+l.fid):'carry';
 const arr=x=>Array.isArray(x)?x:[];
-/* Which fields belong to which stamp. Content and position are merged independently, so
-   reordering a zone can no longer outrank someone else's rename, and a rename can no
-   longer drag a task back out of the place someone else moved it to.
+/* Which fields belong to which stamp. The three are merged independently, so reordering a
+   zone cannot outrank someone else's rename, a rename cannot drag a task out of the place
+   someone else moved it to, and neither can undo a tick.
    `from` (the carry-over origin label) is positional: rollover writes it as part of the
-   move, and triage clears it as part of moving the task out. */
-const CONTENTF={float:['name'],task:['title','done'],sub:['title','done'],
-  focus:['title','done','doneAt']};
+   move, and triage clears it as part of moving the task out.
+   `doneAt` rides with `done`, since ticking a focus item is what writes it. */
+const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title']};
+const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt']};
 const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord']};
 
 /* one walk over every mergeable item in a state, in a stable order */
@@ -575,9 +581,13 @@ function eachTask(t,loc,ord,fn){
    parent and cannot outrank an edit made to that parent elsewhere. */
 function sigC(kind,o){
   if(kind==='float') return 'F|'+(o.name||'');
-  if(kind==='focus') return 'X|'+(o.title||'')+'|'+(o.done?1:0)+'|'+(o.doneAt||'');
-  if(kind==='sub')   return 'S|'+(o.title||'')+'|'+(o.done?1:0);
-  return 'T|'+(o.title||'')+'|'+(o.done?1:0);
+  return 'C|'+(o.title||'');
+}
+/* whether it is ticked, on its own so a rename cannot outrank a tick */
+function sigD(kind,o){
+  if(kind==='float') return 'd|';
+  if(kind==='focus') return 'd|'+(o.done?1:0)+'|'+(o.doneAt||'');
+  return 'd|'+(o.done?1:0);
 }
 /* where the item sits, ignoring what it says */
 function sigP(kind,o,m){
@@ -586,7 +596,9 @@ function sigP(kind,o,m){
   if(kind==='sub')   return 's|'+m.pid+'|'+m.ord;
   return 't|'+locKey(m.loc)+'|'+m.ord+'|'+(o.from||'');
 }
-const sigOf=(kind,o,m)=>sigC(kind,o)+''+sigP(kind,o,m);
+/* the three signatures are kept apart rather than joined into one string, so no
+   separator can ever collide with something a user typed into a title */
+const sigOf=(kind,o,m)=>({c:sigC(kind,o),d:sigD(kind,o),p:sigP(kind,o,m)});
 let sigMap={}, prevSnap=null;   /* prevSnap: the tree as of the last commit, so the bin
                                    can keep the body of whatever vanishes */
 function snapSigs(){ const m={}; eachItem(state,(k,o,meta)=>{m[o.id]=sigOf(k,o,meta)}); sigMap=m }
@@ -600,17 +612,20 @@ function stampChanges(when){
   if(!state.tomb||typeof state.tomb!=='object') state.tomb={};
   if(!state.bin||typeof state.bin!=='object') state.bin={};
   eachItem(state,(k,o,meta)=>{
-    const cs=sigC(k,o), ps=sigP(k,o,meta);
-    next[o.id]=cs+''+ps; seen[o.id]=1;
+    const sg=sigOf(k,o,meta);
+    next[o.id]=sg; seen[o.id]=1;
     if(state.tomb[o.id]!=null){                       /* brought back */
-      delete state.tomb[o.id]; delete state.bin[o.id]; o.up=t; o.pos=t; return;
+      delete state.tomb[o.id]; delete state.bin[o.id]; o.up=t; o.dn=t; o.pos=t; return;
     }
     const had=sigMap[o.id];
-    if(had===undefined){ if(!(+o.up>0)) o.up=t; if(!(+o.pos>0)) o.pos=posOf(o) }
-    else{
-      const cut=had.indexOf(''), hc=had.slice(0,cut), hp=had.slice(cut+1);
-      if(hc!==cs) o.up=when?Math.max(upOf(o),when):t;
-      if(hp!==ps) o.pos=when?Math.max(posOf(o),when):t;
+    if(had===undefined){
+      if(!(+o.up>0)) o.up=t;
+      if(!(+o.dn>0)) o.dn=dnOf(o);
+      if(!(+o.pos>0)) o.pos=posOf(o);
+    }else{
+      if(had.c!==sg.c) o.up=when?Math.max(upOf(o),when):t;
+      if(had.d!==sg.d) o.dn=when?Math.max(dnOf(o),when):t;
+      if(had.p!==sg.p) o.pos=when?Math.max(posOf(o),when):t;
     }
   });
   const gone=Object.keys(sigMap).filter(id=>!seen[id]);
@@ -623,7 +638,8 @@ function stampChanges(when){
   sigMap=next;
 }
 function stampLegacy(s){
-  eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP; if(!(+o.pos>0)) o.pos=upOf(o) });
+  eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP;
+    if(!(+o.dn>0)) o.dn=upOf(o); if(!(+o.pos>0)) o.pos=upOf(o) });
   if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
   Object.keys(s.tomb).forEach(id=>{ if(!(+s.tomb[id]>0)) delete s.tomb[id] });
   if(!s.bin||typeof s.bin!=='object') s.bin={};
@@ -639,13 +655,14 @@ function stampLegacy(s){
 function flatten(s){
   const g={float:{},task:{},sub:{},focus:{}};
   eachItem(s,(k,o,m)=>{
-    if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,up:upOf(o),pos:posOf(o)};
+    if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,
+      up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='focus') g.focus[o.id]={id:o.id,title:o.title||'',done:!!o.done,
-      doneAt:o.doneAt||null,ord:m.ord,up:upOf(o),pos:posOf(o)};
+      doneAt:o.doneAt||null,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='sub') g.sub[o.id]={id:o.id,title:o.title||'',done:!!o.done,pid:m.pid,ord:m.ord,
-      up:upOf(o),pos:posOf(o)};
+      up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
-      loc:m.loc,ord:m.ord,up:upOf(o),pos:posOf(o)};
+      loc:m.loc,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
   });
   return g;
 }
@@ -660,11 +677,13 @@ function pickSide(a,b,stamp,fields){
 function pickNewer(kind,a,b){
   if(!a) return b;
   if(!b) return a;
-  const c=pickSide(a,b,'up',CONTENTF[kind]), p=pickSide(a,b,'pos',POSF[kind]);
-  if(c===p) return c;
-  const out=Object.assign({},c);                 /* content from one side ... */
-  POSF[kind].forEach(f=>{ out[f]=p[f] });        /* ... position from the other */
-  out.pos=p.pos;
+  const c=pickSide(a,b,'up',CONTENTF[kind]);                     /* what it says */
+  const d=DONEF[kind].length?pickSide(a,b,'dn',DONEF[kind]):c;   /* whether it is ticked */
+  const p=pickSide(a,b,'pos',POSF[kind]);                        /* where it sits */
+  if(c===d&&c===p) return c;
+  const out=Object.assign({},c);
+  DONEF[kind].forEach(f=>{ out[f]=d[f] }); out.dn=d.dn;
+  POSF[kind].forEach(f=>{ out[f]=p[f] }); out.pos=p.pos;
   return out;
 }
 function mergeTombs(x,y){
@@ -698,9 +717,10 @@ function mergeStates(mine,theirs){
     Object.keys(ids).forEach(id=>{
       const w=pickNewer(g,A[g][id],B[g][id]);
       const gone=tomb[id];
-      /* compared against the content stamp only: editing an item asserts it should exist,
-         merely reordering or moving it does not, so a reorder cannot revive a deletion */
-      if(gone!=null&&gone>=w.up) return;
+      /* compared against content and tick, not position: editing or ticking an item
+         asserts it should exist, merely reordering or moving it does not, so a reorder
+         cannot revive a deletion */
+      if(gone!=null&&gone>=Math.max(w.up||0,w.dn||0)) return;
       keep[g][id]=w;
     });
   });
@@ -759,7 +779,7 @@ function rebuild(keep,tomb,mine,theirs){
 
   const byOrd=(a,b)=>(a.ord-b.ord)||(a.id<b.id?-1:a.id>b.id?1:0);
   const floats=Object.keys(keep.float).map(id=>keep.float[id]).sort(byOrd)
-    .map(x=>({id:x.id,name:x.name,tasks:[],up:x.up,pos:x.pos}));
+    .map(x=>({id:x.id,name:x.name,tasks:[],up:x.up,dn:x.dn,pos:x.pos}));
   if(floats.length) out.floats=floats;
   const fmap={}; out.floats.forEach(x=>{fmap[x.id]=x});
 
@@ -770,9 +790,9 @@ function rebuild(keep,tomb,mine,theirs){
   });
   out.days={}; out.carry=[];
   Object.keys(keep.task).map(id=>keep.task[id]).sort(byOrd).forEach(t=>{
-    const o={id:t.id,title:t.title,done:t.done,up:t.up,pos:t.pos,
+    const o={id:t.id,title:t.title,done:t.done,up:t.up,dn:t.dn,pos:t.pos,
       subtasks:(subsBy[t.id]||[]).sort(byOrd)
-        .map(s=>({id:s.id,title:s.title,done:s.done,up:s.up,pos:s.pos}))};
+        .map(s=>({id:s.id,title:s.title,done:s.done,up:s.up,dn:s.dn,pos:s.pos}))};
     if(t.from) o.from=t.from;
     const l=t.loc||{kind:'carry'};
     if(l.kind==='day'){
@@ -783,7 +803,7 @@ function rebuild(keep,tomb,mine,theirs){
     }else out.carry.push(o);
   });
   out.focus=Object.keys(keep.focus).map(id=>keep.focus[id]).sort(byOrd)
-    .map(x=>({id:x.id,title:x.title,done:x.done,doneAt:x.doneAt,up:x.up,pos:x.pos}));
+    .map(x=>({id:x.id,title:x.title,done:x.done,doneAt:x.doneAt,up:x.up,dn:x.dn,pos:x.pos}));
   if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
   return carryUnknown(out,mine,theirs);
 }

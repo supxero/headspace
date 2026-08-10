@@ -703,6 +703,60 @@ console.log('— reorder and content edits stop competing —');
     ok(!byTitle(m,'must').length,'and it is not left behind in the old zone');
     ok(A.stateSig(m)===A.stateSig(m2),'both devices agree');
   }
+  { /* a rename on one device, a tick on the other, same task: both must survive */
+    const a=zone(dev(),[tk('r1','renamed on A',now+2000)]);      /* A retitled it */
+    a.days[D].must[0].dn=100; a.days[D].must[0].pos=100;
+    const b=zone(dev(),[tk('r1','original',100,{done:true})]);    /* B ticked it */
+    b.days[D].must[0].dn=now+1000; b.days[D].must[0].pos=100;
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(one(m,'r1').title==='renamed on A','the rename survives a tick made elsewhere');
+    ok(one(m,'r1').done===true,'and the tick survives the rename');
+    ok(A.stateSig(m)===A.stateSig(m2),'both devices land on the same task');
+  }
+  { /* the mirror: the tick is older than the rename, both still survive */
+    const a=zone(dev(),[tk('r1','renamed later on A',now+5000)]);
+    a.days[D].must[0].dn=100; a.days[D].must[0].pos=100;
+    const b=zone(dev(),[tk('r1','original',100,{done:true})]);
+    b.days[D].must[0].dn=now; b.days[D].must[0].pos=100;
+    const m=A.mergeStates(a,b);
+    ok(one(m,'r1').title==='renamed later on A'&&one(m,'r1').done===true,
+      'order of the two does not matter, neither discards the other');
+  }
+  { /* un-ticking is on the same axis, so the later of two tick changes wins */
+    const a=zone(dev(),[tk('r1','a task',100,{done:true})]); a.days[D].must[0].dn=now;
+    const b=zone(dev(),[tk('r1','a task',100)]);             b.days[D].must[0].dn=now+1000;
+    ok(one(A.mergeStates(a,b),'r1').done===false,'un-ticking later beats an earlier tick');
+    ok(one(A.mergeStates(b,a),'r1').done===false,'from either direction');
+  }
+  { /* a tick, a rename and a move, three devices' worth of change on one task */
+    const a=zone(dev(),[tk('r1','renamed',now+3000)]);
+    a.days[D].must[0].dn=100; a.days[D].must[0].pos=100;
+    const b=dev();
+    b.days[D]={must:[],should:[tk('r1','original',100,{done:true})],extra:[]};
+    b.days[D].should[0].dn=now+2000; b.days[D].should[0].pos=now+1000;
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    const w=one(m,'r1');
+    ok(w.title==='renamed','the newest title wins');
+    ok(w.done===true,'the tick is kept');
+    ok(w.loc.zone==='should','and the task sits where it was last moved to');
+    ok(A.stateSig(m)===A.stateSig(m2),'three axes, still the same answer on both devices');
+  }
+  { /* a tick still counts as asserting the task exists, so it revives a deletion */
+    const a=dev(); a.tomb={r1:now};
+    const b=zone(dev(),[tk('r1','ticked after the delete',100,{done:true})]);
+    b.days[D].must[0].dn=now+1000; b.days[D].must[0].pos=100;
+    ok(one(A.mergeStates(a,b),'r1'),'ticking a task after it was deleted brings it back');
+  }
+  { /* a focus item: its doneAt travels with the tick, not with the title */
+    const a=dev(); a.focus=[{id:'x1',title:'renamed focus',done:false,doneAt:null,
+      up:now+2000,dn:100,pos:100}];
+    const b=dev(); b.focus=[{id:'x1',title:'old title',done:true,doneAt:'2026-08-10',
+      up:100,dn:now+1000,pos:100}];
+    const m=A.mergeStates(a,b);
+    ok(m.focus[0].title==='renamed focus','a focus rename survives a tick elsewhere');
+    ok(m.focus[0].done===true&&m.focus[0].doneAt==='2026-08-10',
+      'and the tick keeps the date it was completed on');
+  }
   { /* adding a step no longer restamps the parent, so it cannot outrank a rename */
     const a=zone(dev(),[tk('r1','parent',100,{subtasks:[{id:'s9',title:'new step',done:false,up:now+2000}]})]);
     const b=zone(dev(),[tk('r1','parent renamed',now)]);
@@ -807,9 +861,10 @@ console.log('— the day turning while the app stays open —');
   ok((LS().days[plus(-1)].must||[]).some(t=>t.id==='nite2'),'the finished one stays on its day as history');
   ok(/Carry-over/.test(ld.querySelector('#tray').textContent),'the tray panel is on screen');
 
-  const rolledUp=LS().carry[0].up;
-  ok(rolledUp===new Date(T()+'T00:00:00').getTime(),
+  ok(LS().carry[0].pos===new Date(T()+'T00:00:00').getTime(),
     'the move is dated midnight, so a device opening later cannot out-stamp a triage');
+  ok(LS().carry[0].up===1000,
+    'and it is stamped as a move only, leaving the content stamp where it was');
 
   ld.dispatchEvent(new lw.Event('visibilitychange')); await wait(120);
   ok(LS().carry.length===1,'checking again the same day does not carry it a second time');
@@ -1190,6 +1245,19 @@ console.log('— sync merge: end to end across two windows —');
   await tab.A.syncCycle({}); await wait(60);
   ok(shown(tab).indexOf('from the PC')>-1,'a restore made on one device reaches the other');
   ok(!tab.A.state.bin[binned[0]],'and clears the bin entry there too');
+}
+
+console.log('— the docs match reality —');
+{
+  /* The expected count in CLAUDE.md has drifted twice. Rather than a generator nobody
+     remembers to run, the suite checks itself: add a test, this fails, and the message
+     tells you the number to write down. Counts this assertion, so it is stable. */
+  const md=fs.readFileSync('./CLAUDE.md','utf8');
+  const m=md.match(/RESULT:\s*(\d+)\s+passed/);
+  const total=pass+fail+1;
+  ok(m&&+m[1]===total,
+    'CLAUDE.md says '+(m?m[1]:'nothing')+' assertions, the suite has '+total+
+    '. Update the expect line in CLAUDE.md.');
 }
 
 console.log('\nRESULT: '+pass+' passed, '+fail+' failed');
