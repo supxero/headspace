@@ -1392,8 +1392,11 @@ console.log('— habits: a commitment band under the board —');
   A.render(); await wait(20);
   const wk=(()=>{const x=new Date(T()+'T12:00:00');x.setDate(x.getDate()-((x.getDay()+6)%7));
     x.setHours(12,0,0,0);return x.toISOString().slice(0,10)})();
-  ok(!!q('#habits .hpanel'),'the panel sits on the board with zero clicks');
-  ok(!!q('#habits .haddrow input'),'with its add field ready');
+  ok(!!q('#habitsRail .hcard'),'at desktop width the panel sits in the rail with zero clicks');
+  ok(q('#habitsRail').previousElementSibling&&q('#habitsRail').previousElementSibling.id==='fpanel',
+    'directly under Focus this week');
+  ok(q('#habits').innerHTML==='','and the board-bottom host stays empty there');
+  ok(!!q('#habitsRail .haddrow input'),'with its add field ready');
 
   q('#habitAdd').value='push-ups'; click('[data-action="habit-add"]'); await wait(30);
   ok(S().habits.list.length===1&&S().habits.list[0].name==='push-ups','Add creates a habit');
@@ -1404,17 +1407,17 @@ console.log('— habits: a commitment band under the board —');
   await wait(30);
   ok(S().habits.list.length===2,'Enter adds too');
   const hp=S().habits.list[0], hs=S().habits.list[1];
-  ok(qa('#habits .hdow').map(x=>x.textContent).join()==='Mo,Tu,We,Th,Fr,Sa',
+  ok(qa('#habitsRail .hdow').map(x=>x.textContent).join()==='Mo,Tu,We,Th,Fr,Sa',
     'six weekday columns, Monday to Saturday, Sunday rests');
 
   /* alternating schedules, set without leaving the panel */
   click('[data-action="habit-days"][data-id="'+hs.id+'"]'); await wait(20);
-  ok(qa('#habits .hday').length===6,'Days opens six day toggles in place');
+  ok(qa('#habitsRail .hday').length===6,'Days opens six day toggles in place');
   for(const d of [1,3,5]){ click('[data-action="habit-day"][data-id="'+hs.id+'"][data-dow="'+d+'"]'); await wait(15) }
   click('[data-action="habit-days-done"][data-id="'+hs.id+'"]'); await wait(20);
   ok(S().habits.list[1].days.join()==='2,4,6','the schedule saved as Tue, Thu, Sat');
   ok(qa('[data-action="habit-tick"][data-id="'+hs.id+'"]').length===3,'only scheduled days are tickable');
-  ok(qa('#habits .hdash').length===3,'unscheduled days render a muted dash, never a blank box');
+  ok(qa('#habitsRail .hdash').length===3,'unscheduled days render a muted dash, never a blank box');
   ok(qa('[data-action="habit-tick"][data-id="'+hp.id+'"]').length===6,'the other habit keeps all six');
 
   /* ticks land in this week, keyed by its Monday. Commit first so the change tracker
@@ -1439,10 +1442,10 @@ console.log('— habits: a commitment band under the board —');
   /* collapse remembers, per device */
   click('[data-action="habit-toggle"]'); await wait(20);
   ok(S().settings.habitsOpen===false,'Hide collapses and remembers');
-  ok(!q('#habits .hgrid')&&!q('#habitAdd'),'collapsed keeps only the header');
+  ok(!q('#habitsRail .hrail')&&!q('#habitAdd'),'collapsed keeps only the header');
   ok(/Show/.test(q('[data-action="habit-toggle"]').textContent),'and the control reads Show');
   click('[data-action="habit-toggle"]'); await wait(20);
-  ok(!!q('#habits input#habitAdd'),'Show opens it again');
+  ok(!!q('#habitsRail input#habitAdd'),'Show opens it again');
 
   /* a separate band: no Prio weight, no counts, no metrics, no dots */
   const meta0=(q('.col.today .meta')||{textContent:''}).textContent;
@@ -1580,11 +1583,140 @@ console.log('— pinned: subtask work loses to a concurrent parent delete —');
   ok(!Object.keys(g2.sub).length,'but its old steps stay deleted');
 }
 
+console.log('— the weekly list: one flat band, no tiers —');
+{
+  S().settings.view='board'; S().settings.floatMode=false; A.render(); await wait(20);
+  const wsh=(d,n)=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);return x.toISOString().slice(0,10)};
+  const thisMon=(()=>{const x=new Date(T()+'T12:00:00');x.setDate(x.getDate()-((x.getDay()+6)%7));
+    x.setHours(12,0,0,0);return x.toISOString().slice(0,10)})();
+
+  ok(!!q('#weekRail .wcard'),'the list sits in the rail with zero clicks');
+  ok(q('#weekRail').previousElementSibling&&q('#weekRail').previousElementSibling.id==='habitsRail',
+    'directly under the habits section');
+  ok(!q('#weekRail .zh')&&!q('#weekRail [data-zone]'),'no Prio tiers and no day columns in it');
+
+  const stat0=JSON.stringify(A.tally([T()]))+'|'+A.streak();
+  const meta0=(q('.col.today .meta')||{textContent:''}).textContent;
+  q('#weekAdd').value='book the dentist'; click('[data-action="week-add"]'); await wait(30);
+  ok(S().week.list.length===1&&S().week.list[0].title==='book the dentist','Add creates an item');
+  ok(!!doc.activeElement&&doc.activeElement.id==='weekAdd','and focus stays in the field');
+  q('#weekAdd').value='clear the inbox';
+  q('#weekAdd').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+  await wait(30);
+  ok(S().week.list.length===2,'Enter adds too');
+  A.save(); await wait(10);
+
+  const wt=S().week.list[0];
+  click('[data-action="week-tick"][data-id="'+wt.id+'"]'); await wait(30);
+  ok(S().week.list[0].done===true,'tick completes');
+  ok(q('[data-action="week-tick"][data-id="'+wt.id+'"]').classList.contains('on'),'with the usual box styling');
+  ok(/1 open/.test(q('#weekRail .kh .sp').textContent),'the open count follows');
+
+  q('[data-action="week-rename"][data-id="'+wt.id+'"]').click(); await wait(20);
+  const wed=q('[data-action="week-rename"][data-id="'+wt.id+'"]');
+  wed.textContent='book the dentist, morning'; fire(wed,'blur'); await wait(30);
+  ok(S().week.list[0].title==='book the dentist, morning','rename in place works');
+
+  ok(JSON.stringify(A.tally([T()]))+'|'+A.streak()===stat0,'weekly items touch neither tally nor streak');
+  ok((q('.col.today .meta')||{textContent:''}).textContent===meta0,'nor the board day counts');
+
+  /* delete: bin and the 5 second Undo, like everything else */
+  const w2=S().week.list[1];
+  click('[data-action="week-del"][data-id="'+w2.id+'"]'); await wait(30);
+  ok(!S().week.list.find(x=>x.id===w2.id),'delete removes the item');
+  ok(/Deleted/.test(q('#toast').textContent)&&!!q('#toast [data-action="undo"]'),'with the usual Undo toast');
+  A.save(); await wait(10);
+  ok(!!S().tomb[w2.id]&&!!S().bin[w2.id]&&S().bin[w2.id].k==='wtask','tomb and bin record it');
+  click('[data-action="undo"]'); await wait(30); A.save(); await wait(10);
+  ok(!!S().week.list.find(x=>x.id===w2.id),'Undo puts it back');
+  click('[data-action="week-del"][data-id="'+w2.id+'"]'); await wait(30); A.save(); await wait(10);
+  A.restoreBin(w2.id); await wait(30);
+  ok(!!S().week.list.find(x=>x.id===w2.id),'Restore from the Bin brings it back');
+  ok(/This week list/.test(q('#toast').textContent),'and says where it went');
+
+  /* the Monday sweep: ticked graduate to history, unticked carry */
+  const prevMon=wsh(thisMon,-7);
+  S().settings.lastWeek=prevMon; S().settings.lastRoll=T();
+  A.rollIfNewDay({quiet:true}); await wait(30);
+  ok(!S().week.list.find(x=>x.id===wt.id),'the ticked item left the list at the week turn');
+  ok(!!S().week.list.find(x=>x.id===w2.id),'the unticked one carried into the new week');
+  ok((S().week.hist[prevMon]||[]).some(x=>x.id===wt.id),'the finished one waits in that week\'s history');
+  ok(!S().bin[wt.id],'closing a week is not a deletion: no bin entry');
+  ok(!!S().tomb[wt.id],'but a tombstone keeps stale copies from resurrecting it');
+  ok(S().settings.lastWeek===thisMon,'and the sweep marks this week done');
+  click('[data-action="week-del"][data-id="'+w2.id+'"]'); await wait(30); A.save(); await wait(10);
+}
+
+console.log('— the weekly list: merge —');
+const wdev=()=>{const s=hdev(); s.week={list:[],hist:{}}; return s};
+const mkw=(id,title,up,x)=>Object.assign({id,title,done:false,up:up||100,dn:up||100,pos:up||100},x||{});
+{ /* added on each side */
+  const a=wdev(); a.week.list.push(mkw('w1','from the PC',200));
+  const b=wdev(); b.week.list.push(mkw('w2','from the tablet',210));
+  const m=A.mergeStates(a,b);
+  ok(m.week.list.length===2,'an item added on each device: both survive');
+  ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'and both devices agree');
+}
+{ /* rename and tick compose on their own axes */
+  const base=wdev(); base.week.list.push(mkw('w1','draft it',200));
+  const a=clone(base); a.week.list[0].title='draft it properly'; a.week.list[0].up=900;
+  const b=clone(base); b.week.list[0].done=true; b.week.list[0].dn=600;
+  const m=A.mergeStates(a,b);
+  ok(m.week.list[0].title==='draft it properly'&&m.week.list[0].done===true,
+    'a rename on one device and a tick on the other both survive');
+}
+{ /* delete versus later tick revives, like tasks */
+  const base=wdev(); base.week.list.push(mkw('w1','draft it',200));
+  const a=clone(base); a.week.list=[]; a.tomb={w1:800};
+  const b=clone(base); b.week.list[0].done=true; b.week.list[0].dn=900;
+  ok(A.mergeStates(a,b).week.list.length===1,'a tick made after a delete elsewhere revives the item');
+  const a2=clone(base); a2.week.list=[]; a2.tomb={w1:950};
+  ok(A.mergeStates(a2,b).week.list.length===0,'a delete after the last tick still wins');
+}
+{ /* one device swept, the other still holds the ticked copy */
+  const base=wdev(); base.week.list.push(mkw('w1','done thing',200,{done:true,dn:500}));
+  const a=clone(base);
+  a.week.list=[]; a.tomb={w1:1000};                     /* swept at Monday midnight */
+  a.week.hist={'2026-08-03':[{id:'w1',title:'done thing',at:500}]};
+  const b=clone(base);                                  /* stale: still ticked in the list */
+  const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+  ok(m.week.list.length===0,'the swept item does not come back from a stale device');
+  ok((m.week.hist['2026-08-03']||[]).length===1,'its history entry survives the merge');
+  ok(A.stateSig(m)===A.stateSig(m2),'both directions agree');
+}
+{ /* a device that predates the weekly list cannot drop it */
+  const a=dev();
+  const b=wdev(); b.week.list.push(mkw('w1','keep me',200));
+  b.week.hist={'2026-08-03':[{id:'w0',title:'old done thing',at:150}]};
+  const m=A.mergeStates(a,b);
+  ok(m.week.list.length===1&&(m.week.hist['2026-08-03']||[]).length===1,
+    'merging with a pre-week planner keeps the list and its history');
+}
+
+console.log('— placement: rail on desktop, board bottom on a phone —');
+{
+  const phone=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+    beforeParse(win){
+      Object.defineProperty(win,'innerWidth',{value:390,writable:true,configurable:true});
+      Object.defineProperty(win,'innerHeight',{value:844,writable:true,configurable:true});
+    }});
+  const pw2=phone.window, pd2=pw2.document; await wait(300);
+  const pq2=s=>pd2.querySelector(s);
+  ok(!!pq2('#habits .hpanel'),'a phone keeps the habits band under the day column');
+  ok(!!pq2('#weekMobile .wcard'),'and the weekly list right under it');
+  ok(pq2('#habitsRail').innerHTML===''&&pq2('#weekRail').innerHTML==='','with the rail hosts empty');
+  pq2('[data-action="habit-toggle"]').click(); await wait(30);
+  ok(pw2.A.state.settings.habitsOpen===false,'collapse works in the phone placement too');
+  pq2('[data-action="habit-toggle"]').click(); await wait(30);
+  ok(pw2.A.state.settings.habitsOpen!==false,'and reopens');
+}
+
 console.log('— no interactive element renders blank —');
 {
   S().settings.view='board'; S().settings.floatMode=false; A.render(); await wait(20);
-  ok(qa('#habits button').length>0&&qa('#habits button').every(b=>b.textContent.trim().length>0),
-    'every habits control has visible text');
+  ok(qa('#habitsRail button,#weekRail button').length>0&&
+    qa('#habitsRail button,#weekRail button').every(b=>b.textContent.trim().length>0),
+    'every habits and weekly control has visible text');
   const blank=qa('button').filter(b=>!b.textContent.trim()&&!(b.getAttribute('aria-label')||'').trim());
   ok(blank.length===0,'no button anywhere on the board renders with an empty label');
 }

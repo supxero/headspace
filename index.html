@@ -292,6 +292,22 @@ select option{background:var(--pearl);color:var(--txt)}
   .hday{min-height:30px}
   .haddrow input{font-size:16px;min-height:42px}
 }
+/* rail placement (desktop): 254px inside the kard cannot hold a name beside six cells
+   and their controls, so each habit is two lines and the cells get the full width */
+#habitsRail:empty,#weekRail:empty,#weekMobile:empty{display:none}
+#weekMobile:not(:empty){padding-bottom:16px}
+.hcard .kh .mini,.wcard .kh .mini{text-transform:none;letter-spacing:0;font-weight:500}
+.hrdow,.hrcells{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;justify-items:center;align-items:center}
+.hrdow{margin-bottom:2px}
+.hrail .hdow{padding:2px 0}
+.hrname{display:flex;align-items:center;gap:5px;margin-top:8px}
+.hrname .hname{flex:1;min-width:0;padding:1px 4px}
+.hrcells{margin-top:3px}
+.hrcells .hbox{width:20px;height:20px}
+.hrcells .hday{width:100%;min-height:24px}
+.hcard .haddrow{margin-top:11px}
+.hcard .haddrow input,.wcard .fadd input{font-size:13px}
+.wcard .ftxt span{cursor:pointer}
 
 /* calendar */
 #cal{flex:1;overflow-y:auto;padding-bottom:16px;min-width:0}
@@ -535,6 +551,8 @@ select option{background:var(--pearl);color:var(--txt)}
 
     <div class="railhide" style="display:flex;flex-direction:column;gap:14px">
       <div class="kard" id="fpanel"></div>
+      <div id="habitsRail"></div>
+      <div id="weekRail"></div>
 
       <div class="railcap">Momentum</div>
       <div id="metrics" style="display:flex;flex-direction:column;gap:10px"></div>
@@ -560,6 +578,7 @@ select option{background:var(--pearl);color:var(--txt)}
     <div id="strip"></div>
     <div id="board"></div>
     <div id="habits"></div>
+    <div id="weekMobile"></div>
     <div id="cal" style="display:none"></div>
   </main>
 </div>
@@ -578,6 +597,9 @@ const iso=d=>{const t=new Date(d);t.setHours(12,0,0,0);return t.toISOString().sl
 const today=()=>iso(new Date());
 const plus=(n,from)=>{const d=new Date((from||today())+'T12:00:00');d.setDate(d.getDate()+n);return iso(d)};
 const dayDiff=(a,b)=>Math.round((new Date(b+'T12:00:00')-new Date(a+'T12:00:00'))/864e5);
+/* the Monday a date's week started; the key habits and the weekly list hang history on */
+const hweek=d=>{const x=new Date((d||today())+'T12:00:00');
+  x.setDate(x.getDate()-((x.getDay()+6)%7)); return iso(x)};
 const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -597,9 +619,12 @@ function fresh(){
     /* habits: a commitment band apart from the day plan. list holds the habit rows,
        marks holds every week's ticks keyed by the Monday that week started */
     habits:{list:[],marks:{}},
+    /* week: the flat sometime-this-week list. list is live; at Monday 00:00 the
+       ticked items graduate into hist under the week that closed, unticked stay */
+    week:{list:[],hist:{}},
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
-      habitsOpen:true}
+      habitsOpen:true,lastWeek:null}
   };
 }
 
@@ -630,9 +655,9 @@ const arr=x=>Array.isArray(x)?x:[];
    `from` (the carry-over origin label) is positional: rollover writes it as part of the
    move, and triage clears it as part of moving the task out.
    `doneAt` rides with `done`, since ticking a focus item is what writes it. */
-const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days']};
-const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[]};
-const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord']};
+const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days'],wtask:['title']};
+const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[],wtask:['done']};
+const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord'],wtask:['ord']};
 /* A habit's ticks do not live on the item at all: they sit in habits.marks as one
    timestamped cell per week and day, merged by union, so a Monday tick on one device
    and a Wednesday tick on another can never compete. The item's dn stamp still moves
@@ -649,6 +674,7 @@ function eachItem(s,fn){
   arr(s.focus).forEach((f,i)=>{ if(f&&f.id) fn('focus',f,{ord:i}) });
   const hb=s.habits||{};
   arr(hb.list).forEach((x,i)=>{ if(x&&x.id) fn('habit',x,{ord:i,msig:marksSigFor(hb.marks,x.id)}) });
+  arr(s.week&&s.week.list).forEach((x,i)=>{ if(x&&x.id) fn('wtask',x,{ord:i}) });
 }
 /* a habit's marks across every week, in stable key order, for its dn signature */
 function marksSigFor(marks,id){
@@ -683,6 +709,7 @@ function sigP(kind,o,m){
   if(kind==='float') return 'f|'+m.ord;
   if(kind==='focus') return 'x|'+m.ord;
   if(kind==='habit') return 'h|'+m.ord;
+  if(kind==='wtask') return 'w|'+m.ord;
   if(kind==='sub')   return 's|'+m.pid+'|'+m.ord;
   return 't|'+locKey(m.loc)+'|'+m.ord+'|'+(o.from||'');
 }
@@ -730,6 +757,8 @@ function stampChanges(when){
 function stampLegacy(s){
   if(!s.habits||typeof s.habits!=='object'||!Array.isArray(s.habits.list)) s.habits={list:[],marks:{}};
   if(!s.habits.marks||typeof s.habits.marks!=='object') s.habits.marks={};
+  if(!s.week||typeof s.week!=='object'||!Array.isArray(s.week.list)) s.week={list:[],hist:{}};
+  if(!s.week.hist||typeof s.week.hist!=='object') s.week.hist={};
   eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP;
     if(!(+o.dn>0)) o.dn=upOf(o); if(!(+o.pos>0)) o.pos=upOf(o) });
   if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
@@ -745,7 +774,7 @@ function stampLegacy(s){
 
 /* ================= merge two planners, item by item ================= */
 function flatten(s){
-  const g={float:{},task:{},sub:{},focus:{},habit:{}};
+  const g={float:{},task:{},sub:{},focus:{},habit:{},wtask:{}};
   eachItem(s,(k,o,m)=>{
     if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
@@ -755,6 +784,8 @@ function flatten(s){
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='habit') g.habit[o.id]={id:o.id,name:o.name||'',
       days:arr(o.days).slice().sort((a,b)=>a-b),ord:m.ord,
+      up:upOf(o),dn:dnOf(o),pos:posOf(o)};
+    else if(k==='wtask') g.wtask[o.id]={id:o.id,title:o.title||'',done:!!o.done,ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
       loc:m.loc,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
@@ -794,7 +825,7 @@ function mergeTombs(x,y){
 }
 function stateSig(s){
   const g=flatten(s), out=[];
-  ['float','task','sub','focus','habit'].forEach(k=>Object.keys(g[k]).sort()
+  ['float','task','sub','focus','habit','wtask'].forEach(k=>Object.keys(g[k]).sort()
     .forEach(id=>out.push(k+' '+JSON.stringify(g[k][id]))));
   /* habit ticks live outside the items, so hash them too or a tick would never push */
   const hm=(s&&s.habits&&s.habits.marks)||{};
@@ -805,6 +836,9 @@ function stateSig(s){
       Object.keys(cells).sort().forEach(d=>out.push('hm '+w+' '+id+' '+d+' '+cells[d]));
     });
   });
+  /* the weekly list's closed weeks count too, or an archive would never push */
+  const wh=(s&&s.week&&s.week.hist)||{};
+  Object.keys(wh).sort().forEach(w=>out.push('wh '+w+' '+JSON.stringify(arr(wh[w]))));
   const tb=(s&&s.tomb)||{};
   Object.keys(tb).sort().forEach(id=>out.push('gone '+id+' '+tb[id]));
   const bn=(s&&s.bin)||{};
@@ -818,8 +852,8 @@ function stateSig(s){
 function mergeStates(mine,theirs){
   const A=flatten(mine), B=flatten(theirs);
   const tomb=mergeTombs(mine.tomb,theirs.tomb);
-  const keep={float:{},task:{},sub:{},focus:{},habit:{}};
-  ['float','task','sub','focus','habit'].forEach(g=>{
+  const keep={float:{},task:{},sub:{},focus:{},habit:{},wtask:{}};
+  ['float','task','sub','focus','habit','wtask'].forEach(g=>{
     const ids={};
     Object.keys(A[g]).forEach(i=>{ids[i]=1}); Object.keys(B[g]).forEach(i=>{ids[i]=1});
     Object.keys(ids).forEach(id=>{
@@ -834,7 +868,7 @@ function mergeStates(mine,theirs){
   });
   const out=rebuild(keep,tomb,mine,theirs);
   const alive={};
-  ['float','task','sub','focus','habit'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
+  ['float','task','sub','focus','habit','wtask'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
   out.bin=mergeBins(mine.bin,theirs.bin,tomb,alive);
   return out;
 }
@@ -859,7 +893,23 @@ function mergeBins(x,y,tomb,alive){
    carried through untouched by carryUnknown(), so a key added to state in future cannot be
    silently dropped the first time two devices merge. A test asserts this list still matches
    fresh(), so adding a key to the canonical shape forces a deliberate choice here. */
-const MERGED_KEYS=['ver','days','carry','focus','floats','habits','settings','tomb','bin'];
+const MERGED_KEYS=['ver','days','carry','focus','floats','habits','week','settings','tomb','bin'];
+/* the weekly list's closed weeks: plain records, unioned by week then by id, the newer
+   `at` winning a shared id. Two devices archiving the same finished item converge. */
+function mergeHist(x,y){
+  const out={};
+  [x||{},y||{}].forEach(src=>Object.keys(src).forEach(w=>{
+    arr(src[w]).forEach(e=>{
+      if(!e||!e.id) return;
+      if(!out[w]) out[w]=[];
+      const cur=out[w].find(o=>o.id===e.id);
+      if(!cur) out[w].push({id:e.id,title:e.title||'',at:+e.at||0});
+      else if((+e.at||0)>cur.at){ cur.title=e.title||''; cur.at=+e.at }
+    });
+  }));
+  Object.keys(out).forEach(w=>out[w].sort((a,b)=>(a.at-b.at)||(a.id<b.id?-1:1)));
+  return out;
+}
 /* habit ticks: one timestamped cell per habit, week and day. Positive means ticked at
    that moment, negative means unticked at that moment. Per cell the later action, by
    absolute value, wins; every other cell is simply unioned, so ticks made on different
@@ -942,6 +992,11 @@ function rebuild(keep,tomb,mine,theirs){
        restored from the bin gets its whole record back for free */
     marks:mergeMarks(mine.habits&&mine.habits.marks,theirs.habits&&theirs.habits.marks)
   };
+  out.week={
+    list:Object.keys(keep.wtask).map(id=>keep.wtask[id]).sort(byOrd)
+      .map(x=>({id:x.id,title:x.title,done:x.done,up:x.up,dn:x.dn,pos:x.pos})),
+    hist:mergeHist(mine.week&&mine.week.hist,theirs.week&&theirs.week.hist)
+  };
   if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
   return carryUnknown(out,mine,theirs);
 }
@@ -958,6 +1013,9 @@ function load(){
     if(!state.habits||typeof state.habits!=='object'||!Array.isArray(state.habits.list))
       state.habits={list:[],marks:{}};
     if(!state.habits.marks||typeof state.habits.marks!=='object') state.habits.marks={};
+    if(!state.week||typeof state.week!=='object'||!Array.isArray(state.week.list))
+      state.week={list:[],hist:{}};
+    if(!state.week.hist||typeof state.week.hist!=='object') state.week.hist={};
     /* migrate an old flat backlog into the first float tab */
     if(Array.isArray(p.backlog)&&p.backlog.length) state.floats[0].tasks.push(...p.backlog);
   }catch(e){ state=fresh() }
@@ -1006,7 +1064,7 @@ const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this dev
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
 const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay',
-  'showDone','lastRoll','habitsOpen'];
+  'showDone','lastRoll','habitsOpen','lastWeek'];
 const POLL_MS=25000;                          /* look for another device's changes this often */
 const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
 const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
@@ -1156,6 +1214,9 @@ function readCloud(p){
   if(!out.habits||typeof out.habits!=='object'||!Array.isArray(out.habits.list))
     out.habits={list:[],marks:{}};
   if(!out.habits.marks||typeof out.habits.marks!=='object') out.habits.marks={};
+  if(!out.week||typeof out.week!=='object'||!Array.isArray(out.week.list))
+    out.week={list:[],hist:{}};
+  if(!out.week.hist||typeof out.week.hist!=='object') out.week.hist={};
   return stampLegacy(out);
 }
 /* put a state on screen without letting the change look like a local edit */
@@ -1395,6 +1456,24 @@ function rollover(){
   state.settings.lastRoll=t;
   return moved;
 }
+/* Monday sweep for the weekly list: ticked items graduate into week.hist under the week
+   that just closed, unticked ones simply stay in the list, which IS the carry. The
+   archived ids leave the tree, so the normal diff tombs them and another device's stale
+   ticked copy cannot bring them back, but they skip the bin: finishing a week is not a
+   deletion. A device off for several weeks archives everything under the last week it
+   saw, an approximation accepted over tracking a tick date per item. */
+function weekSweep(){
+  const closing=state.settings.lastWeek||plus(-7,hweek());
+  const done=arr(state.week.list).filter(t=>t.done);
+  if(done.length){
+    const h=state.week.hist[closing]=state.week.hist[closing]||[];
+    done.forEach(t=>{ if(!h.some(x=>x.id===t.id)) h.push({id:t.id,title:t.title,at:dnOf(t)}) });
+    ui.skipBin=(ui.skipBin||[]).concat(done.map(t=>t.id));
+    state.week.list=state.week.list.filter(t=>!t.done);
+  }
+  state.settings.lastWeek=hweek();
+}
+
 /* The day can turn while the app is still open, and a phone keeps this app running for
    days at a time, so checking only at launch meant the tray never appeared for anyone
    who does not close it. Checked at launch, whenever the app comes back to the front,
@@ -1413,10 +1492,14 @@ function pastOpenCount(){
 }
 function rollIfNewDay(opts){
   opts=opts||{};
-  if(!state||state.settings.lastRoll===today()) return 0;
+  if(!state) return 0;
+  const dayDue=state.settings.lastRoll!==today();
+  const weekDue=state.settings.lastWeek!==hweek();
+  if(!dayDue&&!weekDue) return 0;
   if(saveT){ clearTimeout(saveT); saveT=null; commit() }   /* pending edits keep their own moment */
   const midnight=new Date(today()+'T00:00:00').getTime();
-  const n=rollover();
+  const n=dayDue?rollover():0;
+  if(weekDue) weekSweep();
   commit(midnight);
   if(n&&!opts.quiet){
     const say=()=>toast(n+' carried over from before');
@@ -1520,6 +1603,7 @@ function restoreBin(id){
     dest='Free Floating'+(back?', with '+back+(back===1?' task':' tasks')+' moved back into it':'');
   }else if(e.k==='focus'){ state.focus.push(b); dest='Focus this week' }
   else if(e.k==='habit'){ state.habits.list.push(b); dest='the Habits panel' }
+  else if(e.k==='wtask'){ state.week.list.push(b); dest='the This week list' }
   else return;
   save(); render();
   toast('Restored to '+dest);
@@ -1547,6 +1631,7 @@ function binWhere(e){
   }
   if(e.k==='focus') return 'Focus this week';
   if(e.k==='habit') return 'the Habits panel';
+  if(e.k==='wtask') return 'the This week list';
   const l=e.loc||{kind:'carry'};
   if(l.kind==='day'&&l.date)
     return (ZL[l.zone]||ZL.must)+' on '+DOW[new Date(l.date+'T12:00:00').getDay()]+' '+l.date;
@@ -1926,44 +2011,105 @@ function card(t,loc){
    is only tickable on a day the habit is scheduled for; unscheduled days render a
    muted dash, so a blank box always means missed, never "not planned". */
 const HDOW=['','Mo','Tu','We','Th','Fr','Sa'];
-const hweek=d=>{const x=new Date((d||today())+'T12:00:00');
-  x.setDate(x.getDate()-((x.getDay()+6)%7)); return iso(x)};
+/* On a desktop the panel lives in the rail under Focus; on a phone the rail folds
+   behind Menu and the 308px column cannot hold names beside six cells and their
+   controls, so the panel stays the full-width band under the day columns. Same gate
+   the rest of the layout uses (innerWidth<900), so the resize handler re-homes it. */
+const railWide=()=>window.innerWidth>=900;
+function hcell(hb,d,marks,eds){
+  const days=arr(hb.days);
+  if(eds) return '<button class="hday'+(days.includes(d)?' on':'')+
+    '" data-action="habit-day" data-id="'+hb.id+'" data-dow="'+d+'">'+HDOW[d]+'</button>';
+  if(days.includes(d)){
+    const v=+((marks[hb.id]||{})[d])||0;
+    return '<button class="box hbox'+(v>0?' on':'')+'" data-action="habit-tick" data-id="'+hb.id+
+      '" data-dow="'+d+'" aria-label="'+esc(hb.name)+' on '+HDOW[d]+'">✓</button>';
+  }
+  return '<span class="hdash">-</span>';
+}
+function habitTools(hb,eds){
+  if(eds) return '<button class="mini" data-action="habit-days-done" data-id="'+hb.id+'">Done</button>';
+  return '<button class="mini" data-action="habit-days" data-id="'+hb.id+'" title="Choose its days">Days</button>'+
+    '<button class="mini" data-action="habit-del" data-id="'+hb.id+'" title="Delete habit" aria-label="Delete habit">✕</button>';
+}
+function habitAddRow(){
+  return '<div class="haddrow"><input id="habitAdd" data-enter="habit" placeholder="Add a habit…" autocomplete="off">'+
+    '<button class="nbtn" data-action="habit-add">Add</button></div>';
+}
 function renderHabits(){
-  const el=$('#habits');
-  if(state.settings.view!=='board'||state.settings.floatMode){ el.innerHTML=''; return }
+  const wide=railWide();
+  const host=wide?$('#habitsRail'):$('#habits'), other=wide?$('#habits'):$('#habitsRail');
+  other.innerHTML='';
+  if(!wide&&(state.settings.view!=='board'||state.settings.floatMode)){ host.innerHTML=''; return }
   const open=state.settings.habitsOpen!==false;
   const wk=hweek(), marks=state.habits.marks[wk]||{};
   const list=state.habits.list;
   const tdow=new Date(today()+'T12:00:00').getDay();
-  let h='<div class="hpanel"><div class="hhead"><b>Habits</b>'+
-    '<span class="hsub">'+(tdow===0?'Sunday rests. The week starts over tomorrow.':'Mon to Sat, Sunday rests')+'</span>'+
-    '<button class="mini" data-action="habit-toggle">'+(open?'Hide':'Show')+'</button></div>';
-  if(open){
-    if(list.length){
-      h+='<div class="hgridwrap"><div class="hgrid">';
-      h+='<span></span>'+[1,2,3,4,5,6].map(d=>
-        '<span class="hdow'+(d===tdow?' now':'')+'">'+HDOW[d]+'</span>').join('')+'<span></span><span></span>';
-      list.forEach(hb=>{
-        const eds=ui.habitDays===hb.id, days=arr(hb.days);
-        h+='<div class="hname" data-action="habit-rename" data-id="'+hb.id+'" title="Rename">'+esc(hb.name)+'</div>';
-        [1,2,3,4,5,6].forEach(d=>{
-          if(eds) h+='<button class="hday'+(days.includes(d)?' on':'')+'" data-action="habit-day" data-id="'+hb.id+'" data-dow="'+d+'">'+HDOW[d]+'</button>';
-          else if(days.includes(d)){
-            const v=+((marks[hb.id]||{})[d])||0;
-            h+='<button class="box hbox'+(v>0?' on':'')+'" data-action="habit-tick" data-id="'+hb.id+'" data-dow="'+d+'" aria-label="'+esc(hb.name)+' on '+HDOW[d]+'">✓</button>';
-          }else h+='<span class="hdash">-</span>';
+  const dowRow=cls=>[1,2,3,4,5,6].map(d=>
+    '<span class="hdow'+(d===tdow?' now':'')+'">'+HDOW[d]+'</span>').join('');
+  let h;
+  if(wide){
+    /* rail: a kard like Focus above it. Six cells do not fit beside a name in 254px,
+       so each habit takes two lines: its name with its controls, then the week. */
+    h='<div class="kard hcard"><div class="kh">Habits<span class="sp">'+
+      (tdow===0?'Sun rests':'Mon to Sat')+'</span>'+
+      '<button class="mini" data-action="habit-toggle">'+(open?'Hide':'Show')+'</button></div>';
+    if(open){
+      if(list.length){
+        h+='<div class="hrail"><div class="hrdow">'+dowRow()+'</div>';
+        list.forEach(hb=>{
+          const eds=ui.habitDays===hb.id;
+          h+='<div class="hrname"><span class="hname" data-action="habit-rename" data-id="'+hb.id+
+            '" title="Rename">'+esc(hb.name)+'</span>'+habitTools(hb,eds)+'</div>'+
+            '<div class="hrcells">'+[1,2,3,4,5,6].map(d=>hcell(hb,d,marks,eds)).join('')+'</div>';
         });
-        if(eds) h+='<button class="mini" data-action="habit-days-done" data-id="'+hb.id+'">Done</button><span></span>';
-        else h+='<button class="mini" data-action="habit-days" data-id="'+hb.id+'" title="Choose its days">Days</button>'+
-          '<button class="mini" data-action="habit-del" data-id="'+hb.id+'" title="Delete habit" aria-label="Delete habit">✕</button>';
-      });
-      h+='</div></div>';
-    }else h+='<div class="empty">No habits yet. They keep their own band, apart from the day plan.</div>';
-    h+='<div class="haddrow"><input id="habitAdd" data-enter="habit" placeholder="Add a habit…" autocomplete="off">'+
-      '<button class="nbtn" data-action="habit-add">Add</button></div>';
+        h+='</div>';
+      }else h+='<div class="empty">No habits yet. They keep their own band, apart from the day plan.</div>';
+      h+=habitAddRow();
+    }
+    h+='</div>';
+  }else{
+    h='<div class="hpanel"><div class="hhead"><b>Habits</b>'+
+      '<span class="hsub">'+(tdow===0?'Sunday rests. The week starts over tomorrow.':'Mon to Sat, Sunday rests')+'</span>'+
+      '<button class="mini" data-action="habit-toggle">'+(open?'Hide':'Show')+'</button></div>';
+    if(open){
+      if(list.length){
+        h+='<div class="hgridwrap"><div class="hgrid">';
+        h+='<span></span>'+dowRow()+'<span></span><span></span>';
+        list.forEach(hb=>{
+          const eds=ui.habitDays===hb.id;
+          h+='<div class="hname" data-action="habit-rename" data-id="'+hb.id+'" title="Rename">'+esc(hb.name)+'</div>'+
+            [1,2,3,4,5,6].map(d=>hcell(hb,d,marks,eds)).join('')+
+            habitTools(hb,eds)+(eds?'<span></span>':'');
+        });
+        h+='</div></div>';
+      }else h+='<div class="empty">No habits yet. They keep their own band, apart from the day plan.</div>';
+      h+=habitAddRow();
+    }
+    h+='</div>';
   }
-  h+='</div>';
-  el.innerHTML=h;
+  host.innerHTML=h;
+}
+
+/* the weekly list: one flat band of sometime-this-week items, no tiers, no days.
+   Rail on desktop under Habits, full width under the board on a phone. */
+function wrow(t){
+  return '<div class="frow'+(t.done?' done':'')+'">'+
+    '<button class="box'+(t.done?' on':'')+'" data-action="week-tick" data-id="'+t.id+'">✓</button>'+
+    '<div class="ftxt"><span data-action="week-rename" data-id="'+t.id+'" title="Rename">'+esc(t.title)+'</span></div>'+
+    '<button class="mini" data-action="week-del" data-id="'+t.id+'" title="Remove" aria-label="Remove">✕</button></div>';
+}
+function renderWeekly(){
+  const wide=railWide();
+  const host=wide?$('#weekRail'):$('#weekMobile'), other=wide?$('#weekMobile'):$('#weekRail');
+  other.innerHTML='';
+  if(!wide&&(state.settings.view!=='board'||state.settings.floatMode)){ host.innerHTML=''; return }
+  const list=arr(state.week.list), open=list.filter(t=>!t.done).length;
+  host.innerHTML='<div class="'+(wide?'kard':'hpanel')+' wcard">'+
+    '<div class="kh">This week<span class="sp">'+open+' open</span></div>'+
+    (list.length?list.map(wrow).join(''):'<div class="empty">Nothing yet. Things to do sometime this week, no particular day.</div>')+
+    '<div class="fadd"><input id="weekAdd" placeholder="Sometime this week…" data-enter="week" autocomplete="off">'+
+    '<button data-action="week-add">Add</button></div></div>';
 }
 
 /* ================= render: calendar ================= */
@@ -2029,7 +2175,7 @@ function render(){
   $('#quickadd').style.display=v==='board'?'flex':'none';
 
   renderQuick(); renderTray(); renderNav(); renderFocus(); renderMetrics(); paintBin(); grow();
-  renderHabits();
+  renderHabits(); renderWeekly();
   if(v==='board') renderBoard(); else renderCal();
 
   if(ui.adding){
@@ -2202,6 +2348,30 @@ document.addEventListener('click',e=>{
       const hb=state.habits.list.splice(idx,1)[0];
       toast('Deleted "'+hb.name.slice(0,28)+'"',
         ()=>state.habits.list.splice(Math.min(idx,state.habits.list.length),0,hb));
+      break;
+    }
+
+    case 'week-add':{
+      const i=$('#weekAdd'); if(!i||!i.value.trim()) return;
+      state.week.list.push({id:uid(),title:i.value.trim(),done:false,up:Date.now()});
+      save(); render();
+      const n=$('#weekAdd'); if(n) n.focus();
+      return;
+    }
+    case 'week-tick':{
+      const t=state.week.list.find(x=>x.id===id); if(!t) return;
+      t.done=!t.done;
+      el.classList.add('pop');
+      break;
+    }
+    case 'week-rename':{
+      el.contentEditable=true; el.dataset.kind='weekrename'; el.focus(); return;
+    }
+    case 'week-del':{
+      const idx=state.week.list.findIndex(x=>x.id===id); if(idx<0) return;
+      const t=state.week.list.splice(idx,1)[0];
+      toast('Deleted "'+t.title.slice(0,28)+'"',
+        ()=>state.week.list.splice(Math.min(idx,state.week.list.length),0,t));
       break;
     }
 
@@ -2388,11 +2558,13 @@ document.addEventListener('keydown',e=>{
       const b=document.querySelector('[data-action="focus-add"]'); if(b)b.click(); return }
     if(d.enter==='habit'){ e.preventDefault();
       const b=document.querySelector('[data-action="habit-add"]'); if(b)b.click(); return }
+    if(d.enter==='week'){ e.preventDefault();
+      const b=document.querySelector('[data-action="week-add"]'); if(b)b.click(); return }
     if(d.enter==='synckey'){ e.preventDefault(); connectKey(el.value); return }
-    if(['rename','subrename','floatrename','focusrename','habitrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
+    if(['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
   }
   if(e.key==='Escape'){
-    if(['rename','subrename','floatrename','focusrename','habitrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
+    if(['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
     if($('#modalRoot').innerHTML){ $('#modalRoot').innerHTML=''; return }
     if(ui.adding){ closeAdd(false); render(); return }
     if(ui.sel){ ui.sel=null; render(); return }
@@ -2400,7 +2572,7 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('blur',e=>{
   const el=e.target, d=el.dataset||{};
-  if(!['rename','subrename','floatrename','focusrename','habitrename'].includes(d.kind)) return;
+  if(!['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)) return;
   el.contentEditable=false;
   const txt=el.textContent.trim();
   if(ui.cancelEdit||!txt){ ui.cancelEdit=false; render(); return }
@@ -2411,6 +2583,7 @@ document.addEventListener('blur',e=>{
   if(d.kind==='floatrename'){ const f=float(d.fid); if(f) f.name=txt.replace(/^\s*/,'') }
   if(d.kind==='focusrename'){ const f=state.focus.find(x=>x.id===d.id); if(f) f.title=txt }
   if(d.kind==='habitrename'){ const h=state.habits.list.find(x=>x.id===d.id); if(h) h.name=txt }
+  if(d.kind==='weekrename'){ const t=state.week.list.find(x=>x.id===d.id); if(t) t.title=txt }
   delete el.dataset.kind;
   save(); render();
 },true);
