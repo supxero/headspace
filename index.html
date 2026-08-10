@@ -263,6 +263,36 @@ select option{background:var(--pearl);color:var(--txt)}
 .zaddrow .addcancel{flex:none;padding:5px 9px;color:var(--mut)}
 [contenteditable]{outline:none;border-bottom:1.5px solid var(--denim);padding-bottom:1px}
 
+/* habits: a commitment band under the board, same surface language as a column */
+#habits:not(:empty){margin-top:2px;padding-bottom:16px;flex:none}
+.hpanel{background:var(--cloud);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:11px 13px}
+.hhead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.hhead b{font-family:var(--fd);font-size:13.5px;color:var(--navy);display:flex;align-items:center;gap:7px}
+.hhead b::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none}
+.hhead .hsub{font-size:11.5px;color:var(--mut)}
+.hhead .mini{margin-left:auto}
+.hgridwrap{overflow-x:auto;margin-top:9px}
+.hgrid{display:grid;grid-template-columns:minmax(110px,1fr) repeat(6,40px) auto auto;gap:3px 4px;align-items:center}
+.hdow{text-align:center;font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2)}
+.hdow.now{color:var(--teal)}
+.hname{font-size:13px;line-height:1.3;word-break:break-word;padding:2px 4px;border-radius:6px;cursor:pointer}
+.hname:hover{background:rgba(36,58,94,.06)}
+.hbox{width:19px;height:19px;justify-self:center;margin-top:0}
+.hdash{text-align:center;color:var(--mut2);opacity:.55;font-size:12px;user-select:none}
+.hday{font-size:10px;padding:4px 0;border-radius:7px;border:1px solid var(--line);color:var(--mut);background:var(--cloud);transition:.14s}
+.hday:hover{border-color:var(--line2);color:var(--navy)}
+.hday:active{transform:scale(.93)}
+.hday.on{background:var(--pearl);border-color:var(--denim);color:var(--navy);font-weight:600}
+.haddrow{display:flex;gap:6px;margin-top:10px}
+.haddrow input{flex:1;padding:7px 9px;font-size:13px;min-width:0}
+.haddrow .nbtn{flex:none}
+@media (max-width:900px){
+  .hgrid{grid-template-columns:minmax(88px,1fr) repeat(6,34px) auto auto}
+  .hbox{width:20px;height:20px}
+  .hday{min-height:30px}
+  .haddrow input{font-size:16px;min-height:42px}
+}
+
 /* calendar */
 #cal{flex:1;overflow-y:auto;padding-bottom:16px;min-width:0}
 .calbar{display:flex;align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap}
@@ -529,6 +559,7 @@ select option{background:var(--pearl);color:var(--txt)}
     <div id="boardnav"></div>
     <div id="strip"></div>
     <div id="board"></div>
+    <div id="habits"></div>
     <div id="cal" style="display:none"></div>
   </main>
 </div>
@@ -563,8 +594,12 @@ function fresh(){
   return {
     ver:2, days:{}, carry:[], focus:[], tomb:{}, bin:{},
     floats:[{id:uid(),name:'Inbox',tasks:[]},{id:uid(),name:'Ideas',tasks:[]}],
+    /* habits: a commitment band apart from the day plan. list holds the habit rows,
+       marks holds every week's ticks keyed by the Monday that week started */
+    habits:{list:[],marks:{}},
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
-      calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false}
+      calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
+      habitsOpen:true}
   };
 }
 
@@ -595,9 +630,14 @@ const arr=x=>Array.isArray(x)?x:[];
    `from` (the carry-over origin label) is positional: rollover writes it as part of the
    move, and triage clears it as part of moving the task out.
    `doneAt` rides with `done`, since ticking a focus item is what writes it. */
-const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title']};
-const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt']};
-const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord']};
+const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days']};
+const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[]};
+const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord']};
+/* A habit's ticks do not live on the item at all: they sit in habits.marks as one
+   timestamped cell per week and day, merged by union, so a Monday tick on one device
+   and a Wednesday tick on another can never compete. The item's dn stamp still moves
+   when its marks change (sigD below hashes them), carrying no fields; it exists only
+   so that ticking a habit asserts it should exist, the same revival rule tasks have. */
 
 /* one walk over every mergeable item in a state, in a stable order */
 function eachItem(s,fn){
@@ -607,6 +647,16 @@ function eachItem(s,fn){
     arr((s.days[d]||{})[z]).forEach((t,i)=>eachTask(t,{kind:'day',date:d,zone:z},i,fn))));
   arr(s.carry).forEach((t,i)=>eachTask(t,{kind:'carry'},i,fn));
   arr(s.focus).forEach((f,i)=>{ if(f&&f.id) fn('focus',f,{ord:i}) });
+  const hb=s.habits||{};
+  arr(hb.list).forEach((x,i)=>{ if(x&&x.id) fn('habit',x,{ord:i,msig:marksSigFor(hb.marks,x.id)}) });
+}
+/* a habit's marks across every week, in stable key order, for its dn signature */
+function marksSigFor(marks,id){
+  if(!marks||typeof marks!=='object') return '';
+  return Object.keys(marks).sort().map(w=>{
+    const m=(marks[w]||{})[id]; if(!m||typeof m!=='object') return '';
+    return w+'('+Object.keys(m).sort().map(d=>d+':'+m[d]).join(',')+')';
+  }).filter(Boolean).join(';');
 }
 function eachTask(t,loc,ord,fn){
   if(!t||!t.id) return;
@@ -618,11 +668,13 @@ function eachTask(t,loc,ord,fn){
    parent and cannot outrank an edit made to that parent elsewhere. */
 function sigC(kind,o){
   if(kind==='float') return 'F|'+(o.name||'');
+  if(kind==='habit') return 'H|'+(o.name||'')+'|'+arr(o.days).slice().sort((a,b)=>a-b).join(',');
   return 'C|'+(o.title||'');
 }
 /* whether it is ticked, on its own so a rename cannot outrank a tick */
-function sigD(kind,o){
+function sigD(kind,o,m){
   if(kind==='float') return 'd|';
+  if(kind==='habit') return 'd|'+((m&&m.msig)||'');
   if(kind==='focus') return 'd|'+(o.done?1:0)+'|'+(o.doneAt||'');
   return 'd|'+(o.done?1:0);
 }
@@ -630,12 +682,13 @@ function sigD(kind,o){
 function sigP(kind,o,m){
   if(kind==='float') return 'f|'+m.ord;
   if(kind==='focus') return 'x|'+m.ord;
+  if(kind==='habit') return 'h|'+m.ord;
   if(kind==='sub')   return 's|'+m.pid+'|'+m.ord;
   return 't|'+locKey(m.loc)+'|'+m.ord+'|'+(o.from||'');
 }
 /* the three signatures are kept apart rather than joined into one string, so no
    separator can ever collide with something a user typed into a title */
-const sigOf=(kind,o,m)=>({c:sigC(kind,o),d:sigD(kind,o),p:sigP(kind,o,m)});
+const sigOf=(kind,o,m)=>({c:sigC(kind,o),d:sigD(kind,o,m),p:sigP(kind,o,m)});
 let sigMap={}, prevSnap=null;   /* prevSnap: the tree as of the last commit, so the bin
                                    can keep the body of whatever vanishes */
 function snapSigs(){ const m={}; eachItem(state,(k,o,meta)=>{m[o.id]=sigOf(k,o,meta)}); sigMap=m }
@@ -675,6 +728,8 @@ function stampChanges(when){
   sigMap=next;
 }
 function stampLegacy(s){
+  if(!s.habits||typeof s.habits!=='object'||!Array.isArray(s.habits.list)) s.habits={list:[],marks:{}};
+  if(!s.habits.marks||typeof s.habits.marks!=='object') s.habits.marks={};
   eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP;
     if(!(+o.dn>0)) o.dn=upOf(o); if(!(+o.pos>0)) o.pos=upOf(o) });
   if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
@@ -690,13 +745,16 @@ function stampLegacy(s){
 
 /* ================= merge two planners, item by item ================= */
 function flatten(s){
-  const g={float:{},task:{},sub:{},focus:{}};
+  const g={float:{},task:{},sub:{},focus:{},habit:{}};
   eachItem(s,(k,o,m)=>{
     if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='focus') g.focus[o.id]={id:o.id,title:o.title||'',done:!!o.done,
       doneAt:o.doneAt||null,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='sub') g.sub[o.id]={id:o.id,title:o.title||'',done:!!o.done,pid:m.pid,ord:m.ord,
+      up:upOf(o),dn:dnOf(o),pos:posOf(o)};
+    else if(k==='habit') g.habit[o.id]={id:o.id,name:o.name||'',
+      days:arr(o.days).slice().sort((a,b)=>a-b),ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
       loc:m.loc,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
@@ -715,7 +773,11 @@ function pickNewer(kind,a,b){
   if(!a) return b;
   if(!b) return a;
   const c=pickSide(a,b,'up',CONTENTF[kind]);                     /* what it says */
-  const d=DONEF[kind].length?pickSide(a,b,'dn',DONEF[kind]):c;   /* whether it is ticked */
+  /* dn resolves on its own even when no fields ride it (float, habit): the winning dn
+     is what a tombstone is compared against, so a habit ticked after a delete elsewhere
+     must carry the tick's moment, not the content winner's stale one. For floats dn
+     always mirrors up on both sides, so this changes nothing for them. */
+  const d=pickSide(a,b,'dn',DONEF[kind]);                        /* whether it is ticked */
   const p=pickSide(a,b,'pos',POSF[kind]);                        /* where it sits */
   if(c===d&&c===p) return c;
   const out=Object.assign({},c);
@@ -732,8 +794,17 @@ function mergeTombs(x,y){
 }
 function stateSig(s){
   const g=flatten(s), out=[];
-  ['float','task','sub','focus'].forEach(k=>Object.keys(g[k]).sort()
+  ['float','task','sub','focus','habit'].forEach(k=>Object.keys(g[k]).sort()
     .forEach(id=>out.push(k+' '+JSON.stringify(g[k][id]))));
+  /* habit ticks live outside the items, so hash them too or a tick would never push */
+  const hm=(s&&s.habits&&s.habits.marks)||{};
+  Object.keys(hm).sort().forEach(w=>{
+    const wk=hm[w]||{};
+    Object.keys(wk).sort().forEach(id=>{
+      const cells=wk[id]||{};
+      Object.keys(cells).sort().forEach(d=>out.push('hm '+w+' '+id+' '+d+' '+cells[d]));
+    });
+  });
   const tb=(s&&s.tomb)||{};
   Object.keys(tb).sort().forEach(id=>out.push('gone '+id+' '+tb[id]));
   const bn=(s&&s.bin)||{};
@@ -747,8 +818,8 @@ function stateSig(s){
 function mergeStates(mine,theirs){
   const A=flatten(mine), B=flatten(theirs);
   const tomb=mergeTombs(mine.tomb,theirs.tomb);
-  const keep={float:{},task:{},sub:{},focus:{}};
-  ['float','task','sub','focus'].forEach(g=>{
+  const keep={float:{},task:{},sub:{},focus:{},habit:{}};
+  ['float','task','sub','focus','habit'].forEach(g=>{
     const ids={};
     Object.keys(A[g]).forEach(i=>{ids[i]=1}); Object.keys(B[g]).forEach(i=>{ids[i]=1});
     Object.keys(ids).forEach(id=>{
@@ -763,7 +834,7 @@ function mergeStates(mine,theirs){
   });
   const out=rebuild(keep,tomb,mine,theirs);
   const alive={};
-  ['float','task','sub','focus'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
+  ['float','task','sub','focus','habit'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
   out.bin=mergeBins(mine.bin,theirs.bin,tomb,alive);
   return out;
 }
@@ -788,7 +859,30 @@ function mergeBins(x,y,tomb,alive){
    carried through untouched by carryUnknown(), so a key added to state in future cannot be
    silently dropped the first time two devices merge. A test asserts this list still matches
    fresh(), so adding a key to the canonical shape forces a deliberate choice here. */
-const MERGED_KEYS=['ver','days','carry','focus','floats','settings','tomb','bin'];
+const MERGED_KEYS=['ver','days','carry','focus','floats','habits','settings','tomb','bin'];
+/* habit ticks: one timestamped cell per habit, week and day. Positive means ticked at
+   that moment, negative means unticked at that moment. Per cell the later action, by
+   absolute value, wins; every other cell is simply unioned, so ticks made on different
+   days or different habits never compete at all. */
+function mergeMarks(x,y){
+  const out={};
+  [x||{},y||{}].forEach(src=>Object.keys(src).forEach(w=>{
+    const wk=src[w]; if(!wk||typeof wk!=='object') return;
+    Object.keys(wk).forEach(id=>{
+      const cells=wk[id]; if(!cells||typeof cells!=='object') return;
+      Object.keys(cells).forEach(d=>{
+        const v=+cells[d]||0; if(!v) return;
+        const cur=out[w]&&out[w][id]?out[w][id][d]:null;
+        if(cur==null||Math.abs(v)>Math.abs(cur)){
+          if(!out[w]) out[w]={};
+          if(!out[w][id]) out[w][id]={};
+          out[w][id][d]=v;
+        }
+      });
+    });
+  }));
+  return out;
+}
 /* No timestamps exist for a key the merge has never heard of, so there is no basis for
    last-write-wins. Take whichever side has it, and when both differ pick by content, which
    is arbitrary but identical on both devices, so they still converge. Nothing is lost. */
@@ -841,6 +935,13 @@ function rebuild(keep,tomb,mine,theirs){
   });
   out.focus=Object.keys(keep.focus).map(id=>keep.focus[id]).sort(byOrd)
     .map(x=>({id:x.id,title:x.title,done:x.done,doneAt:x.doneAt,up:x.up,dn:x.dn,pos:x.pos}));
+  out.habits={
+    list:Object.keys(keep.habit).map(id=>keep.habit[id]).sort(byOrd)
+      .map(x=>({id:x.id,name:x.name,days:arr(x.days).slice(),up:x.up,dn:x.dn,pos:x.pos})),
+    /* marks are kept even for habits no longer alive: they are history, and a habit
+       restored from the bin gets its whole record back for free */
+    marks:mergeMarks(mine.habits&&mine.habits.marks,theirs.habits&&theirs.habits.marks)
+  };
   if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
   return carryUnknown(out,mine,theirs);
 }
@@ -854,6 +955,9 @@ function load(){
     if(!Array.isArray(state.carry)) state.carry=[];
     if(!Array.isArray(state.focus)) state.focus=[];
     if(!state.days||typeof state.days!=='object') state.days={};
+    if(!state.habits||typeof state.habits!=='object'||!Array.isArray(state.habits.list))
+      state.habits={list:[],marks:{}};
+    if(!state.habits.marks||typeof state.habits.marks!=='object') state.habits.marks={};
     /* migrate an old flat backlog into the first float tab */
     if(Array.isArray(p.backlog)&&p.backlog.length) state.floats[0].tasks.push(...p.backlog);
   }catch(e){ state=fresh() }
@@ -902,7 +1006,7 @@ const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this dev
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
 const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay',
-  'showDone','lastRoll'];
+  'showDone','lastRoll','habitsOpen'];
 const POLL_MS=25000;                          /* look for another device's changes this often */
 const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
 const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
@@ -1049,6 +1153,9 @@ function readCloud(p){
   if(!Array.isArray(out.carry)) out.carry=[];
   if(!Array.isArray(out.focus)) out.focus=[];
   if(!out.days||typeof out.days!=='object') out.days={};
+  if(!out.habits||typeof out.habits!=='object'||!Array.isArray(out.habits.list))
+    out.habits={list:[],marks:{}};
+  if(!out.habits.marks||typeof out.habits.marks!=='object') out.habits.marks={};
   return stampLegacy(out);
 }
 /* put a state on screen without letting the change look like a local edit */
@@ -1412,6 +1519,7 @@ function restoreBin(id){
     });
     dest='Free Floating'+(back?', with '+back+(back===1?' task':' tasks')+' moved back into it':'');
   }else if(e.k==='focus'){ state.focus.push(b); dest='Focus this week' }
+  else if(e.k==='habit'){ state.habits.list.push(b); dest='the Habits panel' }
   else return;
   save(); render();
   toast('Restored to '+dest);
@@ -1438,6 +1546,7 @@ function binWhere(e){
     return 'Free Floating'+(n?', holding '+n+(n===1?' task':' tasks'):'');
   }
   if(e.k==='focus') return 'Focus this week';
+  if(e.k==='habit') return 'the Habits panel';
   const l=e.loc||{kind:'carry'};
   if(l.kind==='day'&&l.date)
     return (ZL[l.zone]||ZL.must)+' on '+DOW[new Date(l.date+'T12:00:00').getDay()]+' '+l.date;
@@ -1456,7 +1565,8 @@ function binBody(){
     'Restore puts it back where it came from, or the nearest place still standing.</p>';
   if(!list.length) h+='<div class="empty">Nothing in the bin.</div>';
   list.forEach(x=>{
-    const e=x.e, name=e.k==='float'?(e.body.name||'a tab'):(e.body.title||'');
+    const e=x.e, name=e.k==='float'?(e.body.name||'a tab')
+      :e.k==='habit'?(e.body.name||'a habit'):(e.body.title||'');
     h+='<div class="binrow"><div class="bt"><b>'+esc(String(name).slice(0,64))+'</b>'+
       '<span>'+binMeta(e)+'</span></div>'+
       '<button class="nbtn" data-action="bin-restore" data-id="'+x.id+'">Restore</button>'+
@@ -1807,6 +1917,55 @@ function card(t,loc){
   return h+'</div>';
 }
 
+/* ================= render: habits =================
+   A commitment band, not a task list: habits sit outside the days, carry no Prio
+   weight, and never touch the metrics, the ring, the heavy warning or the calendar
+   dots. Columns are Monday to Saturday; Sunday is a rest day by design, so it has no
+   column. Ticks key on the Monday the week started, so at Monday 00:00 the grid is
+   naturally blank while every finished week stays in habits.marks as history. A cell
+   is only tickable on a day the habit is scheduled for; unscheduled days render a
+   muted dash, so a blank box always means missed, never "not planned". */
+const HDOW=['','Mo','Tu','We','Th','Fr','Sa'];
+const hweek=d=>{const x=new Date((d||today())+'T12:00:00');
+  x.setDate(x.getDate()-((x.getDay()+6)%7)); return iso(x)};
+function renderHabits(){
+  const el=$('#habits');
+  if(state.settings.view!=='board'||state.settings.floatMode){ el.innerHTML=''; return }
+  const open=state.settings.habitsOpen!==false;
+  const wk=hweek(), marks=state.habits.marks[wk]||{};
+  const list=state.habits.list;
+  const tdow=new Date(today()+'T12:00:00').getDay();
+  let h='<div class="hpanel"><div class="hhead"><b>Habits</b>'+
+    '<span class="hsub">'+(tdow===0?'Sunday rests. The week starts over tomorrow.':'Mon to Sat, Sunday rests')+'</span>'+
+    '<button class="mini" data-action="habit-toggle">'+(open?'Hide':'Show')+'</button></div>';
+  if(open){
+    if(list.length){
+      h+='<div class="hgridwrap"><div class="hgrid">';
+      h+='<span></span>'+[1,2,3,4,5,6].map(d=>
+        '<span class="hdow'+(d===tdow?' now':'')+'">'+HDOW[d]+'</span>').join('')+'<span></span><span></span>';
+      list.forEach(hb=>{
+        const eds=ui.habitDays===hb.id, days=arr(hb.days);
+        h+='<div class="hname" data-action="habit-rename" data-id="'+hb.id+'" title="Rename">'+esc(hb.name)+'</div>';
+        [1,2,3,4,5,6].forEach(d=>{
+          if(eds) h+='<button class="hday'+(days.includes(d)?' on':'')+'" data-action="habit-day" data-id="'+hb.id+'" data-dow="'+d+'">'+HDOW[d]+'</button>';
+          else if(days.includes(d)){
+            const v=+((marks[hb.id]||{})[d])||0;
+            h+='<button class="box hbox'+(v>0?' on':'')+'" data-action="habit-tick" data-id="'+hb.id+'" data-dow="'+d+'" aria-label="'+esc(hb.name)+' on '+HDOW[d]+'">✓</button>';
+          }else h+='<span class="hdash">-</span>';
+        });
+        if(eds) h+='<button class="mini" data-action="habit-days-done" data-id="'+hb.id+'">Done</button><span></span>';
+        else h+='<button class="mini" data-action="habit-days" data-id="'+hb.id+'" title="Choose its days">Days</button>'+
+          '<button class="mini" data-action="habit-del" data-id="'+hb.id+'" title="Delete habit" aria-label="Delete habit">✕</button>';
+      });
+      h+='</div></div>';
+    }else h+='<div class="empty">No habits yet. They keep their own band, apart from the day plan.</div>';
+    h+='<div class="haddrow"><input id="habitAdd" data-enter="habit" placeholder="Add a habit…" autocomplete="off">'+
+      '<button class="nbtn" data-action="habit-add">Add</button></div>';
+  }
+  h+='</div>';
+  el.innerHTML=h;
+}
+
 /* ================= render: calendar ================= */
 function renderCal(){
   const base=new Date(); base.setDate(1);
@@ -1870,6 +2029,7 @@ function render(){
   $('#quickadd').style.display=v==='board'?'flex':'none';
 
   renderQuick(); renderTray(); renderNav(); renderFocus(); renderMetrics(); paintBin(); grow();
+  renderHabits();
   if(v==='board') renderBoard(); else renderCal();
 
   if(ui.adding){
@@ -1997,7 +2157,54 @@ document.addEventListener('click',e=>{
       el.contentEditable=true; el.dataset.kind='subrename'; el.focus(); return;
     }
 
+    /* change-driven controls: their real work happens in the change handler. Their raw
+       click reaches this switch because they carry a data-action, and falling through
+       to the shared save()+render() tail rebuilds the board and destroys the control
+       mid-interaction, so the native picker never opens. tofloat was immunised long
+       ago, which is why "file to" always worked while the date field did not. */
     case 'tofloat': return;
+    case 'pickdate': return;
+
+    case 'habit-toggle': s.habitsOpen=s.habitsOpen===false; break;
+    case 'habit-add':{
+      const i=$('#habitAdd'); if(!i||!i.value.trim()) return;
+      state.habits.list.push({id:uid(),name:i.value.trim(),days:[1,2,3,4,5,6],up:Date.now()});
+      save(); render();
+      const n=$('#habitAdd'); if(n) n.focus();   /* type the next one straight away */
+      return;
+    }
+    case 'habit-tick':{
+      const wk=hweek(), dow=el.dataset.dow, hm=state.habits.marks;
+      if(!hm[wk]) hm[wk]={};
+      if(!hm[wk][id]) hm[wk][id]={};
+      const cur=+hm[wk][id][dow]||0;
+      /* positive: ticked at that moment. Negative: unticked at that moment. The sign
+         carries the intent and the magnitude carries the clock, so two devices always
+         agree on the later action. */
+      hm[wk][id][dow]=cur>0?-Date.now():Date.now();
+      el.classList.add('pop');
+      break;
+    }
+    case 'habit-days': ui.habitDays=id; break;
+    case 'habit-days-done': ui.habitDays=null; break;
+    case 'habit-day':{
+      const hb=state.habits.list.find(x=>x.id===id); if(!hb) return;
+      const d=+el.dataset.dow;
+      hb.days=arr(hb.days).includes(d)?arr(hb.days).filter(x=>x!==d)
+        :arr(hb.days).concat(d).sort((a,b)=>a-b);
+      break;
+    }
+    case 'habit-rename':{
+      el.contentEditable=true; el.dataset.kind='habitrename'; el.focus(); return;
+    }
+    case 'habit-del':{
+      const idx=state.habits.list.findIndex(x=>x.id===id); if(idx<0) return;
+      const hb=state.habits.list.splice(idx,1)[0];
+      toast('Deleted "'+hb.name.slice(0,28)+'"',
+        ()=>state.habits.list.splice(Math.min(idx,state.habits.list.length),0,hb));
+      break;
+    }
+
     case 'goto-day':{
       s.view='board'; s.floatMode=false;
       showDay(el.dataset.day); break;
@@ -2179,11 +2386,13 @@ document.addEventListener('keydown',e=>{
       const b=document.querySelector('[data-action="cal-add"][data-day="'+d.day+'"]'); if(b)b.click(); return }
     if(d.enter==='focus'){ e.preventDefault();
       const b=document.querySelector('[data-action="focus-add"]'); if(b)b.click(); return }
+    if(d.enter==='habit'){ e.preventDefault();
+      const b=document.querySelector('[data-action="habit-add"]'); if(b)b.click(); return }
     if(d.enter==='synckey'){ e.preventDefault(); connectKey(el.value); return }
-    if(['rename','subrename','floatrename','focusrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
+    if(['rename','subrename','floatrename','focusrename','habitrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
   }
   if(e.key==='Escape'){
-    if(['rename','subrename','floatrename','focusrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
+    if(['rename','subrename','floatrename','focusrename','habitrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
     if($('#modalRoot').innerHTML){ $('#modalRoot').innerHTML=''; return }
     if(ui.adding){ closeAdd(false); render(); return }
     if(ui.sel){ ui.sel=null; render(); return }
@@ -2191,7 +2400,7 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('blur',e=>{
   const el=e.target, d=el.dataset||{};
-  if(!['rename','subrename','floatrename','focusrename'].includes(d.kind)) return;
+  if(!['rename','subrename','floatrename','focusrename','habitrename'].includes(d.kind)) return;
   el.contentEditable=false;
   const txt=el.textContent.trim();
   if(ui.cancelEdit||!txt){ ui.cancelEdit=false; render(); return }
@@ -2201,6 +2410,7 @@ document.addEventListener('blur',e=>{
   }
   if(d.kind==='floatrename'){ const f=float(d.fid); if(f) f.name=txt.replace(/^\s*/,'') }
   if(d.kind==='focusrename'){ const f=state.focus.find(x=>x.id===d.id); if(f) f.title=txt }
+  if(d.kind==='habitrename'){ const h=state.habits.list.find(x=>x.id===d.id); if(h) h.name=txt }
   delete el.dataset.kind;
   save(); render();
 },true);

@@ -1386,6 +1386,209 @@ console.log('— custom pickers (desktop pointer) —');
   A.ui.pointerFine=null;
 }
 
+console.log('— habits: a commitment band under the board —');
+{
+  S().settings.view='board'; S().settings.floatMode=false; S().settings.habitsOpen=true;
+  A.render(); await wait(20);
+  const wk=(()=>{const x=new Date(T()+'T12:00:00');x.setDate(x.getDate()-((x.getDay()+6)%7));
+    x.setHours(12,0,0,0);return x.toISOString().slice(0,10)})();
+  ok(!!q('#habits .hpanel'),'the panel sits on the board with zero clicks');
+  ok(!!q('#habits .haddrow input'),'with its add field ready');
+
+  q('#habitAdd').value='push-ups'; click('[data-action="habit-add"]'); await wait(30);
+  ok(S().habits.list.length===1&&S().habits.list[0].name==='push-ups','Add creates a habit');
+  ok(S().habits.list[0].days.join()==='1,2,3,4,5,6','a new habit starts scheduled Mon to Sat');
+  ok(!!doc.activeElement&&doc.activeElement.id==='habitAdd','focus stays in the add field for the next one');
+  q('#habitAdd').value='stretching';
+  q('#habitAdd').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+  await wait(30);
+  ok(S().habits.list.length===2,'Enter adds too');
+  const hp=S().habits.list[0], hs=S().habits.list[1];
+  ok(qa('#habits .hdow').map(x=>x.textContent).join()==='Mo,Tu,We,Th,Fr,Sa',
+    'six weekday columns, Monday to Saturday, Sunday rests');
+
+  /* alternating schedules, set without leaving the panel */
+  click('[data-action="habit-days"][data-id="'+hs.id+'"]'); await wait(20);
+  ok(qa('#habits .hday').length===6,'Days opens six day toggles in place');
+  for(const d of [1,3,5]){ click('[data-action="habit-day"][data-id="'+hs.id+'"][data-dow="'+d+'"]'); await wait(15) }
+  click('[data-action="habit-days-done"][data-id="'+hs.id+'"]'); await wait(20);
+  ok(S().habits.list[1].days.join()==='2,4,6','the schedule saved as Tue, Thu, Sat');
+  ok(qa('[data-action="habit-tick"][data-id="'+hs.id+'"]').length===3,'only scheduled days are tickable');
+  ok(qa('#habits .hdash').length===3,'unscheduled days render a muted dash, never a blank box');
+  ok(qa('[data-action="habit-tick"][data-id="'+hp.id+'"]').length===6,'the other habit keeps all six');
+
+  /* ticks land in this week, keyed by its Monday. Commit first so the change tracker
+     knows the rows; ticking an uncommitted row correctly cannot move its stamps. */
+  A.save(); await wait(10);
+  const dn0=S().habits.list[0].dn||S().habits.list[0].up;
+  click('[data-action="habit-tick"][data-id="'+hp.id+'"][data-dow="1"]'); await wait(30);
+  ok((S().habits.marks[wk][hp.id][1]||0)>0,'a tick lands under the current week');
+  ok(q('[data-action="habit-tick"][data-id="'+hp.id+'"][data-dow="1"]').classList.contains('on'),'and paints as done');
+  A.save(); await wait(20);
+  ok((S().habits.list[0].dn||0)>dn0,'ticking moves the habit dn stamp, so a tick asserts it exists');
+  click('[data-action="habit-tick"][data-id="'+hp.id+'"][data-dow="1"]'); await wait(30);
+  ok((S().habits.marks[wk][hp.id][1]||0)<0,'unticking records the untick rather than deleting the cell');
+  click('[data-action="habit-tick"][data-id="'+hp.id+'"][data-dow="1"]'); await wait(30);
+
+  /* rename in place, same contenteditable idiom as everything else */
+  q('.hname[data-id="'+hp.id+'"]').click(); await wait(20);
+  const ed=q('.hname[data-id="'+hp.id+'"]');
+  ed.textContent='morning push-ups'; fire(ed,'blur'); await wait(30);
+  ok(S().habits.list[0].name==='morning push-ups','clicking the name renames in place');
+
+  /* collapse remembers, per device */
+  click('[data-action="habit-toggle"]'); await wait(20);
+  ok(S().settings.habitsOpen===false,'Hide collapses and remembers');
+  ok(!q('#habits .hgrid')&&!q('#habitAdd'),'collapsed keeps only the header');
+  ok(/Show/.test(q('[data-action="habit-toggle"]').textContent),'and the control reads Show');
+  click('[data-action="habit-toggle"]'); await wait(20);
+  ok(!!q('#habits input#habitAdd'),'Show opens it again');
+
+  /* a separate band: no Prio weight, no counts, no metrics, no dots */
+  const meta0=(q('.col.today .meta')||{textContent:''}).textContent;
+  const stat0=JSON.stringify(A.tally([T()]))+'|'+A.streak();
+  q('#habitAdd').value='temp habit'; click('[data-action="habit-add"]'); await wait(30);
+  const th=S().habits.list.find(x=>x.name==='temp habit');
+  const tdow=new Date(T()+'T12:00:00').getDay()||1;
+  click('[data-action="habit-tick"][data-id="'+th.id+'"][data-dow="'+tdow+'"]'); await wait(30);
+  ok(JSON.stringify(A.tally([T()]))+'|'+A.streak()===stat0,'habits touch neither the tally nor the streak');
+  ok((q('.col.today .meta')||{textContent:''}).textContent===meta0,'nor the board day counts');
+  S().settings.view='calendar'; A.render(); await wait(20);
+  const cell0=(q('.cell[data-day="'+T()+'"]')||{innerHTML:''}).innerHTML;
+  S().habits.marks[wk][th.id][tdow]=-Date.now(); A.render(); await wait(20);
+  ok((q('.cell[data-day="'+T()+'"]')||{innerHTML:''}).innerHTML===cell0,'nor the calendar dots');
+  S().settings.view='board'; A.render(); await wait(20);
+
+  /* deletion goes to the bin behind the 5 second Undo, like everything else.
+     Commit first: only a row the tracker has seen can leave a tomb and a body. */
+  A.save(); await wait(10);
+  click('[data-action="habit-del"][data-id="'+th.id+'"]'); await wait(30);
+  ok(!S().habits.list.find(x=>x.id===th.id),'delete removes the row');
+  ok(/Deleted/.test(q('#toast').textContent)&&!!q('#toast [data-action="undo"]'),'with the usual Undo toast');
+  A.save(); await wait(20);
+  ok(!!S().tomb[th.id],'a tombstone records it');
+  ok(!!S().bin[th.id]&&S().bin[th.id].k==='habit'&&S().bin[th.id].body.name==='temp habit',
+    'and the body waits in the bin');
+  click('[data-action="undo"]'); await wait(30); A.save(); await wait(20);
+  ok(!!S().habits.list.find(x=>x.id===th.id),'Undo puts it back');
+  ok(!S().tomb[th.id]&&!S().bin[th.id],'and the revival clears the tomb and the bin entry');
+  click('[data-action="habit-del"][data-id="'+th.id+'"]'); await wait(30); A.save(); await wait(20);
+  A.restoreBin(th.id); await wait(30);
+  ok(!!S().habits.list.find(x=>x.id===th.id),'Restore from the Bin brings a habit back');
+  ok(/Habits panel/.test(q('#toast').textContent),'and says where it went');
+  click('[data-action="habit-del"][data-id="'+th.id+'"]'); await wait(30); A.save(); await wait(20);
+}
+
+console.log('— habits: merge —');
+const hdev=()=>{const s=dev(); s.habits={list:[],marks:{}}; s.bin={}; return s};
+const mkh=(id,name,days,up,x)=>Object.assign(
+  {id,name,days:days||[1,2,3,4,5,6],up:up||100,dn:up||100,pos:up||100},x||{});
+const W='2026-08-10';
+{ /* added on each side */
+  const a=hdev(); a.habits.list.push(mkh('h1','push-ups',null,200));
+  const b=hdev(); b.habits.list.push(mkh('h2','stretching',[2,4,6],210));
+  const m=A.mergeStates(a,b);
+  ok(m.habits.list.length===2,'a habit added on each device: both survive');
+  ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'and both devices agree');
+}
+{ /* the requirement in the brief: different-day ticks union */
+  const base=hdev(); base.habits.list.push(mkh('h1','push-ups',null,200));
+  const a=clone(base), b=clone(base);
+  a.habits.marks={[W]:{h1:{1:500}}};
+  b.habits.marks={[W]:{h1:{3:600}}};
+  const m=A.mergeStates(a,b);
+  ok(m.habits.marks[W].h1[1]===500&&m.habits.marks[W].h1[3]===600,
+    'a Monday tick on one device and a Wednesday tick on another both survive');
+  ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'whichever device runs the merge');
+  /* same cell: the later action wins, tick or untick */
+  const c=clone(base); c.habits.marks={[W]:{h1:{1:-700}}};
+  ok(A.mergeStates(a,c).habits.marks[W].h1[1]===-700,'a later untick beats an earlier tick');
+  const d2=clone(base); d2.habits.marks={[W]:{h1:{1:900}}};
+  ok(A.mergeStates(c,d2).habits.marks[W].h1[1]===900,'and a later tick beats an earlier untick');
+}
+{ /* the three axes compose: rename and schedule on content, ticks outside, order on pos */
+  const base=hdev(); base.habits.list.push(mkh('h1','push-ups',null,200));
+  const a=clone(base); a.habits.list[0].name='morning push-ups';
+  a.habits.list[0].days=[1,3,5]; a.habits.list[0].up=900;
+  const b=clone(base); b.habits.marks={[W]:{h1:{5:600}}}; b.habits.list[0].dn=600;
+  const m=A.mergeStates(a,b);
+  ok(m.habits.list[0].name==='morning push-ups'&&m.habits.list[0].days.join()==='1,3,5',
+    'a rename and schedule change on one device survive');
+  ok(m.habits.marks[W].h1[5]===600,'alongside a tick made on the other');
+}
+{ /* delete versus tick: ticking asserts the habit exists, like tasks */
+  const base=hdev(); base.habits.list.push(mkh('h1','push-ups',null,200));
+  const a=clone(base); a.habits.list=[]; a.tomb={h1:800};
+  const b=clone(base); b.habits.marks={[W]:{h1:{5:900}}}; b.habits.list[0].dn=900;
+  const m=A.mergeStates(a,b);
+  ok(m.habits.list.length===1&&m.habits.marks[W].h1[5]===900,
+    'a tick made after a delete elsewhere revives the habit with its tick');
+  const a2=clone(base); a2.habits.list=[]; a2.tomb={h1:950};
+  ok(A.mergeStates(a2,b).habits.list.length===0,'a delete after the last tick still wins');
+}
+{ /* a device that predates habits cannot drop them */
+  const a=dev();                     /* no habits key at all */
+  const b=hdev(); b.habits.list.push(mkh('h1','push-ups',null,200));
+  b.habits.marks={[W]:{h1:{1:500}}};
+  const m=A.mergeStates(a,b);
+  ok(m.habits.list.length===1&&m.habits.marks[W].h1[1]===500,
+    'merging with a pre-habits planner keeps the habits and their ticks');
+}
+
+console.log('— the pickdate click no longer tears down the board (B) —');
+{
+  A.ui.pointerFine=false;            /* the native path, as on a phone */
+  S().settings.view='board'; S().settings.floatMode=true; A.render(); await wait(20);
+  q('#qd').value='float:'+S().floats[0].id;
+  q('#qi').value='float picker task'; click('#qb'); await wait(30);
+  const ft=S().floats[0].tasks.find(t=>t.title==='float picker task');
+  await select(ft.id);
+  const pdI=()=>q('[data-action="pickdate"][data-id="'+ft.id+'"]');
+  ok(!!pdI(),'the date field renders in the float tab action bar');
+  const probe=pdI(); probe.__probe=1;
+  probe.click(); await wait(20);
+  ok(pdI()&&pdI().__probe===1,
+    'its click no longer falls through the switch into a board rebuild');
+  const fsel=q('select[data-action="tofloat"][data-id="'+ft.id+'"]'); fsel.__probe=1;
+  fsel.click(); await wait(20);
+  ok(q('select[data-action="tofloat"][data-id="'+ft.id+'"]').__probe===1,
+    'the file to select keeps its long-standing immunity');
+  pdI().value=T(); fire(pdI(),'change'); await wait(30);
+  const moved=A.findTask(ft.id);
+  ok(moved&&moved.from.kind==='day'&&moved.from.date===T(),
+    'a date set on the native input still moves the task through the change handler');
+  S().settings.floatMode=false; A.render(); await wait(20);
+  A.ui.pointerFine=null;
+}
+
+console.log('— pinned: subtask work loses to a concurrent parent delete —');
+{
+  const a=dev(); a.tomb={t1:300,s1:300};
+  const b=put(dev(),tk('t1','parent',200,{dn:200,pos:200,subtasks:[
+    {id:'s1',title:'step',done:true,up:200,dn:400,pos:200},
+    {id:'s2',title:'new step',done:false,up:400,dn:400,pos:400}]}));
+  const m1=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+  const g=A.flatten(m1);
+  ok(!Object.keys(g.task).length&&!Object.keys(g.sub).length,
+    'the parent delete takes the steps with it, even one ticked after the delete');
+  ok(!Object.keys(m1.bin||{}).length,'and nothing reaches the bin in the merged state');
+  ok(A.stateSig(m1)===A.stateSig(m2),'both directions agree');
+  const c=put(dev(),tk('t1','renamed parent',500,{dn:200,pos:200,subtasks:[
+    {id:'s1',title:'step',done:false,up:200,dn:200,pos:200}]}));
+  const g2=A.flatten(A.mergeStates(a,c));
+  ok(!!g2.task.t1,'editing the parent itself does revive it');
+  ok(!Object.keys(g2.sub).length,'but its old steps stay deleted');
+}
+
+console.log('— no interactive element renders blank —');
+{
+  S().settings.view='board'; S().settings.floatMode=false; A.render(); await wait(20);
+  ok(qa('#habits button').length>0&&qa('#habits button').every(b=>b.textContent.trim().length>0),
+    'every habits control has visible text');
+  const blank=qa('button').filter(b=>!b.textContent.trim()&&!(b.getAttribute('aria-label')||'').trim());
+  ok(blank.length===0,'no button anywhere on the board renders with an empty label');
+}
+
 console.log('— the docs match reality —');
 {
   /* The expected count in CLAUDE.md has drifted twice. Rather than a generator nobody
