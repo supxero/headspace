@@ -3,3 +3,5 @@ node_modules/
 Thumbs.db
 tests/node_modules/
 *.log
+tests/viewports-report.json
+tests/viewport-fail-*.png

@@ -1719,6 +1719,42 @@ console.log('— no interactive element renders blank —');
     'every habits and weekly control has visible text');
   const blank=qa('button').filter(b=>!b.textContent.trim()&&!(b.getAttribute('aria-label')||'').trim());
   ok(blank.length===0,'no button anywhere on the board renders with an empty label');
+  /* inputs cannot label themselves with text content: they need a placeholder, an
+     aria-label or a title. The 2026-08-10 viewport pass caught both date inputs bare. */
+  const bare=qa('input,select,textarea').filter(el=>el.id!=='fileIn'&&
+    !(el.getAttribute('aria-label')||'').trim()&&!(el.getAttribute('title')||'').trim()&&
+    !(el.getAttribute('placeholder')||'').trim()&&el.tagName!=='SELECT');
+  ok(bare.length===0,'no input on the board is missing a label ('+
+    bare.map(e=>e.id||e.className).join(', ')+')');
+  ok((q('#jumpDate').getAttribute('aria-label')||'').length>0,'the Jump to date input carries an aria-label');
+  const anyTask=qa('.task .ttl[data-id]')[0];
+  if(anyTask){ anyTask.click(); await wait(25); }
+  const pick=q('input[data-action="pickdate"]');
+  ok(!!pick&&(pick.getAttribute('aria-label')||'').length>0,'the per-task date input carries an aria-label');
+}
+
+console.log('— touch targets: the coarse-pointer block —');
+{
+  /* jsdom does no layout, so the geometry itself is verified by tests/viewports.js in
+     real Chrome (four profiles, 2026-08-10). What can regress silently here is the
+     block's existence: every rule below is what keeps a finger target at 44px. */
+  const css=html.slice(0,html.indexOf('</style>'));
+  const block=css.slice(css.indexOf('@media (pointer:coarse)'));
+  ok(block.length>100,'the coarse-pointer touch block exists');
+  ok(/\.box::before\{content:'';position:absolute;inset:/.test(block),
+    'tick boxes grow an invisible hit overlay');
+  ok(/\.mini::before\{content:'';position:absolute;inset:/.test(block),
+    'mini glyph buttons grow a hit overlay');
+  ok(/\.ttl::before\{content:'';position:absolute;inset:-4px 0 -22px\}/.test(block),
+    'task titles grow a downward-biased overlay (never up into the row above)');
+  ok(/\.nbtn,\.tbtn,\.abtn,\.mrow button\{min-height:44px;min-width:44px\}/.test(block),
+    'the glow-clipped button classes grow for real to 44px');
+  ok(/\.hrcells \.box::before\{inset:-8px -12px -16px\}/.test(block),
+    'rail habit cells may not reach up into the name and tools line');
+  ok(/#rail \.railfoot button\{min-height:44px\}/.test(block),
+    'the rail foot outranks the 42px width-media rule on touch');
+  ok(/\.binrow \.nbtn\{min-height:44px\}/.test(block),
+    'bin rows outrank their 40px width-media rule on touch');
 }
 
 console.log('— the docs match reality —');

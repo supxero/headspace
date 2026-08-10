@@ -530,6 +530,48 @@ select option{background:var(--pearl);color:var(--txt)}
   .badge{box-shadow:0 2px 6px rgba(36,58,94,.18)}
 }
 
+/* Touch targets. On a coarse pointer every control offers a finger at least 44px in
+   its smallest dimension. Two mechanisms: controls drawn small on purpose (tick boxes,
+   the mini glyphs, inline rename text) keep their drawn size and grow an invisible hit
+   area through an absolutely positioned ::before; the press-glow classes clip their
+   overflow so a ::before cannot escape them, and replaced elements cannot host one at
+   all, so those grow for real. Fine-pointer layouts are untouched. Kept last in the
+   stylesheet so it wins equal-specificity ties against the width media block above. */
+@media (pointer:coarse){
+  .box,.sbox,.mini,.hday,.zadd,.ttl,.st,.hname,.fdone,.mtabs button,#railtoggle,
+  .ftxt span[data-action],.toast button{position:relative}
+  /* Overlays are biased downward: a positioned element always beats an earlier
+     sibling's overlay at its own centre, so room taken BELOW a control can never
+     steal the next row's taps, while room taken above a dense row can. */
+  .box::before{content:'';position:absolute;inset:-5px -14px -23px}
+  .sbox::before{content:'';position:absolute;inset:-6px -15px -24px}
+  .mini::before{content:'';position:absolute;inset:-4px -13px -22px}
+  .hday::before{content:'';position:absolute;inset:-10px}
+  .mtabs button::before{content:'';position:absolute;inset:-13px}
+  #railtoggle::before{content:'';position:absolute;inset:-9px}
+  .zadd::before{content:'';position:absolute;inset:-10px 0}
+  .ttl::before{content:'';position:absolute;inset:-4px 0 -22px}
+  .hname::before{content:'';position:absolute;inset:-4px 0 -21px}
+  .st::before,.ftxt span[data-action]::before,.fdone::before{content:'';position:absolute;inset:-5px 0 -24px}
+  .toast button::before{content:'';position:absolute;inset:-12px -4px}
+  /* the rail habit cells sit directly under their name-and-tools line, so they must
+     not reach up into it; the room below belongs to the next habit's own controls */
+  .hrcells .box::before{inset:-8px -12px -16px}
+  .nbtn,.tbtn,.abtn,.mrow button{min-height:44px;min-width:44px}
+  .navbtn,.railfoot button,#strip button,.fadd button{min-height:44px}
+  #rail .railfoot button{min-height:44px}
+  .binrow .nbtn{min-height:44px}
+  #fi,#habitAdd,#weekAdd,#calAdd,#syncKeyIn,#jumpDate,.addin,.saddrow input,
+  input.abtn,.acts select,#calZone{min-height:44px}
+}
+/* under 900px the boxes are drawn larger (20 and 17px), so the overlays can be
+   tighter and still clear 44px without reaching a neighbouring row's centre */
+@media (pointer:coarse) and (max-width:900px){
+  .box::before{inset:-5px -12px -19px}
+  .sbox::before{inset:-5px -14px -22px}
+  .hgrid{row-gap:6px}
+}
+
 </style>
 </head>
 <body>
@@ -1852,7 +1894,7 @@ function renderNav(){
     '<button class="nbtn" data-action="nav" data-d="-7">‹ Prev</button>'+
     '<button class="nbtn solid" data-action="nav-today">Today</button>'+
     '<button class="nbtn" data-action="nav" data-d="7">Next ›</button>'+
-    '<span class="jl">Jump to</span><input type="date" id="jumpDate" value="'+win[0]+'">'+
+    '<span class="jl">Jump to</span><input type="date" id="jumpDate" aria-label="Jump to a date" value="'+win[0]+'">'+
     /* Rollover runs once a day, so anything landing on a past day after it has run waits
        until tomorrow. Rather than sweeping continuously, which would fight a deliberate
        back-date, say so plainly and offer to bring them in. */
@@ -1981,7 +2023,7 @@ function card(t,loc){
     }else{
       ZONES.forEach(z=>h+='<button class="abtn '+z[0]+'" data-action="zone" data-id="'+t.id+'" data-day="'+today()+'" data-zone="'+z+'">'+ZSHORT[z]+'</button>');
     }
-    h+='<input type="date" class="abtn" data-action="pickdate" data-id="'+t.id+'" style="padding:3px 6px;font-size:11px;color-scheme:dark">';
+    h+='<input type="date" class="abtn" data-action="pickdate" data-id="'+t.id+'" aria-label="Move to a date" style="padding:3px 6px;font-size:11px;color-scheme:dark">';
     h+='<select data-action="tofloat" data-id="'+t.id+'"><option value="">file to…</option>'+
        state.floats.map(f=>'<option value="'+f.id+'">'+esc(f.name)+'</option>').join('')+'</select>';
     h+='<button class="abtn" data-action="reorder" data-id="'+t.id+'" data-d="-1">↑</button>'+
