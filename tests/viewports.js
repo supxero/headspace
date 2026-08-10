@@ -878,6 +878,93 @@ async function runProfile(browser, base, prof) {
     await act({ css: '.noterow', text: 'Packing list' });
     const selBody = await page.$eval('#noteBody', el => el.value);
     check('notes: picking a row swaps the editor', selBody === 'socks and passport', selBody);
+
+    /* the quiet meta line: orientation, never chrome */
+    const meta = await A(() => (document.getElementById('noteMeta') || {}).textContent || '');
+    check('notes: the meta line reads edited-today and a count', /Edited today/.test(meta) && /word/.test(meta), meta);
+
+    /* the measure: on wide layouts the page is a bounded, centred column */
+    if (!narrow) {
+      const m = await A(() => {
+        const p = document.querySelector('.notepage').getBoundingClientRect();
+        const e = document.querySelector('.noteed').getBoundingClientRect();
+        return { w: Math.round(p.width), off: Math.round(Math.abs((p.left - e.left) - (e.right - p.right))) };
+      });
+      check('notes: the page keeps a bounded measure', m.w <= 660, 'w=' + m.w);
+      check('notes: and sits centred in its canvas', m.off <= 40, 'off=' + m.off);
+    }
+
+    /* autogrow: a long body sizes the box to the text, no inner scrollbar ever */
+    const grow = await A(() => {
+      const b = document.getElementById('noteBody');
+      b.value = Array.from({ length: 40 }, (_, i) => 'line ' + i + ' of the long note').join('\n');
+      b.dispatchEvent(new Event('input', { bubbles: true }));
+      return b.scrollHeight - b.clientHeight;
+    });
+    check('notes: the editor grows with the text, no inner scrollbar', grow <= 2, 'inner=' + grow);
+
+    /* search: filters in place, never touches the editor or steals its focus */
+    await act('#noteSearch');
+    await page.keyboard.type('packing');
+    await sleep(250);
+    const sr = await A(() => ({
+      rows: [...document.querySelectorAll('.noterow')].length,
+      editor: !!document.getElementById('noteBody'),
+      focus: document.activeElement && document.activeElement.id,
+    }));
+    check('notes: search filters the list live', sr.rows === 1, 'rows=' + sr.rows);
+    check('notes: the editor survives the filtering', sr.editor);
+    check('notes: focus stays in the search box', sr.focus === 'noteSearch', sr.focus);
+    const sTop = await A(() => {
+      const s = document.getElementById('noteSearch').getBoundingClientRect();
+      const l = document.querySelector('.notelist').getBoundingClientRect();
+      return Math.round(s.top - l.top);
+    });
+    check('notes: search sits at the top of the list, no hunting', sTop <= 60, 'offset=' + sTop);
+    await audit('notes-search');
+    await A(() => { const s = document.getElementById('noteSearch');
+      s.value = ''; s.dispatchEvent(new Event('input', { bubbles: true })); });
+
+    /* pin: the note rises, marks itself, and the button answers */
+    await act({ css: '[data-action="note-pin"]' });
+    const pin = await A(() => {
+      const n = window.A.state.notes.find(x => x.title === 'Packing list');
+      const rows = [...document.querySelectorAll('.noterow')];
+      return { pinned: !!(n && n.pinned), top: !!(rows[0] && n && rows[0].dataset.id === n.id),
+               mark: !!(rows[0] && rows[0].querySelector('.nt svg')),
+               btn: (document.querySelector('[data-action="note-pin"]') || {}).textContent || '' };
+    });
+    check('notes: pin marks the note', pin.pinned);
+    check('notes: a pinned note rises to the top of the list', pin.top);
+    check('notes: the pinned row carries its mark', pin.mark);
+    check('notes: the button flips to Unpin', /Unpin/.test(pin.btn), pin.btn);
+    await audit('notes-pinned');
+
+    /* the on-screen keyboard: height shrinks, width holds, and the app re-renders
+       only on width change, so typing must simply continue in place */
+    if (coarse) {
+      await act('#noteBody');
+      await page.setViewport({ width: prof.width, height: Math.round(prof.height * 0.55),
+        hasTouch: true, isMobile: true });
+      await sleep(300);
+      await page.keyboard.type(' keyboard up');
+      const kb = await A(() => ({
+        body: (window.A.state.notes.find(x => x.title === 'Packing list') || {}).body || '',
+        focus: document.activeElement && document.activeElement.id,
+        over: (document.scrollingElement || document.documentElement).scrollWidth > window.innerWidth,
+      }));
+      check('notes: typing continues with the keyboard up', /keyboard up/.test(kb.body));
+      check('notes: focus stays in the body under the shrunk viewport', kb.focus === 'noteBody', kb.focus);
+      check('notes: no sideways overflow with the keyboard up', !kb.over);
+      const reach = await A(() => { const b = document.getElementById('noteBody');
+        b.scrollIntoView({ block: 'end' }); const r = b.getBoundingClientRect();
+        return r.bottom > 0 && r.bottom <= window.innerHeight + 4; });
+      check('notes: the end of the editor can be brought into view', reach);
+      await audit('notes-keyboard');
+      await page.setViewport({ width: prof.width, height: prof.height, hasTouch: true, isMobile: true });
+      await sleep(300);
+    }
+
     await act({ css: '.noterow', text: 'Untitled' });
     const emptyId = await A(() => (window.A.state.notes.find(n => !n.title) || {}).id);
     await act({ css: '[data-action="note-del"]' });

@@ -368,30 +368,51 @@ select option{background:var(--pearl);color:var(--txt)}
 .dpadd input{flex:1;min-width:160px}
 .dplist{max-width:640px}
 
-/* notes: a plain notepad. The list panel borrows the column surface, the editor
-   borrows the quick-add field, so nothing here invents a new material. */
-#notes{flex:1;min-width:0;gap:12px;padding-bottom:16px;align-items:stretch;overflow:hidden}
-.notelist{width:252px;flex:none;display:flex;flex-direction:column;gap:7px;background:var(--cloud);
+/* notes: a plain notepad. The list panel borrows the column surface; the editor is
+   one pearl page with a bounded measure, so lines never run the full canvas width.
+   Every size on it already exists in the app: the title is the calendar-h2 face
+   (19px --fd 600), the body is 15px --fb, the meta line the 11px muted small print.
+   The textarea grows with its content (growNoteBody) and .noteed is the scroller,
+   so writing never happens inside an inner scrollbar box. */
+#notes{flex:1;min-width:0;gap:14px;padding-bottom:16px;align-items:stretch;overflow:hidden}
+.notelist{width:272px;flex:none;display:flex;flex-direction:column;gap:7px;background:var(--cloud);
   border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:11px;overflow-y:auto}
+#noteSearch{width:100%;font-size:13px;background:var(--pearl)}
+#noteRows{display:flex;flex-direction:column;gap:7px}
 .noterow{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;
   padding:8px 10px;border-radius:var(--r2);border:1px solid transparent;transition:.15s}
 .noterow.on{background:var(--pearl);border-color:var(--line2);box-shadow:var(--shadow)}
-.noterow .nt{font-size:13px;font-weight:600;color:var(--txt);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.noterow .nsub{font-size:11px;color:var(--mut2);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.noterow .nt{display:flex;align-items:center;gap:5px;font-size:13px;font-weight:600;color:var(--txt);max-width:100%}
+.noterow .nt svg{width:11px;height:11px;flex:none;color:var(--denim)}
+.noterow .ntx,.noterow .nsub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.noterow .nsub{font-size:11px;color:var(--mut2)}
 @media (hover:hover){ .noterow:hover{background:rgba(36,58,94,.06)} .noterow.on:hover{background:var(--pearl)} }
 .noterow:active{transform:scale(.99)}
-.noteed{flex:1;min-width:0;display:flex;flex-direction:column;gap:9px}
-.noteedbar{display:flex;gap:8px}
-#noteTitle{flex:1;min-width:0;font-family:var(--fd);font-weight:600;font-size:15px;background:var(--pearl);box-shadow:var(--shadow)}
-#noteBody{flex:1;min-height:200px;resize:none;background:var(--pearl);border:1px solid var(--line2);
-  border-radius:var(--r2);padding:12px 14px;font-size:14px;line-height:1.55;outline:none;box-shadow:var(--shadow)}
-#noteBody:focus{border-color:var(--denim);box-shadow:0 0 0 3px rgba(95,134,166,.24)}
+.noteed{flex:1;min-width:0;overflow-y:auto;padding:4px 6px 18px}
+.notepage{max-width:640px;margin:0 auto;background:var(--pearl);border:1px solid var(--line2);
+  border-radius:var(--r);box-shadow:var(--shadow);padding:26px 34px 34px;display:flex;flex-direction:column}
+.notepage:focus-within{border-color:var(--denim);box-shadow:0 0 0 3px rgba(95,134,166,.14),var(--shadow)}
+#noteTitle{width:100%;min-width:0;border:none;background:transparent;box-shadow:none;border-radius:0;
+  padding:0 0 6px;font-family:var(--fd);font-weight:600;font-size:19px;letter-spacing:-.02em;color:var(--navy)}
+#noteTitle:focus{border:none;box-shadow:none}
+.notemeta{display:flex;align-items:center;gap:6px;padding:0 0 8px;border-bottom:1px solid var(--line);margin-bottom:16px}
+#noteMeta{font-size:11px;color:var(--mut2);margin-right:auto}
+.nact{font-size:11.5px;font-weight:500;color:var(--mut);padding:4px 9px;border-radius:7px;
+  border:1px solid transparent;transition:.15s}
+@media (hover:hover){ .nact:hover{color:var(--navy);border-color:var(--line)} }
+.nact:active{transform:scale(.95)}
+.nact.on{color:var(--denim);border-color:var(--line)}
+#noteBody{width:100%;resize:none;border:none;background:transparent;box-shadow:none;border-radius:0;
+  padding:0;min-height:240px;font-size:15px;line-height:1.7;color:var(--txt);outline:none;overflow:hidden;display:block}
 @media (max-width:900px){
   #notes{flex-direction:column;overflow:visible}
   .notelist{width:100%;max-height:38vh;flex:none}
+  .noteed{overflow:visible;padding:0}
+  .notepage{max-width:none;padding:18px 16px 26px}
   /* 16px keeps the browser from zooming the page when the field takes focus */
-  #noteTitle{font-size:16px;min-height:44px}
-  #noteBody{min-height:46vh;font-size:16px}
+  #noteSearch{font-size:16px;min-height:44px}
+  #noteTitle{font-size:17px;min-height:44px}
+  #noteBody{min-height:40vh;font-size:16px}
 }
 
 /* custom pickers (desktop pointer): a popover layered over the native date input and the
@@ -627,11 +648,12 @@ select option{background:var(--pearl);color:var(--txt)}
   .kh[data-action]::before{content:'';position:absolute;inset:-13px 0 -18px}
   .hhead[data-action]::before{content:'';position:absolute;inset:-10px 0 -16px}
   .noterow{min-height:44px}
+  .nact{min-height:44px;min-width:44px}
   .nbtn,.tbtn,.abtn,.mrow button{min-height:44px;min-width:44px}
   .navbtn,.railfoot button,#strip button,.fadd button{min-height:44px}
   #rail .railfoot button{min-height:44px}
   .binrow .nbtn{min-height:44px}
-  #fi,#habitAdd,#weekAdd,#calAdd,#syncKeyIn,#jumpDate,#noteTitle,.addin,.saddrow input,
+  #fi,#habitAdd,#weekAdd,#calAdd,#syncKeyIn,#jumpDate,#noteTitle,#noteSearch,.addin,.saddrow input,
   input.abtn,.acts select,#calZone{min-height:44px}
 }
 /* under 900px the boxes are drawn larger (20 and 17px), so the overlays can be
@@ -729,7 +751,7 @@ const CHEV=open=>'<svg class="chev'+(open?' open':'')+'" viewBox="0 0 16 16" fil
 /* ui.peek: which EMPTY panels the user has opened to add something. Not persisted:
    an empty panel starts collapsed on every load, and the flag is dropped the moment
    the panel holds an item, so emptying it later starts collapsed again. */
-let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:'',peek:{}};
+let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:'',peek:{},noteQ:''};
 
 function fresh(){
   return {
@@ -742,7 +764,8 @@ function fresh(){
        ticked items graduate into hist under the week that closed, unticked stay */
     week:{list:[],hist:{}},
     /* notes: a plain notepad, title and body, no formatting. Not tasks: they carry
-       no done state, so their dn axis is free to carry the body (see DONEF) */
+       no done state, so their dn axis is free to carry the body (see DONEF). A note
+       may carry pinned:true, which rides the pos axis (see POSF) */
     notes:[],
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
@@ -780,10 +803,13 @@ const arr=x=>Array.isArray(x)?x:[];
 /* A note has no tick, so its dn axis carries the body instead: a rename on one device
    and a body edit on another then compose instead of one discarding the other. Two
    devices editing the same BODY still resolve by later-dn-wins, whole body, loser
-   silently gone; that data-loss case is real and documented, not solved. */
+   silently gone; that data-loss case is real and documented, not solved.
+   A note's `pinned` flag is positional: pinning says where the note sits (the top of
+   the list), so it rides pos, composes with a title edit (up) and a body edit (dn)
+   made elsewhere, and, exactly like a move, cannot revive a deleted note. */
 const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days'],wtask:['title'],note:['title']};
 const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[],wtask:['done'],note:['body']};
-const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord'],wtask:['ord'],note:['ord']};
+const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord'],wtask:['ord'],note:['ord','pinned']};
 /* A habit's ticks do not live on the item at all: they sit in habits.marks as one
    timestamped cell per week and day, merged by union, so a Monday tick on one device
    and a Wednesday tick on another can never compete. The item's dn stamp still moves
@@ -839,7 +865,7 @@ function sigP(kind,o,m){
   if(kind==='focus') return 'x|'+m.ord;
   if(kind==='habit') return 'h|'+m.ord;
   if(kind==='wtask') return 'w|'+m.ord;
-  if(kind==='note')  return 'n|'+m.ord;
+  if(kind==='note')  return 'n|'+m.ord+'|'+(o.pinned?1:0);
   if(kind==='sub')   return 's|'+m.pid+'|'+m.ord;
   return 't|'+locKey(m.loc)+'|'+m.ord+'|'+(o.from||'');
 }
@@ -918,8 +944,8 @@ function flatten(s){
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='wtask') g.wtask[o.id]={id:o.id,title:o.title||'',done:!!o.done,ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
-    else if(k==='note') g.note[o.id]={id:o.id,title:o.title||'',body:o.body||'',ord:m.ord,
-      up:upOf(o),dn:dnOf(o),pos:posOf(o)};
+    else if(k==='note') g.note[o.id]={id:o.id,title:o.title||'',body:o.body||'',
+      pinned:!!o.pinned,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
       loc:m.loc,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
   });
@@ -1131,7 +1157,8 @@ function rebuild(keep,tomb,mine,theirs){
     hist:mergeHist(mine.week&&mine.week.hist,theirs.week&&theirs.week.hist)
   };
   out.notes=Object.keys(keep.note).map(id=>keep.note[id]).sort(byOrd)
-    .map(x=>({id:x.id,title:x.title,body:x.body,up:x.up,dn:x.dn,pos:x.pos}));
+    .map(x=>{const o={id:x.id,title:x.title,body:x.body,up:x.up,dn:x.dn,pos:x.pos};
+      if(x.pinned) o.pinned=true; return o});   /* absent, not false: exports stay clean */
   if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
   return carryUnknown(out,mine,theirs);
 }
@@ -2309,32 +2336,89 @@ function renderWeekly(){
    re-renders on its own keystrokes, so there is no caret to lose and no blur commit
    to eat the next tap. A render that arrives from elsewhere (sync, the midnight
    check) rebuilds the fields, so focus and caret are put back by hand, the same
-   bookkeeping the inline add row needs for the same reason. */
+   bookkeeping the inline add row needs for the same reason; the search box is a
+   third such field. The list is sorted at DISPLAY time, pinned first then by last
+   edit, and the stored array is never reordered by browsing, so neither search nor
+   the sort can churn a pos stamp or touch the merge. */
+const PIN='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5h5v4l1.5 2.5h-8L5.5 6.5z"/><path d="M8 9v4.5"/></svg>';
+const noteEditedAt=n=>Math.max(upOf(n),dnOf(n));   /* pos moves are not edits */
+const noteOrder=list=>list.slice().sort((a,b)=>
+  ((b.pinned?1:0)-(a.pinned?1:0))||(noteEditedAt(b)-noteEditedAt(a)));
+/* an untitled note is known by its first line, so no row ever reads blank */
+function noteLabel(n){
+  const t=(n.title||'').trim(); if(t) return t;
+  const l=(n.body||'').split('\n').map(s=>s.trim()).find(Boolean);
+  return l||'Untitled';
+}
+function notePrev(n){
+  let b=n.body||'';
+  if(!(n.title||'').trim()){   /* the first line is already the label; preview the rest */
+    const lines=b.split('\n'), i=lines.findIndex(s=>s.trim());
+    b=i<0?'':lines.slice(i+1).join(' ');
+  }
+  b=b.trim().replace(/\s+/g,' ');
+  return b?b.slice(0,64):'Empty';
+}
+const noteWords=n=>{const b=(n.body||'').trim(); return b?b.split(/\s+/).length:0};
+/* the quiet meta line. `at` overrides the stamp while someone is typing, since the
+   stamps only move on commit and the line should already read "today" mid-sentence. */
+function noteMetaText(n,at){
+  const w=noteWords(n), ws=w+(w===1?' word':' words');
+  const ts=at||noteEditedAt(n);
+  if(!(ts>1)) return ws;
+  const d=iso(new Date(ts)), t=today();
+  const when=d===t?'today':dayDiff(d,t)===1?'yesterday':
+    (+d.slice(8,10))+' '+MON[+d.slice(5,7)-1]+(d.slice(0,4)===t.slice(0,4)?'':' '+d.slice(0,4));
+  return 'Edited '+when+' · '+ws;
+}
+function noteRowsHtml(){
+  const q=(ui.noteQ||'').trim().toLowerCase();
+  const vis=noteOrder(arr(state.notes)).filter(n=>!q||
+    ((n.title||'')+'\n'+(n.body||'')).toLowerCase().indexOf(q)>-1);
+  if(!vis.length) return q?'<div class="empty">Nothing matches.</div>'
+    :'<div class="empty">No notes yet. Plain text, saved as you type.</div>';
+  return vis.map(n=>'<button class="noterow'+(n.id===state.settings.noteSel?' on':'')+
+    '" data-action="note-open" data-id="'+n.id+'">'+
+    '<span class="nt">'+(n.pinned?PIN:'')+'<span class="ntx">'+esc(noteLabel(n))+'</span></span>'+
+    '<span class="nsub">'+esc(notePrev(n))+'</span></button>').join('');
+}
+/* the editor grows with the text and .noteed scrolls, so there is never an inner
+   scrollbar to write inside; the scroller's position is held across the reflow */
+function growNoteBody(){
+  const b=$('#noteBody'); if(!b) return;
+  const sc=b.closest('.noteed'), st=sc?sc.scrollTop:0;
+  b.style.height='auto';
+  b.style.height=b.scrollHeight+'px';
+  if(sc) sc.scrollTop=st;
+}
 function renderNotes(){
   const host=$('#notes'), list=arr(state.notes);
   let sel=state.settings.noteSel;
   if(sel&&!list.some(n=>n.id===sel)) sel=null;
-  if(!sel&&list.length) sel=list[0].id;
+  if(!sel&&list.length) sel=noteOrder(list)[0].id;
   state.settings.noteSel=sel;
   const ae=document.activeElement;
-  const keep=ae&&(ae.id==='noteTitle'||ae.id==='noteBody')?ae.id:null;
+  const keep=ae&&(ae.id==='noteTitle'||ae.id==='noteBody'||ae.id==='noteSearch')?ae.id:null;
   const ss=keep?ae.selectionStart:0, se=keep?ae.selectionEnd:0;
   const cur=list.find(n=>n.id===sel);
-  let h='<div class="notelist"><button class="nbtn solid" data-action="note-new">+ New note</button>';
-  h+=list.length?list.map(n=>'<button class="noterow'+(n.id===sel?' on':'')+
-    '" data-action="note-open" data-id="'+n.id+'">'+
-    '<span class="nt">'+esc(n.title||'Untitled')+'</span>'+
-    '<span class="nsub">'+esc((n.body||'').trim().replace(/\s+/g,' ').slice(0,48)||'Empty')+'</span></button>').join('')
-    :'<div class="empty">No notes yet. Plain text, saved as you type.</div>';
+  let h='<div class="notelist">'+
+    '<input id="noteSearch" type="search" placeholder="Search notes" aria-label="Search notes" autocomplete="off" value="'+esc(ui.noteQ||'')+'">'+
+    '<button class="nbtn solid" data-action="note-new">+ New note</button>'+
+    '<div id="noteRows">'+noteRowsHtml()+'</div>';
   h+='</div><div class="noteed">';
   if(cur){
-    h+='<div class="noteedbar"><input id="noteTitle" value="'+esc(cur.title||'')+
+    h+='<div class="notepage">'+
+      '<input id="noteTitle" value="'+esc(cur.title||'')+
       '" placeholder="Untitled" aria-label="Note title" autocomplete="off">'+
-      '<button class="nbtn" data-action="note-del" data-id="'+cur.id+'">Delete</button></div>'+
+      '<div class="notemeta"><span id="noteMeta">'+esc(noteMetaText(cur))+'</span>'+
+      '<button class="nact'+(cur.pinned?' on':'')+'" data-action="note-pin" data-id="'+cur.id+
+      '" aria-pressed="'+(cur.pinned?'true':'false')+'">'+(cur.pinned?'Unpin':'Pin')+'</button>'+
+      '<button class="nact" data-action="note-del" data-id="'+cur.id+'">Delete</button></div>'+
       '<textarea id="noteBody" placeholder="Write anything. It saves as you type." aria-label="Note text">'+
-      esc(cur.body||'')+'</textarea>';
+      esc(cur.body||'')+'</textarea></div>';
   }else h+='<div class="empty">Nothing here yet. Press "+ New note" to start one.</div>';
   host.innerHTML=h+'</div>';
+  growNoteBody();
   if(keep){ const n=$('#'+keep);
     if(n){ n.focus({preventScroll:true}); try{ n.setSelectionRange(ss,se) }catch(e){} } }
 }
@@ -2617,11 +2701,17 @@ document.addEventListener('click',e=>{
     case 'note-new':{
       const n={id:uid(),title:'',body:'',up:Date.now()};
       state.notes.unshift(n); s.noteSel=n.id;
+      ui.noteQ='';   /* a fresh note must be visible, whatever was being searched */
       save(); render();
       const t=$('#noteTitle'); if(t) t.focus();   /* name it straight away */
       return;
     }
     case 'note-open': s.noteSel=el.dataset.id; break;
+    case 'note-pin':{
+      const n=state.notes.find(x=>x.id===el.dataset.id); if(!n) return;
+      if(n.pinned) delete n.pinned; else n.pinned=true;   /* absent, not false */
+      break;
+    }
     case 'note-del':{
       const i=state.notes.findIndex(n=>n.id===el.dataset.id); if(i<0) return;
       const n=state.notes.splice(i,1)[0];
@@ -3213,19 +3303,30 @@ document.addEventListener('input',e=>{
   if(e.target.classList&&e.target.classList.contains('addin')) ui.addText=e.target.value;
   /* the notes editor: every keystroke lands in state and rides the normal save
      debounce. No render here, so the caret is never disturbed by typing; only the
-     list row's label and snippet are patched in place. */
+     list row's label and snippet, the quiet meta line and the textarea's own
+     height are patched in place. */
   if(e.target.id==='noteTitle'||e.target.id==='noteBody'){
     const n=state.notes.find(x=>x.id===state.settings.noteSel);
     if(!n) return;
     if(e.target.id==='noteTitle'){
       n.title=e.target.value;
-      const row=$('.noterow.on .nt'); if(row) row.textContent=n.title||'Untitled';
+      const row=$('.noterow.on .ntx'); if(row) row.textContent=noteLabel(n);
     }else{
       n.body=e.target.value;
-      const sn=$('.noterow.on .nsub');
-      if(sn) sn.textContent=(n.body||'').trim().replace(/\s+/g,' ').slice(0,48)||'Empty';
+      const sn=$('.noterow.on .nsub'); if(sn) sn.textContent=notePrev(n);
+      if(!(n.title||'').trim()){   /* untitled: the label is the first line, keep it live */
+        const row=$('.noterow.on .ntx'); if(row) row.textContent=noteLabel(n);
+      }
+      growNoteBody();
     }
+    const m=$('#noteMeta'); if(m) m.textContent=noteMetaText(n,Date.now());
     save();
+  }
+  /* the search box filters the list in place: no save (nothing persists), and no
+     render, so the editor, and whoever is typing in it, is never touched */
+  if(e.target.id==='noteSearch'){
+    ui.noteQ=e.target.value;
+    const rows=$('#noteRows'); if(rows) rows.innerHTML=noteRowsHtml();
   }
 });
 

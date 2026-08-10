@@ -1,7 +1,7 @@
 /* Headspace day planner — offline cache.
    BUMP THIS VERSION whenever you upload a new index.html,
    otherwise phones keep serving the old copy from cache. */
-const CACHE = 'headspace-v27';
+const CACHE = 'headspace-v28';
 const FILES = ['./','./index.html','./manifest.webmanifest',
                './icon-192.png','./icon-512.png','./icon-512-maskable.png'];
 

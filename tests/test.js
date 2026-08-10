@@ -2125,6 +2125,179 @@ console.log('— Notes: merge —');
   }
 }
 
+console.log('— Notes: the writing surface —');
+{
+  /* one note left from the block above: "Packing list", three lines of body */
+  click('.navbtn[data-v="notes"]'); await wait(30);
+  ok(!!q('.noteed .notepage'),'the editor is one page surface, not bare fields');
+  ok(!!q('.notepage #noteTitle')&&!!q('.notepage #noteBody'),'title and body live on the page');
+  ok(q('#noteBody').style.height!=='','the body is sized to its content on render (autogrow), not a fixed box');
+  const mt=q('#noteMeta').textContent;
+  ok(/^Edited today/.test(mt),'the quiet meta line shows when the note was last edited');
+  ok(/3 words/.test(mt),'and a word count');
+  ok(!/sav/i.test(q('.notemeta').textContent),'the meta strip never talks about saving');
+  const bo=q('#noteBody'); bo.value='one two three four'; fire(bo,'input'); await wait(10);
+  ok(/4 words/.test(q('#noteMeta').textContent),'the count follows as you type, with no re-render');
+  ok(/Edited today/.test(q('#noteMeta').textContent),'and the edit time reads today mid-typing');
+  ok(q('#noteBody')===bo,'typing never rebuilds the editor');
+  A.save(); await wait(10);
+}
+
+console.log('— Notes: search, sort by last edit, preview fallback —');
+{
+  const now=Date.now();
+  S().notes=[
+    {id:'na',title:'Alpha',body:'apples and pears',up:now-30000,dn:now-30000,pos:now-30000},
+    {id:'nb',title:'Beta',body:'boats and harbours',up:now-20000,dn:now-20000,pos:now-20000},
+    {id:'nc',title:'',body:'Citrus first line\nand the rest of the citrus note',up:now-10000,dn:now-10000,pos:now-10000},
+  ];
+  S().settings.noteSel='na'; A.save(); A.render(); await wait(25);
+  const ids=()=>qa('.noterow').map(r=>r.dataset.id);
+  ok(JSON.stringify(ids())===JSON.stringify(['nc','nb','na']),
+    'the list sorts by most recently edited ('+ids().join(',')+')');
+  ok(q('.noterow[data-id="nc"] .ntx').textContent==='Citrus first line',
+    'an untitled note is known by its first line, never a blank row');
+  ok(q('.noterow[data-id="nc"] .nsub').textContent==='and the rest of the citrus note',
+    'and previews the rest of its body, not the line already shown');
+  ok(q('.noterow[data-id="na"] .nsub').textContent==='apples and pears','a titled note previews its body from the top');
+
+  /* search: titles and bodies, patched in place, editor untouched */
+  const bodyEl=q('#noteBody'), se=q('#noteSearch');
+  se.value='beta'; fire(se,'input'); await wait(10);
+  ok(JSON.stringify(ids())===JSON.stringify(['nb']),'search matches a title');
+  se.value='pears'; fire(se,'input'); await wait(10);
+  ok(JSON.stringify(ids())===JSON.stringify(['na']),'search reaches into bodies');
+  se.value='CITRUS'; fire(se,'input'); await wait(10);
+  ok(ids().length===1&&ids()[0]==='nc','case does not matter');
+  se.value='no such thing'; fire(se,'input'); await wait(10);
+  ok(/Nothing matches/.test(q('#noteRows').textContent),'an empty result says so');
+  ok(q('#noteBody')===bodyEl,'filtering never rebuilds the editor');
+  ok(S().settings.noteSel==='na','and never moves the selection');
+  se.value=''; fire(se,'input'); await wait(10);
+  ok(ids().length===3,'clearing the box brings the whole list back');
+
+  /* a new note clears the query, so it is never born invisible */
+  se.value='pears'; fire(se,'input'); await wait(10);
+  click('[data-action="note-new"]'); await wait(25);
+  ok(q('#noteSearch').value===''&&qa('.noterow').length===4,'a new note clears the search and shows itself');
+  const nn=S().notes.find(n=>!n.title&&!n.body);
+  click('[data-action="note-del"][data-id="'+nn.id+'"]'); await wait(25);
+  q('#toast').innerHTML='';
+
+  /* typing does not shuffle the list; the sort catches up on the next paint */
+  click('.noterow[data-id="na"]'); await wait(25);
+  const b2=q('#noteBody'); b2.value='apples and pears, plus a lemon'; fire(b2,'input'); await wait(10);
+  ok(qa('.noterow')[0].dataset.id==='nc','the list holds still while you type');
+  A.save(); A.render(); await wait(25);
+  ok(qa('.noterow')[0].dataset.id==='na','and lifts the fresh edit to the top on the next paint');
+}
+
+console.log('— Notes: pin —');
+{
+  const ids=()=>qa('.noterow').map(r=>r.dataset.id);
+  click('.noterow[data-id="nb"]'); await wait(25);
+  const before=A.flatten(S()).note.nb;
+  click('[data-action="note-pin"][data-id="nb"]'); await wait(25);
+  ok(S().notes.find(n=>n.id==='nb').pinned===true,'Pin marks the note');
+  ok(ids()[0]==='nb','a pinned note sits at the top of the list');
+  ok(!!q('.noterow[data-id="nb"] .nt svg'),'its row carries the pin mark, an inline SVG');
+  ok(/Unpin/.test(q('[data-action="note-pin"][data-id="nb"]').textContent),'the button now offers Unpin');
+  ok(q('[data-action="note-pin"][data-id="nb"]').getAttribute('aria-pressed')==='true','and says so to assistive tech');
+  A.save(); await wait(10);
+  const f=A.flatten(S()).note.nb;
+  ok(f.up===before.up&&f.dn===before.dn,'pinning touches neither the title stamp nor the body stamp');
+  ok(f.pos>before.pos,'only the position stamp moves: pin rides the pos axis');
+  ok(ids()[1]==='na','the unpinned rest still sorts by last edit');
+  const se=q('#noteSearch'); se.value='boats'; fire(se,'input'); await wait(10);
+  ok(ids().length===1&&ids()[0]==='nb','search works over a pinned note');
+  se.value=''; fire(se,'input'); await wait(10);
+  click('[data-action="note-pin"][data-id="nb"]'); await wait(25);
+  ok(!('pinned' in S().notes.find(n=>n.id==='nb')),'Unpin removes the flag entirely, exports stay clean');
+  ok(ids()[0]==='na','and the list falls back to the recency order');
+  /* deleting a pinned note: the same Undo, the same bin, the body intact */
+  click('.noterow[data-id="nc"]'); await wait(25);
+  click('[data-action="note-pin"][data-id="nc"]'); await wait(25);
+  A.save(); await wait(10);
+  click('[data-action="note-del"][data-id="nc"]'); await wait(25);
+  ok(/Deleted/.test(q('#toast').textContent)&&!!q('#toast [data-action="undo"]'),
+    'deleting a pinned note offers the usual 5 second Undo');
+  q('#toast').innerHTML=''; A.save(); await wait(10);
+  ok(!!S().bin.nc&&S().bin.nc.k==='note','then it waits in the bin');
+  A.restoreBin('nc'); await wait(25);
+  const back=S().notes.find(n=>n.id==='nc');
+  ok(!!back&&back.body.indexOf('Citrus first line')===0,'Restore brings the body back intact');
+  ok(back.pinned===true,'still pinned');
+  q('#toast').innerHTML='';
+}
+
+console.log('— Notes: pin merge —');
+{
+  const ndev=()=>{const s=dev(); s.notes=[]; return s};
+  const mkn=(id,title,body,up,x)=>Object.assign(
+    {id,title:title||'',body:body||'',up:up||100,dn:up||100,pos:up||100},x||{});
+  { /* pin composes with a body edit made elsewhere: the body merge is untouched */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','original',200));
+    const a=clone(base); a.notes[0].pinned=true; a.notes[0].pos=now;
+    const b=clone(base); b.notes[0].body='rewritten elsewhere'; b.notes[0].dn=now-50;
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(m.notes[0].pinned===true,'a pin on one device survives');
+    ok(m.notes[0].body==='rewritten elsewhere','beside a body edit made on the other');
+    ok(A.stateSig(m)===A.stateSig(m2),'and both devices agree');
+  }
+  { /* pin against unpin: the later position wins, deterministically */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','original',200,{pinned:true}));
+    const a=clone(base); delete a.notes[0].pinned; a.notes[0].pos=now;
+    const b=clone(base); b.notes[0].pos=now-100;
+    const m=A.mergeStates(a,b);
+    ok(!m.notes[0].pinned,'pin against unpin: the later change wins');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'from either direction');
+  }
+  { /* pinning cannot revive a deletion: pin is position, not an edit */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','original',200));
+    const a=clone(base); a.notes=[]; a.tomb={n1:now};
+    const b=clone(base); b.notes[0].pinned=true; b.notes[0].pos=now+50;
+    ok(A.mergeStates(a,b).notes.length===0,'pinning a note deleted elsewhere does not bring it back');
+    ok(A.mergeStates(b,a).notes.length===0,'in either direction');
+  }
+  { /* a planner that predates pinning merges clean */
+    const a=ndev(); a.notes.push({id:'n1',title:'Old',body:'no pinned field',up:200,dn:200,pos:200});
+    const b=ndev(); b.notes.push(mkn('n2','New',null,210,{pinned:true}));
+    const m=A.mergeStates(a,b);
+    ok(m.notes.length===2&&m.notes.find(n=>n.id==='n2').pinned===true
+      &&!m.notes.find(n=>n.id==='n1').pinned,'pinned and pre-pin notes coexist');
+  }
+}
+
+console.log('— Notes: a foreign render never steals the caret —');
+{
+  /* the exact case renderNotes restores by hand: a render arriving from elsewhere
+     (a sync adopt, the midnight check) while someone is typing */
+  click('.noterow[data-id="na"]'); await wait(25);
+  const bo=q('#noteBody'); bo.focus(); bo.setSelectionRange(4,9);
+  A.render(); await wait(20);
+  const bo2=q('#noteBody');
+  ok(bo2!==bo,'the render really did rebuild the field');
+  ok(doc.activeElement===bo2,'yet focus stays in the body');
+  ok(bo2.selectionStart===4&&bo2.selectionEnd===9,'with the caret exactly where it was');
+  const ti=q('#noteTitle'); ti.focus(); ti.setSelectionRange(1,3);
+  A.render(); await wait(20);
+  ok(doc.activeElement===q('#noteTitle')&&q('#noteTitle').selectionStart===1
+    &&q('#noteTitle').selectionEnd===3,'the title gets the same protection');
+  /* mid-search: the query, its caret and the filtered list all survive */
+  const se=q('#noteSearch'); se.focus(); se.value='citrus'; fire(se,'input'); await wait(10);
+  se.setSelectionRange(6,6);
+  A.render(); await wait(20);
+  const se2=q('#noteSearch');
+  ok(doc.activeElement===se2&&se2.value==='citrus','a foreign render keeps the search text and focus');
+  ok(se2.selectionStart===6,'and its caret');
+  ok(qa('.noterow').length===1&&qa('.noterow')[0].dataset.id==='nc','and the filter still applies after the render');
+  se2.value=''; fire(se2,'input'); await wait(10);
+  click('.navbtn[data-v="board"]'); await wait(25);
+}
+
 console.log('— placement: rail on desktop, board bottom on a phone —');
 {
   const phone=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
@@ -2199,6 +2372,9 @@ console.log('— touch targets: the coarse-pointer block —');
     'the rail foot outranks the 42px width-media rule on touch');
   ok(/\.binrow \.nbtn\{min-height:44px\}/.test(block),
     'bin rows outrank their 40px width-media rule on touch');
+  ok(/\.nact\{min-height:44px;min-width:44px\}/.test(block),
+    'the quiet note actions (Pin, Delete) grow to 44px on touch');
+  ok(/#noteSearch/.test(block),'the notes search box is in the 44px input list');
 }
 
 console.log('— the docs match reality —');
