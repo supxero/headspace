@@ -30,7 +30,7 @@ State flow: every mutation goes `handler mutates state -> save() (400ms debounce
 Grown unwieldy:
 
 - The delegated click handler (`index.html:2210`) is ~310 lines and 73 `case`s with two exit conventions: `return` means the case handled its own save/render, `break` falls through to a shared `save(); render()`. Picking the wrong one is an easy, silent mistake, and the pre-switch block that closes the inline add field (added for the mobile trap fix) runs a deferred `save(); render()` in a `setTimeout(0)` that has to guess whether a rename just started by sniffing `document.activeElement.dataset.kind`. It works and is tested, but it is the most fragile control flow in the file.
-- `render()` re-renders everything on every action. Fine at current data sizes, but it is why focus/caret preservation needs manual bookkeeping (`ui.adding`, `ui.addText`); any future input element gets the same class of bug until someone remembers that.
+- `render()` re-renders everything on every action. Fine at current data sizes, but it is why focus/caret preservation needs manual bookkeeping (`ui.adding`, `ui.addText`); any future input element gets the same class of bug until someone remembers that. One concrete cost, observed during the four-profile input verification: while any inline rename is open (task, tab, habit, weekly item, and the rename `float-new` auto-opens), the first tap on any other control is spent on the rename's blur, whose commit re-renders the tree under the gesture before mouseup lands, so that tap does nothing and the user must tap again. Pre-existing, affects every rename path equally, and inherent to commit-on-blur plus full re-render; noted here rather than patched.
 
 ## 2. State shape
 
@@ -171,4 +171,5 @@ Risks 1, 3 and 9 of the revision before last are fixed, as is risk 4 (title vs t
 
 - CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently.
 - `SETUP.md`/`START-HERE.md` predate sync, the tray changes, and the bin, and have not been re-verified.
+- `IOS-CHECKLIST.md` is the manual companion to Section 7: the Safari and device behaviours no headless pass can reach, as concrete steps with pass and fail descriptions, ordered by risk.
 - To make the tray appear on demand without waiting for midnight: `A.rollover(); A.save(); A.render()` in the console, or set `A.state.settings.lastRoll` to an older date, save, and switch away from the tab and back. Both were confirmed working on 2026-08-10.
