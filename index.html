@@ -219,8 +219,16 @@ select option{background:var(--pearl);color:var(--txt)}
 /* a Free Floating tab header is the tab's drag handle; day column headers are not */
 .backlog .colhead{cursor:grab}
 .backlog .colhead:active{cursor:grabbing}
-.col.dragging{opacity:.45}
+/* tab drag: the grabbed column stays in place as a ghost in the dashed-denim
+   drag language every drop surface already speaks; the target keeps the dashed
+   cue, and an inset bar on its near or far edge names the exact landing side */
+.col.backlog{position:relative}
+.col.dragging{opacity:.45;border-style:dashed;border-color:var(--denim)}
 .col.drop{outline:1.5px dashed var(--denim);outline-offset:3px}
+.col.drop-before::after,.col.drop-after::after{content:'';position:absolute;top:12px;bottom:12px;width:3px;
+  border-radius:2px;background:var(--denim);pointer-events:none;animation:fade .18s ease}
+.col.drop-before::after{left:5px}
+.col.drop-after::after{right:5px}
 .colhead .d1{display:flex;align-items:baseline;gap:7px}
 /* rename and delete sit together in a tab header, so they need to match each other */
 .backlog .colhead .mini{align-self:center;display:inline-flex;align-items:center;justify-content:center;min-width:21px}
@@ -478,6 +486,10 @@ select option{background:var(--pearl);color:var(--txt)}
   .colbody{overflow-y:visible;max-height:none}
   #strip{display:flex}
   .duo{grid-template-columns:1fr 1fr}
+  /* stacked columns: the landing-side bar turns horizontal, same as the midpoint axis */
+  .col.drop-before::after,.col.drop-after::after{left:12px;right:12px;width:auto;height:3px}
+  .col.drop-before::after{top:5px;bottom:auto}
+  .col.drop-after::after{top:auto;bottom:5px}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
@@ -2810,6 +2822,27 @@ document.addEventListener('blur',e=>{
   save(); render();
 },true);
 
+/* FLIP the tab swap: measure where every tab column sits, redraw in the new
+   order, then run each column from its old spot to its new one as a transform,
+   which with opacity is all that stays off the layout and paint path. One render,
+   the rest is compositor work. Skipped whole under prefers-reduced-motion, and
+   wherever element.animate does not exist (jsdom). */
+function flipTabs(){
+  const cols=$$('#board .col.backlog');
+  if(!cols.length||typeof cols[0].animate!=='function'
+    ||(window.matchMedia&&matchMedia('(prefers-reduced-motion:reduce)').matches)){ render(); return }
+  const first={};
+  cols.forEach(c=>first[c.dataset.fid]=c.getBoundingClientRect());
+  render();
+  $$('#board .col.backlog').forEach(c=>{
+    const a=first[c.dataset.fid]; if(!a) return;
+    const b=c.getBoundingClientRect(), dx=a.left-b.left, dy=a.top-b.top;
+    if(dx||dy) c.animate(
+      [{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'none'}],
+      {duration:200,easing:'cubic-bezier(.2,.7,.3,1)'});
+  });
+}
+
 /* ---------- drag and drop ----------
    Three drag sources, told apart by where the press started: a subtask row, a task
    card, or a Free Floating tab's header. Cards and subtasks drop on [data-drop] zones
@@ -2834,17 +2867,32 @@ document.addEventListener('dragstart',e=>{
 });
 document.addEventListener('dragend',()=>{
   $$('.dragging').forEach(n=>n.classList.remove('dragging'));
-  $$('.drop').forEach(n=>n.classList.remove('drop'));
+  $$('.drop').forEach(n=>n.classList.remove('drop','drop-before','drop-after'));
   ui.drag=null;
 });
 document.addEventListener('dragover',e=>{
   if(!ui.drag) return;
   if(ui.drag.type==='tab'){
+    /* dragover streams continuously, moving or not, so this path caches the
+       target column, its rect (nothing relayouts mid-drag) and the landing side
+       on ui.drag and returns before any DOM write when none of them changed */
     const c=e.target.closest('.col.backlog');
-    if(!c||c.dataset.fid===ui.drag.fid) return;
+    if(!c||c.dataset.fid===ui.drag.fid){
+      /* off every target: let the cue go at once, so it cannot linger and
+         promise a landing the drop would not make */
+      if(ui.drag.over){ ui.drag.over.classList.remove('drop','drop-before','drop-after'); ui.drag.over=null }
+      return;
+    }
     e.preventDefault(); e.dataTransfer.dropEffect='move';
-    $$('.drop').forEach(n=>n!==c&&n.classList.remove('drop'));
-    c.classList.add('drop');
+    /* the same midpoint the drop will use, so the bar names the true landing side */
+    const r=ui.drag.over===c?ui.drag.rect:c.getBoundingClientRect();
+    const side=(window.innerWidth<900?e.clientY>r.top+r.height/2:e.clientX>r.left+r.width/2)
+      ?'drop-after':'drop-before';
+    if(ui.drag.over===c&&ui.drag.side===side) return;
+    if(ui.drag.over&&ui.drag.over!==c) ui.drag.over.classList.remove('drop','drop-before','drop-after');
+    c.classList.remove(side==='drop-after'?'drop-before':'drop-after');
+    c.classList.add('drop',side);
+    ui.drag.over=c; ui.drag.rect=r; ui.drag.side=side;
     return;
   }
   const z=e.target.closest('[data-drop]'); if(!z) return;
@@ -2857,12 +2905,12 @@ document.addEventListener('drop',e=>{
     const c=e.target.closest('.col.backlog'), fid=ui.drag.fid;
     ui.drag=null;
     if(!c||c.dataset.fid===fid) return;
-    e.preventDefault(); c.classList.remove('drop');
+    e.preventDefault(); c.classList.remove('drop','drop-before','drop-after');
     /* land before or past the target by which half of it the pointer let go in;
        the columns run sideways on a wide screen and stack on a narrow one */
     const r=c.getBoundingClientRect();
     const after=window.innerWidth<900?e.clientY>r.top+r.height/2:e.clientX>r.left+r.width/2;
-    if(reorderTab(fid,c.dataset.fid,after)){ save(); render() }
+    if(reorderTab(fid,c.dataset.fid,after)){ save(); flipTabs() }
     return;
   }
   const z=e.target.closest('[data-drop]'); if(!z||!ui.drag) return;

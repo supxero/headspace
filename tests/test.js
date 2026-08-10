@@ -278,6 +278,83 @@ console.log('— Free Floating tabs: drag to reorder —');
   if(ed9){ ed9.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
     fire(ed9,'blur'); await wait(25) }
 
+  /* the insertion cue names the landing side, follows the midpoint, and repeats
+     of an unchanged dragover cost nothing: no class writes, no document queries */
+  {
+    dnd(head(fb),'dragstart');
+    const tgt=q('.col.backlog[data-fid="'+fa+'"]');
+    dnd(tgt,'dragover',{clientX:0,clientY:0});
+    ok(tgt.classList.contains('drop')&&tgt.classList.contains('drop-before')
+      &&!tgt.classList.contains('drop-after'),
+      'the near half shows the land-in-front bar beside the drop cue');
+    dnd(tgt,'dragover',{clientX:40,clientY:0});
+    ok(tgt.classList.contains('drop-after')&&!tgt.classList.contains('drop-before'),
+      'crossing the midpoint swaps it to land-behind');
+    const tl=w.DOMTokenList.prototype, oadd=tl.add, orem=tl.remove;
+    const dp=w.Document.prototype, oqsa=dp.querySelectorAll;
+    let writes=0, queries=0;
+    tl.add=function(...a){writes++;return oadd.apply(this,a)};
+    tl.remove=function(...a){writes++;return orem.apply(this,a)};
+    dp.querySelectorAll=function(...a){queries++;return oqsa.apply(this,a)};
+    for(let i=0;i<40;i++) dnd(tgt,'dragover',{clientX:40,clientY:0});
+    tl.add=oadd; tl.remove=orem; dp.querySelectorAll=oqsa;
+    ok(writes===0,'forty repeats of the same dragover write no classes');
+    ok(queries===0,'and run no document-wide queries');
+    dnd(q('.col.backlog[data-fid="'+fb+'"]'),'dragover',{clientX:0,clientY:0});
+    ok(!tgt.classList.contains('drop')&&!tgt.classList.contains('drop-after'),
+      'wandering off every target lets the cue go instead of letting it linger');
+    dnd(doc.body,'dragend'); await wait(10);
+    ok(!q('.drop-before')&&!q('.drop-after')&&!q('.col.drop'),'dragend leaves no side cue behind');
+    ok(order()===[fc,fa,fb].join(),'and the cue work moved nothing');
+  }
+
+  /* the swap animates by FLIP: transform-only keyframes ending where layout put
+     the column, in the app's short range, and skipped whole under reduced motion.
+     jsdom has no rects and no element.animate, so both are stubbed: rects come
+     from DOM order, which is exactly what a FLIP measures before and after. */
+  {
+    const calls=[];
+    const oAnim=w.Element.prototype.animate;
+    w.Element.prototype.animate=function(kf,opts){calls.push({kf,opts});return {}};
+    const oRect=w.Element.prototype.getBoundingClientRect;
+    w.Element.prototype.getBoundingClientRect=function(){
+      if(this.classList&&this.classList.contains('backlog')&&this.parentNode){
+        const i=[...this.parentNode.children].indexOf(this);
+        return {left:i*280,top:0,right:i*280+268,bottom:400,width:268,height:400};
+      }
+      return oRect.call(this);
+    };
+    dnd(head(fb),'dragstart');
+    const tgt=q('.col.backlog[data-fid="'+fc+'"]');
+    dnd(tgt,'dragover',{clientX:0,clientY:0});
+    dnd(tgt,'drop',{clientX:0,clientY:0}); await wait(30);
+    ok(order()===[fb,fc,fa].join(),'the animated drop still lands in front of the target');
+    ok(calls.length===3,'every column that moved animates');
+    ok(calls.every(x=>Object.keys(x.kf[0]).join()==='transform'&&x.kf[1].transform==='none'),
+      'by transform alone, ending where layout put it');
+    ok(calls.every(x=>x.opts.duration===200&&/\.2,\.7,\.3,1/.test(x.opts.easing)),
+      'in the 200ms the rest of the app uses, on the house easing');
+    dnd(doc.body,'dragend'); await wait(10);
+
+    /* reduced motion: the reorder happens, the animation does not */
+    calls.length=0;
+    const oMM=w.matchMedia;
+    w.matchMedia=mq=>({matches:/reduced-motion/.test(mq),media:mq,
+      addListener(){},removeListener(){},addEventListener(){},removeEventListener(){}});
+    dnd(head(fa),'dragstart');
+    const tgt2=q('.col.backlog[data-fid="'+fb+'"]');
+    dnd(tgt2,'dragover',{clientX:0,clientY:0});
+    dnd(tgt2,'drop',{clientX:0,clientY:0}); await wait(30);
+    ok(order()===[fa,fb,fc].join(),'reduced motion still reorders');
+    ok(calls.length===0,'but skips the animation entirely');
+    w.matchMedia=oMM;
+    w.Element.prototype.animate=oAnim;
+    w.Element.prototype.getBoundingClientRect=oRect;
+    dnd(doc.body,'dragend'); await wait(10);
+    /* leave the order the way the earlier drag tests left it */
+    A.reorderTab(fc,fa,false); A.save(); A.render(); await wait(20);
+  }
+
   /* the card paths are untouched: a drag starting on a card is a card drag, and a
      card dropped on another tab's zone moves the card, never the tab */
   S().floats.find(f=>f.id===fa).tasks.push({id:'dragC',title:'card in transit',done:false,subtasks:[]});

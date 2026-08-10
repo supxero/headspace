@@ -544,23 +544,55 @@ async function runProfile(browser, base, prof) {
     /* tab drag reorder: real DragEvents with a real DataTransfer, dispatched in-page,
        because Chrome raises no drag events from synthetic mouse moves and none at all
        from touch. This drives the exact production handlers at real layout, so the
-       before/after midpoint math runs against true rectangles. */
+       before/after midpoint math runs against true rectangles. Along the way: the
+       grabbed state, the landing-side bar in palette denim, the zero-cost repeat
+       dragover, the FLIP on the swap, and a clean slate after the drop. */
     const beforeOrder = await A(() => window.A.state.floats.map(f => f.id).join());
-    const afterOrder = await A(() => {
+    const drag = await A(() => {
       const head = document.querySelector('.col.backlog[data-fid="fIdeas"] .colhead');
       const target = document.querySelector('.col.backlog[data-fid="fInbox"]');
-      if (!head || !target) return 'missing';
+      if (!head || !target) return { err: 'missing' };
       const dt = new DataTransfer();
-      head.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      const ev = (type, el, at) => el.dispatchEvent(new DragEvent(type,
+        Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, at || {})));
       const r = target.getBoundingClientRect();
       const at = { clientX: r.left + 4, clientY: r.top + 4 };   /* the near half: land in front */
-      target.dispatchEvent(new DragEvent('dragover', Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, at)));
-      target.dispatchEvent(new DragEvent('drop', Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, at)));
+      const out = {};
+      ev('dragstart', head);
+      out.grabbed = head.closest('.col.backlog').classList.contains('dragging');
+      ev('dragover', target, at);
+      out.cue = target.classList.contains('drop');
+      out.side = target.classList.contains('drop-before') && !target.classList.contains('drop-after');
+      const ps = getComputedStyle(target, '::after');
+      out.bar = ps.content !== 'none' ? ps.backgroundColor : 'no bar';
+      /* the streaming cost: repeats of an unchanged dragover must write nothing */
+      const tl = DOMTokenList.prototype, oa = tl.add, orm = tl.remove;
+      let writes = 0;
+      tl.add = function (...a) { writes++; return oa.apply(this, a); };
+      tl.remove = function (...a) { writes++; return orm.apply(this, a); };
+      for (let i = 0; i < 60; i++) ev('dragover', target, at);
+      tl.add = oa; tl.remove = orm;
+      out.stillWrites = writes;
+      /* the swap must run as a FLIP: count element.animate calls around the drop */
+      const oan = Element.prototype.animate;
+      let flips = 0;
+      Element.prototype.animate = function (...a) { flips++; return oan.apply(this, a); };
+      ev('drop', target, at);
+      Element.prototype.animate = oan;
+      out.flips = flips;
       document.dispatchEvent(new DragEvent('dragend', { bubbles: true }));
-      return window.A.state.floats.map(f => f.id).join();
+      out.after = window.A.state.floats.map(f => f.id).join();
+      out.cleared = !document.querySelector('.drop,.drop-before,.drop-after,.dragging');
+      return out;
     });
-    check('tabs: drag moves Ideas in front of Inbox', afterOrder === 'fIdeas,fInbox',
-      beforeOrder + ' -> ' + afterOrder);
+    check('tabs: drag moves Ideas in front of Inbox', drag.after === 'fIdeas,fInbox',
+      beforeOrder + ' -> ' + drag.after);
+    check('tabs: the grabbed column reads as grabbed', drag.grabbed === true, JSON.stringify(drag));
+    check('tabs: the target shows the cue and the landing side', drag.cue === true && drag.side === true);
+    check('tabs: the insertion bar paints in palette denim', drag.bar === 'rgb(95, 134, 166)', drag.bar);
+    check('tabs: sixty unchanged dragovers write nothing', drag.stillWrites === 0, 'writes=' + drag.stillWrites);
+    check('tabs: the swap animates as a FLIP, both columns moving', drag.flips === 2, 'flips=' + drag.flips);
+    check('tabs: every drag cue is gone after the drop', drag.cleared === true);
     const drawn = await A(() => [...document.querySelectorAll('.col.backlog')].map(c => c.dataset.fid).join());
     check('tabs: the board redraws in the new order', drawn === 'fIdeas,fInbox', drawn);
     await A(() => window.A.save());
@@ -568,6 +600,22 @@ async function runProfile(browser, base, prof) {
       JSON.parse(localStorage.getItem('agora_dayplanner_v1')).floats.map(f => f.id).join());
     check('tabs: the new order is what persists', persisted === 'fIdeas,fInbox', persisted);
     await A(() => { window.A.reorderTab('fInbox', 'fIdeas', false); window.A.save(); window.A.render(); });
+
+    /* on the coarse profiles a real touch drag across the header must stay inert:
+       no mobile browser raises HTML5 drag events from touch (risk 12), and the
+       polish must not have grown a touch path of its own */
+    if (coarse) {
+      const c1 = await center({ css: '.col.backlog .colhead', nth: 0 });
+      await page.touchscreen.touchStart(c1.x, c1.y);
+      for (let i = 1; i <= 8; i++) await page.touchscreen.touchMove(c1.x + i * 25, c1.y + i * 6);
+      await page.touchscreen.touchEnd();
+      await sleep(300);
+      const t = await A(() => ({ order: window.A.state.floats.map(f => f.id).join(),
+        drag: !!window.A.ui.drag,
+        cues: !!document.querySelector('.drop,.drop-before,.drop-after,.dragging') }));
+      check('tabs: a touch drag still does not start', !t.drag && !t.cues, JSON.stringify(t));
+      check('tabs: and the order is untouched by it', t.order === 'fInbox,fIdeas', t.order);
+    }
 
     /* + Tab spawns a tab and opens its rename in place */
     await act({ css: '[data-action="float-new"]' });
