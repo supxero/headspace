@@ -541,6 +541,34 @@ async function runProfile(browser, base, prof) {
     check('float: mode on', mode === true);
     await audit('float-board');
 
+    /* tab drag reorder: real DragEvents with a real DataTransfer, dispatched in-page,
+       because Chrome raises no drag events from synthetic mouse moves and none at all
+       from touch. This drives the exact production handlers at real layout, so the
+       before/after midpoint math runs against true rectangles. */
+    const beforeOrder = await A(() => window.A.state.floats.map(f => f.id).join());
+    const afterOrder = await A(() => {
+      const head = document.querySelector('.col.backlog[data-fid="fIdeas"] .colhead');
+      const target = document.querySelector('.col.backlog[data-fid="fInbox"]');
+      if (!head || !target) return 'missing';
+      const dt = new DataTransfer();
+      head.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      const r = target.getBoundingClientRect();
+      const at = { clientX: r.left + 4, clientY: r.top + 4 };   /* the near half: land in front */
+      target.dispatchEvent(new DragEvent('dragover', Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, at)));
+      target.dispatchEvent(new DragEvent('drop', Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, at)));
+      document.dispatchEvent(new DragEvent('dragend', { bubbles: true }));
+      return window.A.state.floats.map(f => f.id).join();
+    });
+    check('tabs: drag moves Ideas in front of Inbox', afterOrder === 'fIdeas,fInbox',
+      beforeOrder + ' -> ' + afterOrder);
+    const drawn = await A(() => [...document.querySelectorAll('.col.backlog')].map(c => c.dataset.fid).join());
+    check('tabs: the board redraws in the new order', drawn === 'fIdeas,fInbox', drawn);
+    await A(() => window.A.save());
+    const persisted = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('agora_dayplanner_v1')).floats.map(f => f.id).join());
+    check('tabs: the new order is what persists', persisted === 'fIdeas,fInbox', persisted);
+    await A(() => { window.A.reorderTab('fInbox', 'fIdeas', false); window.A.save(); window.A.render(); });
+
     /* + Tab spawns a tab and opens its rename in place */
     await act({ css: '[data-action="float-new"]' });
     await page.keyboard.down('Control'); await page.keyboard.press('a'); await page.keyboard.up('Control');
@@ -688,6 +716,66 @@ async function runProfile(browser, base, prof) {
     await act({ css: '[data-action="week-del"][data-id="' + cid + '"]' });
     wn = await A(() => window.A.state.week.list.length);
     check('weekly: deleted', wn === 2, 'list=' + wn);
+  });
+
+  /* ---- I2. empty-collapse: an emptied panel folds to its header bar ---- */
+  await flow('empty-collapse', async () => {
+    const host = narrow ? '#weekMobile' : '#weekRail';
+    const ids = await A(() => window.A.state.week.list.map(t => t.id));
+    for (const id of ids) await act({ css: '[data-action="week-del"][data-id="' + id + '"]' });
+    const c = await page.evaluate(h => {
+      const n = document.querySelector(h);
+      return { add: !!n.querySelector('#weekAdd'), chev: !!n.querySelector('.chev'),
+               open: !!n.querySelector('.chev.open'),
+               head: (n.querySelector('.kh') || { textContent: '' }).textContent };
+    }, host);
+    check('collapse: an emptied weekly panel is a header bar', !c.add && c.chev && !c.open, JSON.stringify(c));
+    check('collapse: its count still reads 0 open', /0 open/.test(c.head), c.head);
+    await audit('week-collapsed');
+    await act({ css: host + ' .kh[data-action="panel-toggle"]' });
+    const opened = await A(() => !!document.querySelector('#weekAdd'));
+    check('collapse: tapping the header opens the panel', opened);
+    await audit('week-peeked');
+    await typeInto('#weekAdd', 'Refill the list');
+    await act({ css: '[data-action="week-add"]' });
+    const n = await A(() => window.A.state.week.list.length);
+    check('collapse: adding through the opened panel works', n === 1, 'list=' + n);
+  });
+
+  /* ---- I3. notes: the plain notepad view ---- */
+  await flow('notes', async () => {
+    await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
+    const v = await A(() => window.A.state.settings.view);
+    check('notes: view switches', v === 'notes', v);
+    await audit('notes-empty');
+    await act({ css: '[data-action="note-new"]' });
+    await page.keyboard.type('Packing list');
+    const titled = await A(() => window.A.state.notes[0] && window.A.state.notes[0].title);
+    check('notes: title lands straight in the new note', titled === 'Packing list', titled);
+    await act('#noteBody');
+    await page.keyboard.type('socks and passport');
+    const body = await A(() => window.A.state.notes[0].body);
+    check('notes: the body saves as you type', body === 'socks and passport', body);
+    await audit('notes-editor');
+    await act({ css: '[data-action="note-new"]' });
+    /* commit, so the change tracker has seen the second note before it is deleted;
+       an item created and deleted inside one save debounce never reaches any store,
+       so there is nothing for the bin to keep, and that is true of tasks too */
+    await A(() => window.A.save());
+    await act({ css: '.noterow', text: 'Packing list' });
+    const selBody = await page.$eval('#noteBody', el => el.value);
+    check('notes: picking a row swaps the editor', selBody === 'socks and passport', selBody);
+    await act({ css: '.noterow', text: 'Untitled' });
+    const emptyId = await A(() => (window.A.state.notes.find(n => !n.title) || {}).id);
+    await act({ css: '[data-action="note-del"]' });
+    const left = await A(() => window.A.state.notes.length);
+    check('notes: delete leaves one note', left === 1, 'notes=' + left);
+    await A(() => window.A.save());
+    const binned = await page.evaluate(id => !!(id && window.A.state.bin[id]), emptyId);
+    check('notes: the deleted note waits in the bin', binned);
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+    const back = await A(() => window.A.state.settings.view);
+    check('notes: back to the board', back === 'board', back);
   });
 
   /* ---- J. the bin (through the Menu on narrow layouts) ---- */

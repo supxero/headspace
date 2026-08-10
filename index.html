@@ -96,6 +96,15 @@ select option{background:var(--pearl);color:var(--txt)}
 .kard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px;box-shadow:var(--shadow)}
 .kh{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
 .kh .sp{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500;color:var(--mut2)}
+/* the one chevron every collapsible panel header uses: right when collapsed, down when open */
+.chev{width:12px;height:12px;flex:none;color:var(--mut2);transition:transform .18s ease}
+.chev.open{transform:rotate(90deg)}
+.kh[data-action],.hhead[data-action]{cursor:pointer;user-select:none}
+.kh.solo{margin-bottom:0}
+@media (hover:hover){
+  .kh[data-action]:hover,.hhead[data-action]:hover{color:var(--navy)}
+  .kh[data-action]:hover .chev,.hhead[data-action]:hover .chev{color:var(--navy)}
+}
 
 /* focus */
 .frow{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-top:1px solid var(--line)}
@@ -207,6 +216,11 @@ select option{background:var(--pearl);color:var(--txt)}
 .col.today{border-color:var(--teal);box-shadow:0 0 0 1px rgba(86,124,141,.35),var(--shadow)}
 .col.past{opacity:.66}
 .colhead{padding:11px 12px 9px;border-bottom:1px solid var(--line);flex:none;background:rgba(36,58,94,.03)}
+/* a Free Floating tab header is the tab's drag handle; day column headers are not */
+.backlog .colhead{cursor:grab}
+.backlog .colhead:active{cursor:grabbing}
+.col.dragging{opacity:.45}
+.col.drop{outline:1.5px dashed var(--denim);outline-offset:3px}
 .colhead .d1{display:flex;align-items:baseline;gap:7px}
 /* rename and delete sit together in a tab header, so they need to match each other */
 .backlog .colhead .mini{align-self:center;display:inline-flex;align-items:center;justify-content:center;min-width:21px}
@@ -271,6 +285,7 @@ select option{background:var(--pearl);color:var(--txt)}
 .hhead b::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none}
 .hhead .hsub{font-size:11.5px;color:var(--mut)}
 .hhead .mini{margin-left:auto}
+.hhead .hcnt{margin-left:auto;color:var(--mut2)}
 .hgridwrap{overflow-x:auto;margin-top:9px}
 .hgrid{display:grid;grid-template-columns:minmax(110px,1fr) repeat(6,40px) auto auto;gap:3px 4px;align-items:center}
 .hdow{text-align:center;font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2)}
@@ -334,6 +349,32 @@ select option{background:var(--pearl);color:var(--txt)}
 .dpadd{display:flex;gap:7px;margin-bottom:11px;flex-wrap:wrap}
 .dpadd input{flex:1;min-width:160px}
 .dplist{max-width:640px}
+
+/* notes: a plain notepad. The list panel borrows the column surface, the editor
+   borrows the quick-add field, so nothing here invents a new material. */
+#notes{flex:1;min-width:0;gap:12px;padding-bottom:16px;align-items:stretch;overflow:hidden}
+.notelist{width:252px;flex:none;display:flex;flex-direction:column;gap:7px;background:var(--cloud);
+  border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:11px;overflow-y:auto}
+.noterow{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;
+  padding:8px 10px;border-radius:var(--r2);border:1px solid transparent;transition:.15s}
+.noterow.on{background:var(--pearl);border-color:var(--line2);box-shadow:var(--shadow)}
+.noterow .nt{font-size:13px;font-weight:600;color:var(--txt);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.noterow .nsub{font-size:11px;color:var(--mut2);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (hover:hover){ .noterow:hover{background:rgba(36,58,94,.06)} .noterow.on:hover{background:var(--pearl)} }
+.noterow:active{transform:scale(.99)}
+.noteed{flex:1;min-width:0;display:flex;flex-direction:column;gap:9px}
+.noteedbar{display:flex;gap:8px}
+#noteTitle{flex:1;min-width:0;font-family:var(--fd);font-weight:600;font-size:15px;background:var(--pearl);box-shadow:var(--shadow)}
+#noteBody{flex:1;min-height:200px;resize:none;background:var(--pearl);border:1px solid var(--line2);
+  border-radius:var(--r2);padding:12px 14px;font-size:14px;line-height:1.55;outline:none;box-shadow:var(--shadow)}
+#noteBody:focus{border-color:var(--denim);box-shadow:0 0 0 3px rgba(95,134,166,.24)}
+@media (max-width:900px){
+  #notes{flex-direction:column;overflow:visible}
+  .notelist{width:100%;max-height:38vh;flex:none}
+  /* 16px keeps the browser from zooming the page when the field takes focus */
+  #noteTitle{font-size:16px;min-height:44px}
+  #noteBody{min-height:46vh;font-size:16px}
+}
 
 /* custom pickers (desktop pointer): a popover layered over the native date input and the
    quick-add destination select, since neither can be styled and the OS blue highlight
@@ -557,11 +598,18 @@ select option{background:var(--pearl);color:var(--txt)}
   /* the rail habit cells sit directly under their name-and-tools line, so they must
      not reach up into it; the room below belongs to the next habit's own controls */
   .hrcells .box::before{inset:-8px -12px -16px}
+  /* collapsible panel headers: a thin row of text, so grow a downward-biased overlay;
+     the row below is either card padding (collapsed) or a row whose own controls are
+     positioned and therefore win their centres */
+  .kh[data-action],.hhead[data-action]{position:relative}
+  .kh[data-action]::before{content:'';position:absolute;inset:-13px 0 -18px}
+  .hhead[data-action]::before{content:'';position:absolute;inset:-10px 0 -16px}
+  .noterow{min-height:44px}
   .nbtn,.tbtn,.abtn,.mrow button{min-height:44px;min-width:44px}
   .navbtn,.railfoot button,#strip button,.fadd button{min-height:44px}
   #rail .railfoot button{min-height:44px}
   .binrow .nbtn{min-height:44px}
-  #fi,#habitAdd,#weekAdd,#calAdd,#syncKeyIn,#jumpDate,.addin,.saddrow input,
+  #fi,#habitAdd,#weekAdd,#calAdd,#syncKeyIn,#jumpDate,#noteTitle,.addin,.saddrow input,
   input.abtn,.acts select,#calZone{min-height:44px}
 }
 /* under 900px the boxes are drawn larger (20 and 17px), so the overlays can be
@@ -589,6 +637,7 @@ select option{background:var(--pearl);color:var(--txt)}
       <button class="navbtn" data-action="view" data-v="board"><span class="em"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="2.5" width="3.4" height="11" rx="1"/><rect x="6.3" y="2.5" width="3.4" height="11" rx="1"/><rect x="10.6" y="2.5" width="3.4" height="11" rx="1"/></svg></span>Board</button>
       <button class="navbtn" data-action="view" data-v="calendar"><span class="em"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="3" width="12" height="11" rx="1.6"/><path d="M2 6.4h12"/><path d="M5.2 1.6v2.6M10.8 1.6v2.6"/></svg></span>Calendar</button>
       <button class="navbtn" data-action="floattoggle"><span class="em"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.4" stroke-dasharray="2.4 2.4"/></svg></span><span id="ftlabel">Free Floating</span></button>
+      <button class="navbtn" data-action="view" data-v="notes"><span class="em"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2.5h7.5L13 5v8.5H3z"/><path d="M10.5 2.5V5H13"/><path d="M5.4 8h5.2M5.4 10.6h3.6"/></svg></span>Notes</button>
     </div>
 
     <div class="railhide" style="display:flex;flex-direction:column;gap:14px">
@@ -622,6 +671,7 @@ select option{background:var(--pearl);color:var(--txt)}
     <div id="habits"></div>
     <div id="weekMobile"></div>
     <div id="cal" style="display:none"></div>
+    <div id="notes" style="display:none"></div>
   </main>
 </div>
 
@@ -650,9 +700,14 @@ const ZL={must:'Prio 0',should:'Prio 1',extra:'Extra'};
 const ZSHORT={must:'0',should:'1',extra:'E'};
 const ZC={must:'var(--must)',should:'var(--should)',extra:'var(--extra)'};
 const LOCK=`<svg class="lk" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3.4" y="7.2" width="9.2" height="6.2" rx="1.5"/><path d="M5.5 7.2V5.4a2.5 2.5 0 0 1 5 0v1.8"/></svg>`;
+/* the one collapse chevron, shared by every collapsible panel header */
+const CHEV=open=>'<svg class="chev'+(open?' open':'')+'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>';
 
 /* ================= state ================= */
-let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:''};
+/* ui.peek: which EMPTY panels the user has opened to add something. Not persisted:
+   an empty panel starts collapsed on every load, and the flag is dropped the moment
+   the panel holds an item, so emptying it later starts collapsed again. */
+let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:'',peek:{}};
 
 function fresh(){
   return {
@@ -664,9 +719,12 @@ function fresh(){
     /* week: the flat sometime-this-week list. list is live; at Monday 00:00 the
        ticked items graduate into hist under the week that closed, unticked stay */
     week:{list:[],hist:{}},
+    /* notes: a plain notepad, title and body, no formatting. Not tasks: they carry
+       no done state, so their dn axis is free to carry the body (see DONEF) */
+    notes:[],
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
-      habitsOpen:true,lastWeek:null}
+      habitsOpen:true,lastWeek:null,noteSel:null}
   };
 }
 
@@ -697,9 +755,13 @@ const arr=x=>Array.isArray(x)?x:[];
    `from` (the carry-over origin label) is positional: rollover writes it as part of the
    move, and triage clears it as part of moving the task out.
    `doneAt` rides with `done`, since ticking a focus item is what writes it. */
-const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days'],wtask:['title']};
-const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[],wtask:['done']};
-const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord'],wtask:['ord']};
+/* A note has no tick, so its dn axis carries the body instead: a rename on one device
+   and a body edit on another then compose instead of one discarding the other. Two
+   devices editing the same BODY still resolve by later-dn-wins, whole body, loser
+   silently gone; that data-loss case is real and documented, not solved. */
+const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days'],wtask:['title'],note:['title']};
+const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[],wtask:['done'],note:['body']};
+const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord'],wtask:['ord'],note:['ord']};
 /* A habit's ticks do not live on the item at all: they sit in habits.marks as one
    timestamped cell per week and day, merged by union, so a Monday tick on one device
    and a Wednesday tick on another can never compete. The item's dn stamp still moves
@@ -717,6 +779,7 @@ function eachItem(s,fn){
   const hb=s.habits||{};
   arr(hb.list).forEach((x,i)=>{ if(x&&x.id) fn('habit',x,{ord:i,msig:marksSigFor(hb.marks,x.id)}) });
   arr(s.week&&s.week.list).forEach((x,i)=>{ if(x&&x.id) fn('wtask',x,{ord:i}) });
+  arr(s.notes).forEach((x,i)=>{ if(x&&x.id) fn('note',x,{ord:i}) });
 }
 /* a habit's marks across every week, in stable key order, for its dn signature */
 function marksSigFor(marks,id){
@@ -739,11 +802,13 @@ function sigC(kind,o){
   if(kind==='habit') return 'H|'+(o.name||'')+'|'+arr(o.days).slice().sort((a,b)=>a-b).join(',');
   return 'C|'+(o.title||'');
 }
-/* whether it is ticked, on its own so a rename cannot outrank a tick */
+/* whether it is ticked, on its own so a rename cannot outrank a tick.
+   A note has no tick; its body rides this axis instead (see DONEF). */
 function sigD(kind,o,m){
   if(kind==='float') return 'd|';
   if(kind==='habit') return 'd|'+((m&&m.msig)||'');
   if(kind==='focus') return 'd|'+(o.done?1:0)+'|'+(o.doneAt||'');
+  if(kind==='note')  return 'd|'+(o.body||'');
   return 'd|'+(o.done?1:0);
 }
 /* where the item sits, ignoring what it says */
@@ -752,6 +817,7 @@ function sigP(kind,o,m){
   if(kind==='focus') return 'x|'+m.ord;
   if(kind==='habit') return 'h|'+m.ord;
   if(kind==='wtask') return 'w|'+m.ord;
+  if(kind==='note')  return 'n|'+m.ord;
   if(kind==='sub')   return 's|'+m.pid+'|'+m.ord;
   return 't|'+locKey(m.loc)+'|'+m.ord+'|'+(o.from||'');
 }
@@ -801,6 +867,7 @@ function stampLegacy(s){
   if(!s.habits.marks||typeof s.habits.marks!=='object') s.habits.marks={};
   if(!s.week||typeof s.week!=='object'||!Array.isArray(s.week.list)) s.week={list:[],hist:{}};
   if(!s.week.hist||typeof s.week.hist!=='object') s.week.hist={};
+  if(!Array.isArray(s.notes)) s.notes=[];
   eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP;
     if(!(+o.dn>0)) o.dn=upOf(o); if(!(+o.pos>0)) o.pos=upOf(o) });
   if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
@@ -816,7 +883,7 @@ function stampLegacy(s){
 
 /* ================= merge two planners, item by item ================= */
 function flatten(s){
-  const g={float:{},task:{},sub:{},focus:{},habit:{},wtask:{}};
+  const g={float:{},task:{},sub:{},focus:{},habit:{},wtask:{},note:{}};
   eachItem(s,(k,o,m)=>{
     if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
@@ -828,6 +895,8 @@ function flatten(s){
       days:arr(o.days).slice().sort((a,b)=>a-b),ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='wtask') g.wtask[o.id]={id:o.id,title:o.title||'',done:!!o.done,ord:m.ord,
+      up:upOf(o),dn:dnOf(o),pos:posOf(o)};
+    else if(k==='note') g.note[o.id]={id:o.id,title:o.title||'',body:o.body||'',ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
       loc:m.loc,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
@@ -867,7 +936,7 @@ function mergeTombs(x,y){
 }
 function stateSig(s){
   const g=flatten(s), out=[];
-  ['float','task','sub','focus','habit','wtask'].forEach(k=>Object.keys(g[k]).sort()
+  ['float','task','sub','focus','habit','wtask','note'].forEach(k=>Object.keys(g[k]).sort()
     .forEach(id=>out.push(k+' '+JSON.stringify(g[k][id]))));
   /* habit ticks live outside the items, so hash them too or a tick would never push */
   const hm=(s&&s.habits&&s.habits.marks)||{};
@@ -894,8 +963,8 @@ function stateSig(s){
 function mergeStates(mine,theirs){
   const A=flatten(mine), B=flatten(theirs);
   const tomb=mergeTombs(mine.tomb,theirs.tomb);
-  const keep={float:{},task:{},sub:{},focus:{},habit:{},wtask:{}};
-  ['float','task','sub','focus','habit','wtask'].forEach(g=>{
+  const keep={float:{},task:{},sub:{},focus:{},habit:{},wtask:{},note:{}};
+  ['float','task','sub','focus','habit','wtask','note'].forEach(g=>{
     const ids={};
     Object.keys(A[g]).forEach(i=>{ids[i]=1}); Object.keys(B[g]).forEach(i=>{ids[i]=1});
     Object.keys(ids).forEach(id=>{
@@ -910,7 +979,7 @@ function mergeStates(mine,theirs){
   });
   const out=rebuild(keep,tomb,mine,theirs);
   const alive={};
-  ['float','task','sub','focus','habit','wtask'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
+  ['float','task','sub','focus','habit','wtask','note'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
   out.bin=mergeBins(mine.bin,theirs.bin,tomb,alive);
   return out;
 }
@@ -935,7 +1004,7 @@ function mergeBins(x,y,tomb,alive){
    carried through untouched by carryUnknown(), so a key added to state in future cannot be
    silently dropped the first time two devices merge. A test asserts this list still matches
    fresh(), so adding a key to the canonical shape forces a deliberate choice here. */
-const MERGED_KEYS=['ver','days','carry','focus','floats','habits','week','settings','tomb','bin'];
+const MERGED_KEYS=['ver','days','carry','focus','floats','habits','week','notes','settings','tomb','bin'];
 /* the weekly list's closed weeks: plain records, unioned by week then by id, the newer
    `at` winning a shared id. Two devices archiving the same finished item converge. */
 function mergeHist(x,y){
@@ -1039,6 +1108,8 @@ function rebuild(keep,tomb,mine,theirs){
       .map(x=>({id:x.id,title:x.title,done:x.done,up:x.up,dn:x.dn,pos:x.pos})),
     hist:mergeHist(mine.week&&mine.week.hist,theirs.week&&theirs.week.hist)
   };
+  out.notes=Object.keys(keep.note).map(id=>keep.note[id]).sort(byOrd)
+    .map(x=>({id:x.id,title:x.title,body:x.body,up:x.up,dn:x.dn,pos:x.pos}));
   if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
   return carryUnknown(out,mine,theirs);
 }
@@ -1058,6 +1129,7 @@ function load(){
     if(!state.week||typeof state.week!=='object'||!Array.isArray(state.week.list))
       state.week={list:[],hist:{}};
     if(!state.week.hist||typeof state.week.hist!=='object') state.week.hist={};
+    if(!Array.isArray(state.notes)) state.notes=[];
     /* migrate an old flat backlog into the first float tab */
     if(Array.isArray(p.backlog)&&p.backlog.length) state.floats[0].tasks.push(...p.backlog);
   }catch(e){ state=fresh() }
@@ -1106,7 +1178,7 @@ const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this dev
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
 const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay',
-  'showDone','lastRoll','habitsOpen','lastWeek'];
+  'showDone','lastRoll','habitsOpen','lastWeek','noteSel'];
 const POLL_MS=25000;                          /* look for another device's changes this often */
 const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
 const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
@@ -1237,7 +1309,7 @@ async function pullNow(manual){
 function emptyPlanner(s){
   const days=s.days||{};
   const noDays=Object.keys(days).every(d=>ZONES.every(z=>!((days[d]||{})[z]||[]).length));
-  return noDays&&!(s.carry||[]).length&&!(s.focus||[]).length&&
+  return noDays&&!(s.carry||[]).length&&!(s.focus||[]).length&&!(s.notes||[]).length&&
     (s.floats||[]).every(f=>!(f.tasks||[]).length);
 }
 function swapState(next){
@@ -1259,6 +1331,7 @@ function readCloud(p){
   if(!out.week||typeof out.week!=='object'||!Array.isArray(out.week.list))
     out.week={list:[],hist:{}};
   if(!out.week.hist||typeof out.week.hist!=='object') out.week.hist={};
+  if(!Array.isArray(out.notes)) out.notes=[];
   return stampLegacy(out);
 }
 /* put a state on screen without letting the change look like a local edit */
@@ -1480,6 +1553,18 @@ function move(id,dest,at){
   const t=pull(id); if(!t) return;
   place(t,dest,at); ui.flash=id;
 }
+/* Tab order is nothing but the floats array order, exactly like task order in a zone,
+   so it rides the existing pos stamp: stampChanges sees each tab's ord change and
+   bumps pos, and the merge resolves order on that axis without a new field. */
+function reorderTab(fid,targetFid,after){
+  const i=state.floats.findIndex(f=>f.id===fid); if(i<0) return false;
+  const moved=state.floats.splice(i,1)[0];
+  let j=state.floats.findIndex(f=>f.id===targetFid);
+  if(j<0){ state.floats.splice(i,0,moved); return false }
+  if(after) j++;
+  state.floats.splice(j,0,moved);
+  return true;
+}
 
 /* rollover: unfinished tasks from past days go to the carry tray */
 function rollover(){
@@ -1646,6 +1731,7 @@ function restoreBin(id){
   }else if(e.k==='focus'){ state.focus.push(b); dest='Focus this week' }
   else if(e.k==='habit'){ state.habits.list.push(b); dest='the Habits panel' }
   else if(e.k==='wtask'){ state.week.list.push(b); dest='the This week list' }
+  else if(e.k==='note'){ state.notes.unshift(b); state.settings.noteSel=b.id; dest='Notes' }
   else return;
   save(); render();
   toast('Restored to '+dest);
@@ -1674,6 +1760,7 @@ function binWhere(e){
   if(e.k==='focus') return 'Focus this week';
   if(e.k==='habit') return 'the Habits panel';
   if(e.k==='wtask') return 'the This week list';
+  if(e.k==='note') return 'Notes';
   const l=e.loc||{kind:'carry'};
   if(l.kind==='day'&&l.date)
     return (ZL[l.zone]||ZL.must)+' on '+DOW[new Date(l.date+'T12:00:00').getDay()]+' '+l.date;
@@ -1693,7 +1780,8 @@ function binBody(){
   if(!list.length) h+='<div class="empty">Nothing in the bin.</div>';
   list.forEach(x=>{
     const e=x.e, name=e.k==='float'?(e.body.name||'a tab')
-      :e.k==='habit'?(e.body.name||'a habit'):(e.body.title||'');
+      :e.k==='habit'?(e.body.name||'a habit')
+      :e.k==='note'?(e.body.title||'a note'):(e.body.title||'');
     h+='<div class="binrow"><div class="bt"><b>'+esc(String(name).slice(0,64))+'</b>'+
       '<span>'+binMeta(e)+'</span></div>'+
       '<button class="nbtn" data-action="bin-restore" data-id="'+x.id+'">Restore</button>'+
@@ -1753,15 +1841,25 @@ function monthTally(){
 }
 
 /* ================= render: rail ================= */
+/* An empty panel earns only its header bar: chevron, label, count. Clicking the header
+   opens it (ui.peek) so something can be added; once it holds an item it renders
+   expanded as always and the peek flag is dropped, so emptying it collapses it again. */
 function renderFocus(){
   const open=state.focus.filter(f=>!f.done), done=state.focus.filter(f=>f.done);
-  let h='<div class="kh">Focus this week<span class="sp">'+open.length+' open</span></div>';
-  h+=open.length?open.map(f=>frow(f)).join(''):'<div class="empty">Nothing set. What mindset do you want this week?</div>';
-  h+='<div class="fadd"><input id="fi" placeholder="This week I will…" data-enter="focus" autocomplete="off">'+
-     '<button data-action="focus-add">Set</button></div>';
-  if(done.length){
-    h+='<div class="fdone" data-action="focus-toggle-done">'+(state.settings.showDone?'▾':'▸')+' Completed ('+done.length+')</div>';
-    if(state.settings.showDone) h+=done.map(f=>frow(f)).join('');
+  const isEmpty=!state.focus.length;
+  if(!isEmpty) delete ui.peek.focus;
+  const expanded=!isEmpty||!!ui.peek.focus;
+  let h='<div class="kh'+(expanded?'':' solo')+'"'+
+    (isEmpty?' data-action="panel-toggle" data-panel="focus"':'')+'>'+CHEV(expanded)+
+    'Focus this week<span class="sp">'+open.length+' open</span></div>';
+  if(expanded){
+    h+=open.length?open.map(f=>frow(f)).join(''):'<div class="empty">Nothing set. What mindset do you want this week?</div>';
+    h+='<div class="fadd"><input id="fi" placeholder="This week I will…" data-enter="focus" autocomplete="off">'+
+       '<button data-action="focus-add">Set</button></div>';
+    if(done.length){
+      h+='<div class="fdone" data-action="focus-toggle-done">'+(state.settings.showDone?'▾':'▸')+' Completed ('+done.length+')</div>';
+      if(state.settings.showDone) h+=done.map(f=>frow(f)).join('');
+    }
   }
   $('#fpanel').innerHTML=h;
 }
@@ -1951,7 +2049,9 @@ function renderBoard(){
 function floatCol(f,i){
   const open=f.tasks.filter(t=>!t.done).length;
   return '<div class="col backlog" data-fid="'+f.id+'" style="animation-delay:'+(i*35)+'ms">'+
-    '<div class="colhead"><div class="d1"><span class="dow"> '+esc(f.name)+'</span>'+
+    /* the header is the tab's drag handle, so a drag starting on a card inside the
+       column stays a card drag and the two never compete for the same press */
+    '<div class="colhead" draggable="true" title="Drag to reorder tabs"><div class="d1"><span class="dow"> '+esc(f.name)+'</span>'+
     '<button class="mini" data-action="float-rename" data-fid="'+f.id+'" title="Rename">✎</button>'+
     (state.floats.length>1?'<button class="mini" data-action="float-del" data-fid="'+f.id+'" '+
       'title="Delete tab" aria-label="Delete tab">✕</button>':'')+
@@ -2083,9 +2183,13 @@ function renderHabits(){
   const host=wide?$('#habitsRail'):$('#habits'), other=wide?$('#habits'):$('#habitsRail');
   other.innerHTML='';
   if(!wide&&(state.settings.view!=='board'||state.settings.floatMode)){ host.innerHTML=''; return }
-  const open=state.settings.habitsOpen!==false;
   const wk=hweek(), marks=state.habits.marks[wk]||{};
   const list=state.habits.list;
+  /* with habits defined, the persisted manual collapse governs as it always has;
+     with none, the panel is the header bar until the user peeks it open */
+  if(list.length) delete ui.peek.habits;
+  const expanded=list.length?state.settings.habitsOpen!==false:!!ui.peek.habits;
+  const count=list.length+(list.length===1?' habit':' habits');
   const tdow=new Date(today()+'T12:00:00').getDay();
   const dowRow=cls=>[1,2,3,4,5,6].map(d=>
     '<span class="hdow'+(d===tdow?' now':'')+'">'+HDOW[d]+'</span>').join('');
@@ -2093,10 +2197,10 @@ function renderHabits(){
   if(wide){
     /* rail: a kard like Focus above it. Six cells do not fit beside a name in 254px,
        so each habit takes two lines: its name with its controls, then the week. */
-    h='<div class="kard hcard"><div class="kh">Habits<span class="sp">'+
-      (tdow===0?'Sun rests':'Mon to Sat')+'</span>'+
-      '<button class="mini" data-action="habit-toggle">'+(open?'Hide':'Show')+'</button></div>';
-    if(open){
+    h='<div class="kard hcard"><div class="kh'+(expanded?'':' solo')+'" data-action="habit-toggle">'+
+      CHEV(expanded)+'Habits<span class="sp">'+
+      (expanded?(tdow===0?'Sun rests':'Mon to Sat'):count)+'</span></div>';
+    if(expanded){
       if(list.length){
         h+='<div class="hrail"><div class="hrdow">'+dowRow()+'</div>';
         list.forEach(hb=>{
@@ -2111,10 +2215,11 @@ function renderHabits(){
     }
     h+='</div>';
   }else{
-    h='<div class="hpanel"><div class="hhead"><b>Habits</b>'+
-      '<span class="hsub">'+(tdow===0?'Sunday rests. The week starts over tomorrow.':'Mon to Sat, Sunday rests')+'</span>'+
-      '<button class="mini" data-action="habit-toggle">'+(open?'Hide':'Show')+'</button></div>';
-    if(open){
+    h='<div class="hpanel"><div class="hhead" data-action="habit-toggle">'+CHEV(expanded)+'<b>Habits</b>'+
+      (expanded
+        ?'<span class="hsub">'+(tdow===0?'Sunday rests. The week starts over tomorrow.':'Mon to Sat, Sunday rests')+'</span>'
+        :'<span class="hsub hcnt">'+count+'</span>')+'</div>';
+    if(expanded){
       if(list.length){
         h+='<div class="hgridwrap"><div class="hgrid">';
         h+='<span></span>'+dowRow()+'<span></span><span></span>';
@@ -2147,11 +2252,55 @@ function renderWeekly(){
   other.innerHTML='';
   if(!wide&&(state.settings.view!=='board'||state.settings.floatMode)){ host.innerHTML=''; return }
   const list=arr(state.week.list), open=list.filter(t=>!t.done).length;
-  host.innerHTML='<div class="'+(wide?'kard':'hpanel')+' wcard">'+
-    '<div class="kh">This week<span class="sp">'+open+' open</span></div>'+
-    (list.length?list.map(wrow).join(''):'<div class="empty">Nothing yet. Things to do sometime this week, no particular day.</div>')+
-    '<div class="fadd"><input id="weekAdd" placeholder="Sometime this week…" data-enter="week" autocomplete="off">'+
-    '<button data-action="week-add">Add</button></div></div>';
+  const isEmpty=!list.length;
+  if(!isEmpty) delete ui.peek.week;
+  const expanded=!isEmpty||!!ui.peek.week;
+  let h='<div class="'+(wide?'kard':'hpanel')+' wcard">'+
+    '<div class="kh'+(expanded?'':' solo')+'"'+
+    (isEmpty?' data-action="panel-toggle" data-panel="week"':'')+'>'+CHEV(expanded)+
+    'This week<span class="sp">'+open+' open</span></div>';
+  if(expanded){
+    h+=(list.length?list.map(wrow).join(''):'<div class="empty">Nothing yet. Things to do sometime this week, no particular day.</div>')+
+      '<div class="fadd"><input id="weekAdd" placeholder="Sometime this week…" data-enter="week" autocomplete="off">'+
+      '<button data-action="week-add">Add</button></div>';
+  }
+  host.innerHTML=h+'</div>';
+}
+
+/* ================= render: notes =================
+   A plain notepad, deliberately: titles and bodies, no formatting, no markdown.
+   The editor writes state on every input through the normal save debounce and never
+   re-renders on its own keystrokes, so there is no caret to lose and no blur commit
+   to eat the next tap. A render that arrives from elsewhere (sync, the midnight
+   check) rebuilds the fields, so focus and caret are put back by hand, the same
+   bookkeeping the inline add row needs for the same reason. */
+function renderNotes(){
+  const host=$('#notes'), list=arr(state.notes);
+  let sel=state.settings.noteSel;
+  if(sel&&!list.some(n=>n.id===sel)) sel=null;
+  if(!sel&&list.length) sel=list[0].id;
+  state.settings.noteSel=sel;
+  const ae=document.activeElement;
+  const keep=ae&&(ae.id==='noteTitle'||ae.id==='noteBody')?ae.id:null;
+  const ss=keep?ae.selectionStart:0, se=keep?ae.selectionEnd:0;
+  const cur=list.find(n=>n.id===sel);
+  let h='<div class="notelist"><button class="nbtn solid" data-action="note-new">+ New note</button>';
+  h+=list.length?list.map(n=>'<button class="noterow'+(n.id===sel?' on':'')+
+    '" data-action="note-open" data-id="'+n.id+'">'+
+    '<span class="nt">'+esc(n.title||'Untitled')+'</span>'+
+    '<span class="nsub">'+esc((n.body||'').trim().replace(/\s+/g,' ').slice(0,48)||'Empty')+'</span></button>').join('')
+    :'<div class="empty">No notes yet. Plain text, saved as you type.</div>';
+  h+='</div><div class="noteed">';
+  if(cur){
+    h+='<div class="noteedbar"><input id="noteTitle" value="'+esc(cur.title||'')+
+      '" placeholder="Untitled" aria-label="Note title" autocomplete="off">'+
+      '<button class="nbtn" data-action="note-del" data-id="'+cur.id+'">Delete</button></div>'+
+      '<textarea id="noteBody" placeholder="Write anything. It saves as you type." aria-label="Note text">'+
+      esc(cur.body||'')+'</textarea>';
+  }else h+='<div class="empty">Nothing here yet. Press "+ New note" to start one.</div>';
+  host.innerHTML=h+'</div>';
+  if(keep){ const n=$('#'+keep);
+    if(n){ n.focus({preventScroll:true}); try{ n.setSelectionRange(ss,se) }catch(e){} } }
 }
 
 /* ================= render: calendar ================= */
@@ -2214,11 +2363,12 @@ function render(){
   $('#ftlabel').textContent=state.settings.floatMode?'Back to dates':'Free Floating';
   $('#board').style.display=v==='board'?'flex':'none';
   $('#cal').style.display=v==='calendar'?'block':'none';
+  $('#notes').style.display=v==='notes'?'flex':'none';
   $('#quickadd').style.display=v==='board'?'flex':'none';
 
   renderQuick(); renderTray(); renderNav(); renderFocus(); renderMetrics(); paintBin(); grow();
   renderHabits(); renderWeekly();
-  if(v==='board') renderBoard(); else renderCal();
+  if(v==='board') renderBoard(); else if(v==='calendar') renderCal(); else renderNotes();
 
   if(ui.adding){
     const el=$('.addin[data-k="'+ui.adding+'"]');
@@ -2272,7 +2422,7 @@ document.addEventListener('click',e=>{
   switch(a){
     case 'railtoggle': $('#rail').classList.toggle('open'); return;
     case 'undo': doUndo(); return;
-    case 'view': s.view=el.dataset.v; if(s.view==='calendar') s.floatMode=false; break;
+    case 'view': s.view=el.dataset.v; if(s.view!=='board') s.floatMode=false; break;
     case 'floattoggle': s.floatMode=!s.floatMode; s.view='board'; break;
     case 'mrange': s.mRange=el.dataset.r; save(); renderMetrics(); return;
 
@@ -2353,7 +2503,18 @@ document.addEventListener('click',e=>{
     case 'tofloat': return;
     case 'pickdate': return;
 
-    case 'habit-toggle': s.habitsOpen=s.habitsOpen===false; break;
+    /* an empty panel's header opens it to add something (ui only, never persisted) */
+    case 'panel-toggle': ui.peek[el.dataset.panel]=!ui.peek[el.dataset.panel]; render(); return;
+    case 'habit-toggle':{
+      /* with habits defined this is the persisted manual collapse it always was;
+         empty, it is the same peek-open the other two panels get. Opening an empty
+         panel also clears a remembered manual collapse, so the first habit added
+         does not vanish under it. */
+      if(state.habits.list.length){ s.habitsOpen=s.habitsOpen===false; break }
+      ui.peek.habits=!ui.peek.habits;
+      if(ui.peek.habits) s.habitsOpen=true;
+      break;
+    }
     case 'habit-add':{
       const i=$('#habitAdd'); if(!i||!i.value.trim()) return;
       state.habits.list.push({id:uid(),name:i.value.trim(),days:[1,2,3,4,5,6],up:Date.now()});
@@ -2414,6 +2575,23 @@ document.addEventListener('click',e=>{
       const t=state.week.list.splice(idx,1)[0];
       toast('Deleted "'+t.title.slice(0,28)+'"',
         ()=>state.week.list.splice(Math.min(idx,state.week.list.length),0,t));
+      break;
+    }
+
+    case 'note-new':{
+      const n={id:uid(),title:'',body:'',up:Date.now()};
+      state.notes.unshift(n); s.noteSel=n.id;
+      save(); render();
+      const t=$('#noteTitle'); if(t) t.focus();   /* name it straight away */
+      return;
+    }
+    case 'note-open': s.noteSel=el.dataset.id; break;
+    case 'note-del':{
+      const i=state.notes.findIndex(n=>n.id===el.dataset.id); if(i<0) return;
+      const n=state.notes.splice(i,1)[0];
+      if(s.noteSel===n.id) s.noteSel=null;
+      toast('Deleted "'+(n.title||'Untitled').slice(0,28)+'"',
+        ()=>{ state.notes.splice(Math.min(i,state.notes.length),0,n); state.settings.noteSel=n.id });
       break;
     }
 
@@ -2603,6 +2781,8 @@ document.addEventListener('keydown',e=>{
     if(d.enter==='week'){ e.preventDefault();
       const b=document.querySelector('[data-action="week-add"]'); if(b)b.click(); return }
     if(d.enter==='synckey'){ e.preventDefault(); connectKey(el.value); return }
+    if(el.id==='noteTitle'){ e.preventDefault();
+      const b=$('#noteBody'); if(b) b.focus(); return }
     if(['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
   }
   if(e.key==='Escape'){
@@ -2630,14 +2810,27 @@ document.addEventListener('blur',e=>{
   save(); render();
 },true);
 
-/* ---------- drag and drop ---------- */
+/* ---------- drag and drop ----------
+   Three drag sources, told apart by where the press started: a subtask row, a task
+   card, or a Free Floating tab's header. Cards and subtasks drop on [data-drop] zones
+   as they always have; a tab drops on another tab's column. ui.drag.type routes every
+   dragover and drop, so the new tab drag cannot shadow the card paths. */
 document.addEventListener('dragstart',e=>{
   const sub=e.target.closest('.sub');
   if(sub){ ui.drag={type:'sub',sid:sub.dataset.sub,pid:sub.dataset.parent}; sub.classList.add('dragging');
     e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',sub.dataset.sub); return }
   const t=e.target.closest('.task');
   if(t){ ui.drag={type:'task',id:t.dataset.id}; t.classList.add('dragging');
-    e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',t.dataset.id) }
+    e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',t.dataset.id); return }
+  const th=e.target.closest('.col.backlog .colhead');
+  if(th){
+    /* a rename is open in this header: leave the browser's text drag alone.
+       data-kind is the app's own open-rename marker, set by every rename path. */
+    if(th.querySelector('[data-kind],[contenteditable="true"]')) return;
+    const col=th.closest('.col.backlog');
+    ui.drag={type:'tab',fid:col.dataset.fid}; col.classList.add('dragging');
+    e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',col.dataset.fid);
+  }
 });
 document.addEventListener('dragend',()=>{
   $$('.dragging').forEach(n=>n.classList.remove('dragging'));
@@ -2645,12 +2838,33 @@ document.addEventListener('dragend',()=>{
   ui.drag=null;
 });
 document.addEventListener('dragover',e=>{
-  const z=e.target.closest('[data-drop]'); if(!z||!ui.drag) return;
+  if(!ui.drag) return;
+  if(ui.drag.type==='tab'){
+    const c=e.target.closest('.col.backlog');
+    if(!c||c.dataset.fid===ui.drag.fid) return;
+    e.preventDefault(); e.dataTransfer.dropEffect='move';
+    $$('.drop').forEach(n=>n!==c&&n.classList.remove('drop'));
+    c.classList.add('drop');
+    return;
+  }
+  const z=e.target.closest('[data-drop]'); if(!z) return;
   e.preventDefault(); e.dataTransfer.dropEffect='move';
   $$('.drop').forEach(n=>n!==z&&n.classList.remove('drop'));
   z.classList.add('drop');
 });
 document.addEventListener('drop',e=>{
+  if(ui.drag&&ui.drag.type==='tab'){
+    const c=e.target.closest('.col.backlog'), fid=ui.drag.fid;
+    ui.drag=null;
+    if(!c||c.dataset.fid===fid) return;
+    e.preventDefault(); c.classList.remove('drop');
+    /* land before or past the target by which half of it the pointer let go in;
+       the columns run sideways on a wide screen and stack on a narrow one */
+    const r=c.getBoundingClientRect();
+    const after=window.innerWidth<900?e.clientY>r.top+r.height/2:e.clientX>r.left+r.width/2;
+    if(reorderTab(fid,c.dataset.fid,after)){ save(); render() }
+    return;
+  }
   const z=e.target.closest('[data-drop]'); if(!z||!ui.drag) return;
   e.preventDefault(); z.classList.remove('drop');
   const dest=z.dataset.drop==='day'
@@ -2914,6 +3128,22 @@ function grow(){ const t=$('#qi'); if(!t) return; t.style.height='auto';
 document.addEventListener('input',e=>{
   if(e.target.id==='qi') grow();
   if(e.target.classList&&e.target.classList.contains('addin')) ui.addText=e.target.value;
+  /* the notes editor: every keystroke lands in state and rides the normal save
+     debounce. No render here, so the caret is never disturbed by typing; only the
+     list row's label and snippet are patched in place. */
+  if(e.target.id==='noteTitle'||e.target.id==='noteBody'){
+    const n=state.notes.find(x=>x.id===state.settings.noteSel);
+    if(!n) return;
+    if(e.target.id==='noteTitle'){
+      n.title=e.target.value;
+      const row=$('.noterow.on .nt'); if(row) row.textContent=n.title||'Untitled';
+    }else{
+      n.body=e.target.value;
+      const sn=$('.noterow.on .nsub');
+      if(sn) sn.textContent=(n.body||'').trim().replace(/\s+/g,' ').slice(0,48)||'Empty';
+    }
+    save();
+  }
 });
 
 /* ---------- resize ---------- */
@@ -2939,7 +3169,7 @@ rollIfNewDay({delay:true,boot:true});
 if(!state.settings.stripDay) state.settings.stripDay=today();
 render();
 syncBoot();
-window.A={state,ui,render,rollover,findTask,move,tally,streak,save:commit,
+window.A={state,ui,render,rollover,findTask,move,reorderTab,tally,streak,save:commit,
   sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey,
   mergeStates,flatten,stateSig,readCloud,stampLegacy,syncCycle,
   restoreBin,purgeBin,emptyBinNow,binList,fresh,MERGED_KEYS,rollIfNewDay,pastOpenCount,

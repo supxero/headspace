@@ -25,7 +25,7 @@ const select=async id=>{ // make sure this card is the open one
 console.log('— boot —');
 ok(!!A,'app object exposed');
 ok(!!q('#rail'),'left rail renders');
-ok(qa('#rail .navbtn').length===3,'three nav buttons');
+ok(qa('#rail .navbtn').length===4,'four nav buttons: Board, Calendar, Free Floating, Notes');
 ok(qa('header').length===0,'no top header bar');
 ok(S().floats.length===2,'two seed float tabs');
 ok(qa('#metrics .kard').length===4,'four metric cards');
@@ -233,8 +233,86 @@ ok(qa('.col.backlog [data-action="float-del"]').length===2,'last-tab guard: dele
   S().floats[0].tasks=S().floats[0].tasks.filter(t=>t.id!=='fdel1'&&t.id!=='fdel2');
   A.save(); A.render(); await wait(20);
 }
+console.log('— Free Floating tabs: drag to reorder —');
+{
+  /* jsdom fires no native drags, so the handlers are driven with synthetic events
+     carrying a stub dataTransfer: the same wiring, minus the browser's drag loop */
+  S().floats.push({id:'dragT',name:'Errands',tasks:[]});
+  A.save(); A.render(); await wait(25);
+  const order=()=>S().floats.map(f=>f.id).join();
+  const [fa,fb,fc]=S().floats.map(f=>f.id);
+  const dt={setData(){},effectAllowed:'',dropEffect:''};
+  const dnd=(el,type,extra)=>{const ev=new w.Event(type,{bubbles:true,cancelable:true});
+    ev.dataTransfer=dt; Object.assign(ev,extra||{}); el.dispatchEvent(ev)};
+  const head=fid=>q('.col.backlog[data-fid="'+fid+'"] .colhead');
+
+  ok(!!head(fa)&&head(fa).getAttribute('draggable')==='true','a tab header is a drag handle');
+  ok(!!head(fa).title,'and says so');
+  dnd(head(fc),'dragstart');
+  ok(A.ui.drag&&A.ui.drag.type==='tab'&&A.ui.drag.fid===fc,
+    'a drag starting on the header is a tab drag');
+  const target=q('.col.backlog[data-fid="'+fa+'"]');
+  dnd(target,'dragover');
+  ok(target.classList.contains('drop'),'the column under it shows the cue');
+  dnd(target,'drop',{clientX:0,clientY:0}); await wait(30);
+  ok(order()===[fc,fa,fb].join(),'dropping the third tab on the first moves it in front');
+  ok(!A.ui.drag,'and the drag is let go');
+  A.save(); await wait(10);
+  ok(JSON.parse(w.localStorage.getItem('agora_dayplanner_v1')).floats.map(f=>f.id).join()===order(),
+    'the new order is what is saved');
+  ok([...qa('.col.backlog')].map(c=>c.dataset.fid).join()===order(),'and what is drawn');
+
+  /* an abandoned drag changes nothing and clears its cues */
+  dnd(head(fb),'dragstart');
+  dnd(q('.col.backlog[data-fid="'+fa+'"]'),'dragover');
+  dnd(doc.body,'dragend'); await wait(10);
+  ok(!A.ui.drag&&!q('.col.drop')&&!q('.col.dragging'),'an abandoned tab drag cleans up');
+  ok(order()===[fc,fa,fb].join(),'without moving anything');
+
+  /* while a tab rename is open its header must not start a drag */
+  click('[data-action="float-rename"][data-fid="'+fa+'"]'); await wait(20);
+  dnd(head(fa),'dragstart');
+  ok(!A.ui.drag,'a header with a rename open does not start a tab drag');
+  const ed9=q('.colhead [data-kind]');
+  /* jsdom's blur() is a no-op, so fire the blur the way the other rename tests do */
+  if(ed9){ ed9.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    fire(ed9,'blur'); await wait(25) }
+
+  /* the card paths are untouched: a drag starting on a card is a card drag, and a
+     card dropped on another tab's zone moves the card, never the tab */
+  S().floats.find(f=>f.id===fa).tasks.push({id:'dragC',title:'card in transit',done:false,subtasks:[]});
+  A.save(); A.render(); await wait(25);
+  dnd(q('.task[data-id="dragC"]'),'dragstart');
+  ok(A.ui.drag&&A.ui.drag.type==='task','a drag starting on a card is still a card drag');
+  const zone=q('.zone[data-drop="float"][data-fid="'+fb+'"]');
+  dnd(zone,'dragover');
+  ok(zone.classList.contains('drop'),'the zone cue still engages for a card');
+  dnd(zone,'drop',{clientX:0,clientY:0}); await wait(30);
+  ok(S().floats.find(f=>f.id===fb).tasks.some(t=>t.id==='dragC'),'the card lands in the other tab');
+  ok(order()===[fc,fa,fb].join(),'and the tabs themselves did not move');
+  S().floats.find(f=>f.id===fb).tasks=S().floats.find(f=>f.id===fb).tasks.filter(t=>t.id!=='dragC');
+  A.save(); A.render(); await wait(20);
+}
 click('[data-action="floattoggle"]'); await wait(30);
 ok(S().settings.floatMode===false,'float mode off');
+
+console.log('— card drag onto a day column stays intact —');
+{
+  const dt2={setData(){},effectAllowed:'',dropEffect:''};
+  const dnd2=(el,type,extra)=>{const ev=new w.Event(type,{bubbles:true,cancelable:true});
+    ev.dataTransfer=dt2; Object.assign(ev,extra||{}); el.dispatchEvent(ev)};
+  ok(!q('.col[data-day] .colhead[draggable="true"]'),'day column headers are not drag handles');
+  S().days[T()]=S().days[T()]||{must:[],should:[],extra:[]};
+  S().days[T()].must.push({id:'dayDrag',title:'drag me to tomorrow',done:false,subtasks:[]});
+  A.save(); A.render(); await wait(25);
+  dnd2(q('.task[data-id="dayDrag"]'),'dragstart');
+  ok(A.ui.drag&&A.ui.drag.type==='task','a card drag on the day board is a card drag');
+  const z=q('.zone[data-drop="day"][data-day="'+plus(1)+'"][data-zone="must"]');
+  dnd2(z,'dragover'); dnd2(z,'drop',{clientX:0,clientY:0}); await wait(30);
+  ok(S().days[plus(1)].must.some(t=>t.id==='dayDrag'),'dropping on a day zone schedules the card');
+  S().days[plus(1)].must=S().days[plus(1)].must.filter(t=>t.id!=='dayDrag');
+  A.save(); A.render(); await wait(20);
+}
 
 console.log('— board navigation —');
 ok(S().settings.boardOffset===0,'starts at today');
@@ -277,6 +355,9 @@ click('[data-action="carry-all"][data-to="float"]'); await wait(30);
 ok(S().floats.some(f=>f.tasks.some(t=>t.id==='oldx')),'All → Free Floating works too');
 
 console.log('— focus panel —');
+/* the panel is empty here, so it sits as a header bar; open it through the header */
+ok(!q('#fi'),'an empty Focus panel hides its input behind the header');
+click('#fpanel .kh[data-action="panel-toggle"]'); await wait(20);
 q('#fi').value='ship the report without rushing';
 click('[data-action="focus-add"]'); await wait(20);
 ok(S().focus.length===1,'focus item added');
@@ -580,6 +661,31 @@ const subNames=(s,pid)=>{ const g=A.flatten(s).sub;
   const m=A.mergeStates(a,b);
   ok(m.floats.length===1,'the deleted tab stays deleted');
   ok(names(m).join()==='idea worth keeping','its tasks move to a surviving tab instead of vanishing');
+}
+{ /* tab order is positional, the same axis task order rides */
+  const now=Date.now();
+  const mkf=(id,name,up,pos)=>({id,name,tasks:[],up,dn:up,pos:pos||up});
+  { /* one device reorders, the other renames: both land */
+    const a=dev(); a.floats=[mkf('f2','Ideas',100,now),mkf('f1','Inbox',100,now)];
+    const b=dev(); b.floats=[mkf('f1','Inbox, renamed',now+50,100),mkf('f2','Ideas',100,100)];
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(m.floats.map(f=>f.name).join()==='Ideas,Inbox, renamed',
+      'a tab reorder and a tab rename made apart both survive');
+    ok(A.stateSig(m)===A.stateSig(m2),'and both devices agree');
+  }
+  { /* two reorders: the later one holds, deterministically */
+    const a=dev(); a.floats=[mkf('f2','Ideas',100,now+2000),mkf('f1','Inbox',100,now+2000)];
+    const b=dev(); b.floats=[mkf('f1','Inbox',100,now+1000),mkf('f2','Ideas',100,now+1000)];
+    const m=A.mergeStates(a,b);
+    ok(m.floats.map(f=>f.id).join()==='f2,f1','the later reorder is the one that holds');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'from either direction');
+  }
+  { /* a reorder cannot resurrect a tab deleted elsewhere */
+    const a=dev(); a.tomb={f2:now}; a.floats=[mkf('f1','Inbox',100,100)];
+    const b=dev(); b.floats=[mkf('f2','Ideas',100,now+5000),mkf('f1','Inbox',100,now+5000)];
+    ok(!A.mergeStates(a,b).floats.some(f=>f.id==='f2'),
+      'moving a tab somebody deleted does not bring it back');
+  }
 }
 { /* 7. offline edits, then reconnect */
   const base=put(put(dev(),tk('t1','old one',100)),tk('t2','other old one',100));
@@ -1396,7 +1502,11 @@ console.log('— habits: a commitment band under the board —');
   ok(q('#habitsRail').previousElementSibling&&q('#habitsRail').previousElementSibling.id==='fpanel',
     'directly under Focus this week');
   ok(q('#habits').innerHTML==='','and the board-bottom host stays empty there');
-  ok(!!q('#habitsRail .haddrow input'),'with its add field ready');
+  /* no habits yet, so the panel is a header bar; the header opens it */
+  ok(!q('#habitsRail .haddrow input'),'an empty Habits panel hides its add field behind the header');
+  ok(/0 habits/.test(q('#habitsRail .kh').textContent),'while the header count says it is empty');
+  click('#habitsRail .kh[data-action="habit-toggle"]'); await wait(30);
+  ok(!!q('#habitsRail .haddrow input'),'opening the header reveals the add field');
 
   q('#habitAdd').value='push-ups'; click('[data-action="habit-add"]'); await wait(30);
   ok(S().habits.list.length===1&&S().habits.list[0].name==='push-ups','Add creates a habit');
@@ -1439,13 +1549,15 @@ console.log('— habits: a commitment band under the board —');
   ed.textContent='morning push-ups'; fire(ed,'blur'); await wait(30);
   ok(S().habits.list[0].name==='morning push-ups','clicking the name renames in place');
 
-  /* collapse remembers, per device */
+  /* collapse remembers, per device: the header itself is the toggle now */
   click('[data-action="habit-toggle"]'); await wait(20);
-  ok(S().settings.habitsOpen===false,'Hide collapses and remembers');
+  ok(S().settings.habitsOpen===false,'collapsing the header remembers, per device');
   ok(!q('#habitsRail .hrail')&&!q('#habitAdd'),'collapsed keeps only the header');
-  ok(/Show/.test(q('[data-action="habit-toggle"]').textContent),'and the control reads Show');
+  ok(!!q('#habitsRail .kh .chev')&&!q('#habitsRail .kh .chev.open'),'with the chevron pointing right');
+  ok(/2 habits/.test(q('#habitsRail .kh').textContent),'and the count still reading while collapsed');
   click('[data-action="habit-toggle"]'); await wait(20);
-  ok(!!q('#habitsRail input#habitAdd'),'Show opens it again');
+  ok(!!q('#habitsRail input#habitAdd'),'opening the header again reveals the panel');
+  ok(!!q('#habitsRail .kh .chev.open'),'and the chevron points down');
 
   /* a separate band: no Prio weight, no counts, no metrics, no dots */
   const meta0=(q('.col.today .meta')||{textContent:''}).textContent;
@@ -1594,6 +1706,11 @@ console.log('— the weekly list: one flat band, no tiers —');
   ok(q('#weekRail').previousElementSibling&&q('#weekRail').previousElementSibling.id==='habitsRail',
     'directly under the habits section');
   ok(!q('#weekRail .zh')&&!q('#weekRail [data-zone]'),'no Prio tiers and no day columns in it');
+  /* empty, so it is a header bar first */
+  ok(!q('#weekAdd'),'an empty This week panel hides its add field behind the header');
+  ok(/0 open/.test(q('#weekRail .kh').textContent),'while the header count reads 0 open');
+  click('#weekRail .kh[data-action="panel-toggle"]'); await wait(20);
+  ok(!!q('#weekAdd'),'opening the header reveals the add field');
 
   const stat0=JSON.stringify(A.tally([T()]))+'|'+A.streak();
   const meta0=(q('.col.today .meta')||{textContent:''}).textContent;
@@ -1693,6 +1810,187 @@ const mkw=(id,title,up,x)=>Object.assign({id,title,done:false,up:up||100,dn:up||
     'merging with a pre-week planner keeps the list and its history');
 }
 
+console.log('— empty panels collapse to a header bar —');
+{
+  S().settings.view='board'; S().settings.floatMode=false;
+  const keepFocus=S().focus.slice();
+  S().focus=[]; S().week.list=[];
+  A.save(); A.render(); await wait(25);
+
+  /* one chevron, shared by all three, right when collapsed and down when open */
+  const chev=host=>q(host+' .chev');
+  ok(!!chev('#fpanel')&&!!chev('#habitsRail')&&!!chev('#weekRail'),'all three headers carry the chevron');
+  const d=el=>el.querySelector('path').getAttribute('d');
+  ok(d(chev('#fpanel'))===d(chev('#habitsRail'))&&d(chev('#habitsRail'))===d(chev('#weekRail')),
+    'and it is the same glyph in all three');
+  ok(!q('#fpanel .chev.open')&&!q('#weekRail .chev.open'),'the empty panels point it right');
+  ok(!!q('#habitsRail .chev.open'),'the habits panel, holding habits, points it down');
+
+  /* header only: no input, no empty-state text, a count that still reads */
+  ok(!q('#fi'),'empty focus: no input behind the header');
+  ok(!/Nothing set/.test(q('#fpanel').textContent),'and no empty-state text either');
+  ok(/0 open/.test(q('#fpanel').textContent),'the count says 0 open without expanding');
+  ok(!q('#weekAdd')&&/0 open/.test(q('#weekRail').textContent),'the weekly bar reads the same way');
+
+  click('#fpanel .kh[data-action="panel-toggle"]'); await wait(20);
+  ok(!!q('#fi')&&!!q('#fpanel .chev.open'),'the header opens it: chevron down, input ready');
+  ok(/Nothing set/.test(q('#fpanel').textContent),'the empty-state text shows once opened');
+  click('#fpanel .kh[data-action="panel-toggle"]'); await wait(20);
+  ok(!q('#fi'),'clicking the header again closes it');
+
+  /* open, add, and the panel stays with you; empty it and it folds away again */
+  click('#fpanel .kh[data-action="panel-toggle"]'); await wait(20);
+  q('#fi').value='hold the line'; click('[data-action="focus-add"]'); await wait(25);
+  ok(S().focus.length===1&&!!q('#fi'),'adding through the opened panel keeps it open');
+  const fid9=S().focus[0].id;
+  click('[data-action="focus-del"][data-id="'+fid9+'"]'); await wait(25);
+  ok(!q('#fi'),'emptying the panel collapses it back to the header');
+  click('[data-action="undo"]'); await wait(25);
+  ok(!!q('#fi'),'and restoring the item expands it again');
+  /* the peek flag is not persisted: this is presentation, not state */
+  const savedP=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+  ok(savedP.ui===undefined&&savedP.settings.peek===undefined,'nothing about peeking is saved');
+  S().focus=keepFocus; A.save(); A.render(); await wait(20);
+}
+
+console.log('— Notes: a plain notepad as its own view —');
+{
+  const statN=JSON.stringify(A.tally([T()]))+'|'+A.streak();
+  const nbtn=q('.navbtn[data-v="notes"]');
+  ok(!!nbtn&&/Notes/.test(nbtn.textContent),'the rail offers Notes beside Board and Calendar');
+  ok(!!nbtn.querySelector('svg'),'with an inline SVG icon');
+  click('.navbtn[data-v="notes"]'); await wait(30);
+  ok(S().settings.view==='notes','the view switches');
+  ok(q('#notes').style.display!=='none','the notes host shows');
+  ok(q('#board').style.display==='none','the board hides');
+  ok(q('#quickadd').style.display==='none','and the quick add bar with it');
+  ok(nbtn.classList.contains('on'),'the nav button marks itself active');
+  ok(/No notes yet/.test(q('#notes').textContent),'an empty list says so');
+
+  click('[data-action="note-new"]'); await wait(30);
+  ok(S().notes.length===1,'New note creates one');
+  ok(doc.activeElement&&doc.activeElement.id==='noteTitle','and puts the caret in the title');
+  const nid=S().notes[0].id;
+  ok(S().settings.noteSel===nid,'the new note is the selected one');
+  ok(/Untitled/.test(q('.noterow.on').textContent),'an unnamed note lists as Untitled, never blank');
+
+  /* the title field: state moves on input, the list row follows, nothing re-renders */
+  const ti=q('#noteTitle'); ti.value='Packing list';
+  ti.dispatchEvent(new w.Event('input',{bubbles:true})); await wait(10);
+  ok(S().notes[0].title==='Packing list','typing in the title lands in state');
+  ok(q('.noterow.on .nt').textContent==='Packing list','and the list row follows as you type');
+
+  /* the body rides the same debounced save as everything else; no save button exists */
+  ok(!qa('#notes button').some(b=>/save/i.test(b.textContent)),'no save button anywhere in the view');
+  const bo=q('#noteBody'); bo.value='socks\npassport\nchargers';
+  bo.dispatchEvent(new w.Event('input',{bubbles:true})); await wait(10);
+  ok(S().notes[0].body==='socks\npassport\nchargers','typing in the body lands in state');
+  A.save(); await wait(20);
+  const savedN=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+  ok(savedN.notes[0].body==='socks\npassport\nchargers','and persists through the normal save');
+  ok(savedN.notes[0].title==='Packing list','the title too');
+  const fl=A.flatten(S()).note[nid];
+  ok(fl.up>1&&fl.dn>1&&fl.pos>1,'a note carries the same three stamps everything else does');
+
+  /* a second note; switching swaps the editor */
+  click('[data-action="note-new"]'); await wait(30);
+  A.save(); await wait(10);   /* commit, so the change tracker has seen the row */
+  ok(S().notes.length===2,'a second note');
+  const nid2=S().notes[0].id;
+  ok(nid2!==nid,'new notes land at the top of the list');
+  ok(q('#noteBody').value==='','the editor now shows the fresh note');
+  click('.noterow[data-id="'+nid+'"]'); await wait(30);
+  ok(S().settings.noteSel===nid,'clicking a row selects that note');
+  ok(q('#noteBody').value==='socks\npassport\nchargers','and the editor swaps to its text');
+
+  /* the long-lived editor adds no blur cost: nothing commits on blur and nothing
+     re-renders under the tap, so the FIRST click out of the body lands */
+  q('#noteBody').focus();
+  click('.noterow[data-id="'+nid2+'"]'); await wait(30);
+  ok(S().settings.noteSel===nid2,'the first tap out of the editor acts, not the second');
+
+  ok(JSON.stringify(A.tally([T()]))+'|'+A.streak()===statN,'notes touch neither the tally nor the streak');
+
+  /* delete: the same 5 second Undo, then the bin */
+  click('[data-action="note-del"][data-id="'+nid2+'"]'); await wait(30);
+  ok(S().notes.length===1,'Delete removes the note');
+  ok(/Deleted/.test(q('#toast').textContent)&&!!q('#toast [data-action="undo"]'),'with the usual Undo toast');
+  click('[data-action="undo"]'); await wait(30);
+  ok(S().notes.length===2,'Undo puts it back');
+  ok(S().settings.noteSel===nid2,'selected again');
+  const bo2=q('#noteBody'); bo2.value='do not lose me';
+  bo2.dispatchEvent(new w.Event('input',{bubbles:true})); await wait(10);
+  A.save(); await wait(10);   /* commit the body, so the bin keeps what was last typed */
+  click('[data-action="note-del"][data-id="'+nid2+'"]'); await wait(30); A.save(); await wait(10);
+  ok(!!S().tomb[nid2]&&!!S().bin[nid2]&&S().bin[nid2].k==='note','tomb and bin record the deletion');
+  ok(S().bin[nid2].body.body==='do not lose me','the bin keeps the body text');
+  q('#toast').innerHTML='';
+  A.restoreBin(nid2); await wait(30);
+  ok(S().notes.some(n=>n.id===nid2),'Restore from the Bin brings it back');
+  ok(S().notes.find(n=>n.id===nid2).body==='do not lose me','text intact');
+  ok(/Notes/.test(q('#toast').textContent),'and the toast says where it went');
+
+  /* deleting the selected note falls back to a surviving one */
+  click('[data-action="note-del"][data-id="'+nid2+'"]'); await wait(30);
+  ok(S().settings.noteSel===nid&&!!q('#noteBody'),'the editor falls back to the surviving note');
+  q('#toast').innerHTML='';
+
+  click('.navbtn[data-v="board"]'); await wait(30);
+  ok(S().settings.view==='board','back on the board');
+  ok(q('#notes').style.display==='none','and the notes host hides');
+}
+
+console.log('— Notes: merge —');
+{
+  const ndev=()=>{const s=wdev(); s.notes=[]; return s};
+  const mkn=(id,title,body,up,x)=>Object.assign(
+    {id,title:title||'',body:body||'',up:up||100,dn:up||100,pos:up||100},x||{});
+  { /* added on each side */
+    const a=ndev(); a.notes.push(mkn('n1','From the PC','pc body',200));
+    const b=ndev(); b.notes.push(mkn('n2','From the tablet','tab body',210));
+    const m=A.mergeStates(a,b);
+    ok(m.notes.length===2,'a note added on each device: both survive');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'and both devices agree');
+  }
+  { /* the axes: the title rides content, the body rides dn, so the two compose */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','pack socks',200));
+    const a=clone(base); a.notes[0].title='Trip to Oslo'; a.notes[0].up=now;
+    const b=clone(base); b.notes[0].body='pack socks and a charger'; b.notes[0].dn=now-1000;
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(m.notes[0].title==='Trip to Oslo','a title edit on one device survives');
+    ok(m.notes[0].body==='pack socks and a charger','beside a body edit made on the other');
+    ok(A.stateSig(m)===A.stateSig(m2),'and both devices agree');
+  }
+  { /* the honest limit, pinned: two body edits, the later wins the WHOLE body */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','original',200));
+    const a=clone(base); a.notes[0].body='alpha rewrite, kept'; a.notes[0].dn=now;
+    const b=clone(base); b.notes[0].body='beta rewrite, lost'; b.notes[0].dn=now-5;
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(m.notes[0].body==='alpha rewrite, kept','concurrent body edits: the later one wins whole');
+    ok(JSON.stringify(m).indexOf('beta rewrite')===-1,
+      'the losing body is silently gone, nowhere in the merged state, bin included');
+    ok(A.stateSig(m)===A.stateSig(m2),'both devices at least agree on which survived');
+  }
+  { /* delete versus a later body edit: the edit asserts the note exists */
+    const now=Date.now();
+    const base=ndev(); base.notes.push(mkn('n1','Trip','original',200));
+    const a=clone(base); a.notes=[]; a.tomb={n1:now-100};
+    const b=clone(base); b.notes[0].body='edited after the delete'; b.notes[0].dn=now;
+    ok(A.mergeStates(a,b).notes.length===1,'a body edit after a delete elsewhere revives the note');
+    const a2=clone(base); a2.notes=[]; a2.tomb={n1:now+100};
+    ok(A.mergeStates(a2,b).notes.length===0,'a delete after the last edit still wins');
+  }
+  { /* a device that predates notes cannot drop them */
+    const a=dev();
+    const b=ndev(); b.notes.push(mkn('n1','Keep me','still here',200));
+    const m=A.mergeStates(a,b);
+    ok(m.notes.length===1&&m.notes[0].body==='still here','merging with a pre-notes planner keeps the notes');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'from either direction');
+  }
+}
+
 console.log('— placement: rail on desktop, board bottom on a phone —');
 {
   const phone=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
@@ -1705,9 +2003,21 @@ console.log('— placement: rail on desktop, board bottom on a phone —');
   ok(!!pq2('#habits .hpanel'),'a phone keeps the habits band under the day column');
   ok(!!pq2('#weekMobile .wcard'),'and the weekly list right under it');
   ok(pq2('#habitsRail').innerHTML===''&&pq2('#weekRail').innerHTML==='','with the rail hosts empty');
-  pq2('[data-action="habit-toggle"]').click(); await wait(30);
-  ok(pw2.A.state.settings.habitsOpen===false,'collapse works in the phone placement too');
-  pq2('[data-action="habit-toggle"]').click(); await wait(30);
+  /* a fresh device holds nothing, so both bands sit as header bars in this placement too */
+  ok(!pq2('#habitAdd')&&!pq2('#weekAdd'),'both empty bands start as header bars');
+  pq2('#habits [data-action="habit-toggle"]').click(); await wait(30);
+  ok(!!pq2('#habitAdd'),'the habits header opens the empty band in the phone placement');
+  pq2('#habits [data-action="habit-toggle"]').click(); await wait(30);
+  ok(!pq2('#habitAdd'),'and closes it again');
+  pq2('#weekMobile [data-action="panel-toggle"]').click(); await wait(30);
+  ok(!!pq2('#weekAdd'),'the weekly header opens the same way');
+  /* with a habit defined the persisted manual collapse governs, exactly as before */
+  pw2.A.state.habits.list.push({id:'ph1',name:'stretch',days:[1,2,3,4,5,6],up:Date.now()});
+  pw2.A.save(); pw2.A.render(); await wait(30);
+  ok(!!pq2('#habitAdd'),'a band holding a habit renders expanded');
+  pq2('#habits [data-action="habit-toggle"]').click(); await wait(30);
+  ok(pw2.A.state.settings.habitsOpen===false,'manual collapse still remembers, per device');
+  pq2('#habits [data-action="habit-toggle"]').click(); await wait(30);
   ok(pw2.A.state.settings.habitsOpen!==false,'and reopens');
 }
 
