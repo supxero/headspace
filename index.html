@@ -88,8 +88,8 @@ select option{background:var(--pearl);color:var(--txt)}
 .navbtn .em svg{width:17px;height:17px}
 .navbtn .cnt{margin-left:auto;font-size:11px;color:var(--mut);background:rgba(36,58,94,.08);padding:1px 7px;border-radius:99px}
 .railcap{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mut2);padding:0 2px;margin-top:2px}
-.railfoot{display:flex;gap:6px;margin-top:auto;padding-top:10px}
-.railfoot button{flex:1;padding:8px;border-radius:9px;font-size:12px;color:var(--mut);border:1px solid var(--line);background:var(--cloud);transition:.16s}
+.railfoot{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:10px}
+.railfoot button{flex:1 1 31%;padding:8px;border-radius:9px;font-size:12px;color:var(--mut);border:1px solid var(--line);background:var(--cloud);transition:.16s}
 .railfoot button:hover{color:var(--navy);border-color:var(--line2)}
 
 /* cards */
@@ -181,6 +181,13 @@ select option{background:var(--pearl);color:var(--txt)}
 .trayitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid rgba(36,58,94,.13);font-size:13px}
 .trayitem .from{font-size:10.5px;color:var(--mut);background:rgba(36,58,94,.08);padding:1px 7px;border-radius:99px;white-space:nowrap}
 .trayitem .t{flex:1;min-width:0;word-break:break-word}
+
+/* recycle bin */
+.binrow{display:flex;align-items:center;gap:8px;padding:8px 2px;border-top:1px solid var(--line)}
+.binrow .bt{flex:1;min-width:0}
+.binrow .bt b{display:block;font-size:13px;font-weight:600;color:var(--txt);word-break:break-word}
+.binrow .bt span{font-size:11px;color:var(--mut)}
+.binrow .nbtn{flex:none;font-size:11.5px;padding:6px 10px}
 
 /* board nav */
 #boardnav{display:flex;align-items:center;gap:7px;margin-bottom:11px;flex-wrap:wrap}
@@ -421,6 +428,10 @@ select option{background:var(--pearl);color:var(--txt)}
   .trayitem .t{flex:1 1 100%;order:-1}
   .trayitem .tbtn{flex:1}
   .trayitem .tbtn:last-child{flex:none;min-width:46px}
+  /* bin rows: the item takes its own line so Restore stays tappable */
+  .binrow{flex-wrap:wrap}
+  .binrow .bt{flex:1 1 100%}
+  .binrow .nbtn{flex:1;min-height:40px}
   .box{width:20px;height:20px;border-radius:7px}
   .sbox{width:17px;height:17px}
   .task{padding:10px 11px}
@@ -467,6 +478,7 @@ select option{background:var(--pearl);color:var(--txt)}
         <button data-action="sync">Sync</button>
         <button data-action="export">Export</button>
         <button data-action="import">Import</button>
+        <button data-action="bin" id="binBtn">Bin</button>
       </div>
     </div>
   </aside>
@@ -512,7 +524,7 @@ let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,r
 
 function fresh(){
   return {
-    ver:2, days:{}, carry:[], focus:[], tomb:{},
+    ver:2, days:{}, carry:[], focus:[], tomb:{}, bin:{},
     floats:[{id:uid(),name:'Inbox',tasks:[]},{id:uid(),name:'Ideas',tasks:[]}],
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false}
@@ -526,6 +538,8 @@ function fresh(){
    something keep both instead of one blob replacing the other. */
 const LEGACY_UP=1;            /* stamp for anything saved before per item timestamps */
 const TOMB_KEEP=45*864e5;     /* a deletion is remembered for 45 days, then forgotten */
+const BIN_KEEP=30*864e5;      /* a binned item waits 30 days; shorter than TOMB_KEEP, so
+                                 the record of the deletion always outlives the body */
 const upOf=o=>{ const n=+(o&&o.up); return isFinite(n)&&n>0?n:LEGACY_UP };
 const locKey=l=>l.kind==='day'?('day:'+l.date+':'+l.zone):l.kind==='float'?('float:'+l.fid):'carry';
 const arr=x=>Array.isArray(x)?x:[];
@@ -552,7 +566,8 @@ function sigOf(kind,o,m){
   return 'T|'+locKey(m.loc)+'|'+m.ord+'|'+(o.title||'')+'|'+(o.done?1:0)+'|'+(o.from||'')+
     '|'+arr(o.subtasks).map(x=>x&&x.id).join(',');
 }
-let sigMap={};
+let sigMap={}, prevSnap=null;   /* prevSnap: the tree as of the last commit, so the bin
+                                   can keep the body of whatever vanishes */
 function snapSigs(){ const m={}; eachItem(state,(k,o,meta)=>{m[o.id]=sigOf(k,o,meta)}); sigMap=m }
 /* called on every commit: whatever changed since the last one gets a fresh stamp,
    and whatever disappeared gets a tombstone. Covers every edit path, drag and Undo alike. */
@@ -562,21 +577,33 @@ function snapSigs(){ const m={}; eachItem(state,(k,o,meta)=>{m[o.id]=sigOf(k,o,m
 function stampChanges(when){
   const t=Date.now(), next={}, seen={};
   if(!state.tomb||typeof state.tomb!=='object') state.tomb={};
+  if(!state.bin||typeof state.bin!=='object') state.bin={};
   eachItem(state,(k,o,meta)=>{
     const sig=sigOf(k,o,meta); next[o.id]=sig; seen[o.id]=1;
-    if(state.tomb[o.id]!=null){ delete state.tomb[o.id]; o.up=t; return }  /* brought back by Undo */
+    if(state.tomb[o.id]!=null){ delete state.tomb[o.id]; delete state.bin[o.id]; o.up=t; return }  /* brought back */
     const had=sigMap[o.id];
     if(had===undefined){ if(!(+o.up>0)) o.up=t }
     else if(had!==sig) o.up=when?Math.max(upOf(o),when):t;
   });
-  Object.keys(sigMap).forEach(id=>{ if(!seen[id]) state.tomb[id]=t });
+  const gone=Object.keys(sigMap).filter(id=>!seen[id]);
+  gone.forEach(id=>{ state.tomb[id]=t });
+  if(gone.length) binCapture(gone,seen,t);
+  ui.skipBin=null; ui.binNote=null;
   Object.keys(state.tomb).forEach(id=>{ if(t-state.tomb[id]>TOMB_KEEP) delete state.tomb[id] });
+  Object.keys(state.bin).forEach(id=>{
+    if(t-state.bin[id].at>BIN_KEEP||state.tomb[id]==null) delete state.bin[id] });
   sigMap=next;
 }
 function stampLegacy(s){
   eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP });
   if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
   Object.keys(s.tomb).forEach(id=>{ if(!(+s.tomb[id]>0)) delete s.tomb[id] });
+  if(!s.bin||typeof s.bin!=='object') s.bin={};
+  Object.keys(s.bin).forEach(id=>{
+    const e=s.bin[id];
+    if(!e||typeof e!=='object'||!(+e.at>0)||(!e.purged&&(!e.body||typeof e.body!=='object')))
+      delete s.bin[id];
+  });
   return s;
 }
 
@@ -613,6 +640,8 @@ function stateSig(s){
     .forEach(id=>out.push(k+' '+JSON.stringify(g[k][id]))));
   const tb=(s&&s.tomb)||{};
   Object.keys(tb).sort().forEach(id=>out.push('gone '+id+' '+tb[id]));
+  const bn=(s&&s.bin)||{};
+  Object.keys(bn).sort().forEach(id=>out.push('bin '+id+' '+JSON.stringify(bn[id])));
   return out.join('\n');
 }
 function mergeStates(mine,theirs){
@@ -629,7 +658,28 @@ function mergeStates(mine,theirs){
       keep[g][id]=w;
     });
   });
-  return rebuild(keep,tomb,mine,theirs);
+  const out=rebuild(keep,tomb,mine,theirs);
+  const alive={};
+  ['float','task','sub','focus'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
+  out.bin=mergeBins(mine.bin,theirs.bin,tomb,alive);
+  return out;
+}
+/* the bin merges like everything else: union by id, newer entry wins, a purge is final,
+   and an entry only lives while its item is actually still deleted */
+function mergeBins(x,y,tomb,alive){
+  const out={}, ids={};
+  [x||{},y||{}].forEach(m=>Object.keys(m).forEach(id=>{ids[id]=1}));
+  Object.keys(ids).forEach(id=>{
+    if(alive[id]||tomb[id]==null) return;    /* restored somewhere, or never truly deleted */
+    const a=(x||{})[id], b=(y||{})[id];
+    if((a&&a.purged)||(b&&b.purged)){
+      out[id]={at:Math.max((a&&+a.at)||0,(b&&+b.at)||0),
+        purged:Math.max((a&&+a.purged)||0,(b&&+b.purged)||0)};
+      return;
+    }
+    out[id]=!a?b:!b?a:(a.at!==b.at?(a.at>b.at?a:b):(JSON.stringify(a)<=JSON.stringify(b)?a:b));
+  });
+  return out;
 }
 function rebuild(keep,tomb,mine,theirs){
   const f=fresh(), out=f;
@@ -687,6 +737,7 @@ function load(){
   /* anything saved before per item stamps keeps its data and gets the oldest stamp,
      so a real edit on any device always beats it */
   state.ver=2; stampLegacy(state); snapSigs();
+  prevSnap=JSON.parse(JSON.stringify(state));
 }
 let saveT=null;
 function save(){
@@ -696,14 +747,17 @@ function save(){
 }
 function commit(when){
   stampChanges(when);
+  const str=JSON.stringify(state);
+  prevSnap=JSON.parse(str);
   try{
-    localStorage.setItem(KEY,JSON.stringify(state));
+    localStorage.setItem(KEY,str);
     $('#save').textContent='saved'; $('#save').classList.remove('warn');
   }catch(e){
     $('#save').textContent='not saving'; $('#save').classList.add('warn');
     if(!ui.warned){ ui.warned=true;
       toast('This browser will not store data on a file:// page. Host it (see SETUP) to keep your tasks.') }
   }
+  paintBin();
   if(!sync.applying) pushSoon();
 }
 window.addEventListener('beforeunload',()=>{clearTimeout(saveT);commit()});
@@ -1146,6 +1200,153 @@ function doUndo(){
   save(); render();
 }
 
+/* ================= recycle bin =================
+   The safety net behind the 5 second Undo. stampChanges hands binCapture every id that
+   vanished from the tree since the last commit, so every deletion path is covered in one
+   place: day and float tasks, subtasks, tabs, focus items, tray dismissals, and whatever
+   an import drops. An entry lives beside the tombstone for the same id and never longer
+   than it, so the record of a deletion always outlives the body it kept. */
+function binCapture(gone,alive,t){
+  if(!prevSnap) return;
+  const skip={}; (ui.skipBin||[]).forEach(id=>{skip[id]=1});
+  const note=ui.binNote||{};
+  const dead={}; gone.forEach(id=>{dead[id]=1});
+  const idx={};
+  eachItem(prevSnap,(k,o,meta)=>{ idx[o.id]={k:k,o:o,meta:meta} });
+  gone.forEach(id=>{
+    if(skip[id]) return;                       /* a conversion, not a delete */
+    const hit=idx[id]; if(!hit) return;
+    const k=hit.k, meta=hit.meta;
+    /* children ride inside the container they died with, not as rows of their own */
+    if(k==='sub'&&dead[meta.pid]) return;
+    if(k==='task'&&meta.loc.kind==='float'&&dead[meta.loc.fid]) return;
+    const e={k:k,at:t,body:JSON.parse(JSON.stringify(hit.o))};
+    if(k==='task'){
+      e.loc=meta.loc;
+      e.body.subtasks=arr(e.body.subtasks).filter(x=>x&&dead[x.id]);
+    }
+    if(k==='sub'){
+      e.pid=meta.pid;
+      const p=idx[meta.pid]; e.pname=p?String(p.o.title||''):'';
+    }
+    if(k==='float'){
+      e.body.tasks=arr(e.body.tasks).filter(x=>x&&dead[x.id]);
+      if(note[id]&&Array.isArray(note[id].moved)) e.moved=note[id].moved.slice();
+    }
+    state.bin[id]=e;
+  });
+}
+function binList(){
+  return Object.keys(state.bin).map(id=>({id:id,e:state.bin[id]}))
+    .filter(x=>!x.e.purged).sort((a,b)=>b.e.at-a.e.at);
+}
+function paintBin(){
+  const b=$('#binBtn'); if(!b) return;
+  const n=binList().length;
+  b.textContent=n?'Bin · '+n:'Bin';
+}
+function restoreBin(id){
+  const e=state.bin[id]; if(!e||e.purged) return;
+  delete state.bin[id];
+  const b=JSON.parse(JSON.stringify(e.body)); let dest='';
+  if(e.k==='task'){
+    const l=e.loc||{kind:'carry'};
+    if(l.kind==='day'&&l.date){
+      const z=ZONES.indexOf(l.zone)>-1?l.zone:'must';
+      place(b,{kind:'day',date:l.date,zone:z});
+      dest=ZL[z]+' on '+DOW[new Date(l.date+'T12:00:00').getDay()]+' '+l.date;
+    }else if(l.kind==='float'){
+      const f=float(l.fid);
+      place(b,{kind:'float',fid:f?f.id:state.floats[0].id});
+      dest=f?'the "'+f.name+'" tab':'the "'+state.floats[0].name+'" tab, since its old tab is gone';
+    }else{ state.carry.push(b); dest='the carry-over tray' }
+  }else if(e.k==='sub'){
+    const p=findTask(e.pid);
+    if(p){ p.task.subtasks.push(b); dest='its step list under "'+String(p.task.title||'').slice(0,28)+'"' }
+    else{
+      place({id:b.id,title:b.title||'',done:!!b.done,subtasks:[]},{kind:'float',fid:state.floats[0].id});
+      dest='the "'+state.floats[0].name+'" tab as its own task, since the task it belonged to is gone';
+    }
+  }else if(e.k==='float'){
+    const tab={id:b.id,name:b.name||'Restored tab',tasks:arr(b.tasks)};
+    state.floats.push(tab);
+    /* gather back the tasks it held, if they are still floating rather than scheduled */
+    let back=0;
+    arr(e.moved).forEach(tid=>{
+      const f=findTask(tid);
+      if(f&&f.from.kind==='float'&&f.from.fid!==tab.id){ move(tid,{kind:'float',fid:tab.id}); back++ }
+    });
+    dest='Free Floating'+(back?', with '+back+(back===1?' task':' tasks')+' moved back into it':'');
+  }else if(e.k==='focus'){ state.focus.push(b); dest='Focus this week' }
+  else return;
+  save(); render();
+  toast('Restored to '+dest);
+  refreshBinModal();
+}
+function purgeBin(id){
+  const e=state.bin[id]; if(!e||e.purged) return;
+  state.bin[id]={at:e.at,purged:Date.now()};   /* keep a marker so the purge syncs, drop the body */
+  save(); render(); refreshBinModal();
+  toast('Gone for good');
+}
+function emptyBinNow(){
+  Object.keys(state.bin).forEach(id=>{
+    const e=state.bin[id];
+    if(!e.purged) state.bin[id]={at:e.at,purged:Date.now()};
+  });
+  save(); render(); refreshBinModal();
+  toast('Bin emptied');
+}
+function binWhere(e){
+  if(e.k==='sub') return 'a step of "'+esc(String(e.pname||'a task').slice(0,28))+'"';
+  if(e.k==='float'){
+    const n=arr(e.body.tasks).length;
+    return 'Free Floating'+(n?', holding '+n+(n===1?' task':' tasks'):'');
+  }
+  if(e.k==='focus') return 'Focus this week';
+  const l=e.loc||{kind:'carry'};
+  if(l.kind==='day'&&l.date)
+    return (ZL[l.zone]||ZL.must)+' on '+DOW[new Date(l.date+'T12:00:00').getDay()]+' '+l.date;
+  if(l.kind==='float'){ const f=float(l.fid); return f?'the "'+esc(f.name)+'" tab':'a tab that is gone' }
+  return 'the carry-over tray';
+}
+function binMeta(e){
+  const goneFor=Math.floor((Date.now()-e.at)/864e5);
+  const left=Math.max(0,Math.ceil((BIN_KEEP-(Date.now()-e.at))/864e5));
+  return binWhere(e)+' · deleted '+(goneFor?goneFor+'d ago':'today')+' · '+left+'d left';
+}
+function binBody(){
+  const list=binList();
+  let h='<h3>Bin</h3>'+
+    '<p class="synchint">Anything deleted waits here for 30 days, then goes for good. '+
+    'Restore puts it back where it came from, or the nearest place still standing.</p>';
+  if(!list.length) h+='<div class="empty">Nothing in the bin.</div>';
+  list.forEach(x=>{
+    const e=x.e, name=e.k==='float'?(e.body.name||'a tab'):(e.body.title||'');
+    h+='<div class="binrow"><div class="bt"><b>'+esc(String(name).slice(0,64))+'</b>'+
+      '<span>'+binMeta(e)+'</span></div>'+
+      '<button class="nbtn" data-action="bin-restore" data-id="'+x.id+'">Restore</button>'+
+      '<button class="nbtn" data-action="bin-purge" data-id="'+x.id+'" title="Delete for good" aria-label="Delete for good">✕</button></div>';
+  });
+  h+='<div class="mrow">'+
+    (list.length?'<button data-action="bin-empty">Empty bin</button>':'')+
+    '<button class="pri" data-action="mclose" data-close="1">Done</button></div>';
+  return h;
+}
+function binModal(){
+  $('#modalRoot').innerHTML='<div class="mback" data-action="mclose"><div class="modal" id="binModal">'+
+    binBody()+'</div></div>';
+}
+function refreshBinModal(){ const m=$('#binModal'); if(m) m.innerHTML=binBody() }
+function confirmEmptyBin(){
+  const m=$('#binModal'); if(!m) return;
+  const n=binList().length;
+  m.innerHTML='<h3>Empty the bin?</h3>'+
+    '<p>It holds <b>'+n+'</b> '+(n===1?'item':'items')+'. Emptying cannot be undone, here or on any synced device.</p>'+
+    '<div class="mrow"><button data-action="bin-back">Keep everything</button>'+
+    '<button class="pri" data-action="bin-empty-yes">Empty it</button></div>';
+}
+
 /* ================= metrics ================= */
 function tasksOn(d){
   const x=state.days[d]; if(!x) return [];
@@ -1528,7 +1729,7 @@ function render(){
   $('#cal').style.display=v==='calendar'?'block':'none';
   $('#quickadd').style.display=v==='board'?'flex':'none';
 
-  renderQuick(); renderTray(); renderNav(); renderFocus(); renderMetrics(); grow();
+  renderQuick(); renderTray(); renderNav(); renderFocus(); renderMetrics(); paintBin(); grow();
   if(v==='board') renderBoard(); else renderCal();
 
   if(ui.adding){
@@ -1647,6 +1848,7 @@ document.addEventListener('click',e=>{
     case 'spop':{
       const f=findTask(id), t=f.task, i=t.subtasks.findIndex(x=>x.id===el.dataset.sid);
       const sub=t.subtasks.splice(i,1)[0];
+      ui.skipBin=(ui.skipBin||[]).concat(sub.id);   /* a conversion, not a delete */
       const nt=mkTask(sub.title); nt.done=sub.done;
       place(nt, f.from.kind==='day'?{kind:'day',date:f.from.date,zone:f.from.zone}:{kind:'float',fid:f.from.fid});
       ui.flash=nt.id; toast('Popped out as its own task'); break;
@@ -1706,6 +1908,7 @@ document.addEventListener('click',e=>{
       const f=float(el.dataset.fid), i=state.floats.indexOf(f);
       const other=state.floats.find(x=>x.id!==f.id);
       const moved=f.tasks.slice(); other.tasks.push(...moved);
+      ui.binNote=ui.binNote||{}; ui.binNote[f.id]={moved:moved.map(x=>x.id)};
       state.floats.splice(i,1);
       if(s.activeFloat===f.id) s.activeFloat=state.floats[0].id;
       $('#modalRoot').innerHTML='';
@@ -1739,6 +1942,13 @@ document.addEventListener('click',e=>{
       const i=$('#calAdd'); if(!i.value.trim()) return;
       addFromText(i.value,'day:'+el.dataset.day+':'+$('#calZone').value); i.value=''; break;
     }
+
+    case 'bin': binModal(); return;
+    case 'bin-restore': restoreBin(el.dataset.id); return;
+    case 'bin-purge': purgeBin(el.dataset.id); return;
+    case 'bin-empty': confirmEmptyBin(); return;
+    case 'bin-back': refreshBinModal(); return;
+    case 'bin-empty-yes': emptyBinNow(); return;
 
     case 'help': helpModal(); return;
     case 'mclose': if(e.target.classList.contains('mback')||el.dataset.close) $('#modalRoot').innerHTML=''; return;
@@ -1883,8 +2093,10 @@ document.addEventListener('drop',e=>{
       if(card&&card.dataset.id!==ui.drag.pid){
         const other=findTask(card.dataset.id);
         if(other) other.task.subtasks.push(sub);
-        else{ const nt=mkTask(sub.title); nt.done=sub.done; place(nt,dest) }
-      }else{ const nt=mkTask(sub.title); nt.done=sub.done; place(nt,dest); ui.flash=nt.id }
+        else{ ui.skipBin=(ui.skipBin||[]).concat(sub.id);
+          const nt=mkTask(sub.title); nt.done=sub.done; place(nt,dest) }
+      }else{ ui.skipBin=(ui.skipBin||[]).concat(sub.id);
+        const nt=mkTask(sub.title); nt.done=sub.done; place(nt,dest); ui.flash=nt.id }
     }
   }
   ui.drag=null; save(); render();
@@ -1919,6 +2131,8 @@ function helpModal(){
     '<p><b>Carry-over.</b> At midnight, unfinished tasks slide into the tray for a morning triage. '+
     'Nothing silently disappears.</p>'+
     '<p><b>Paste a whole list</b> into the top box and every line becomes its own task.</p>'+
+    '<p><b>Deleting is forgiving.</b> Undo sits in the toast for 5 seconds, and after that '+
+    'anything deleted waits in the <b>Bin</b>, next to Help and Sync, for 30 days before it goes for good.</p>'+
     '<p><b>Saving</b> is automatic. Export and Import move your data between devices as a file.</p>'+
     '<p><b>Sync</b> keeps two devices on the same planner without a login. Open it, generate a key, '+
     'then paste that same key on your phone or laptop. Changes go up on their own and the newer copy wins.</p>'+
@@ -1960,6 +2174,7 @@ syncBoot();
 window.A={state,render,rollover,findTask,move,tally,streak,save:commit,
   sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey,
   mergeStates,flatten,stateSig,readCloud,stampLegacy,syncCycle,
+  restoreBin,purgeBin,emptyBinNow,binList,
   get live(){ return state }};
 </script>
 </body>

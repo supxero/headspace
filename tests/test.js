@@ -416,7 +416,8 @@ ok(!q('.addin'),'Escape still closes the field');
 console.log('— menu reach on phones —');
 {
   const foot=q('.railfoot'), labels=[...foot.children].map(b=>b.textContent);
-  ok(labels.join(',')==='Help,Sync,Export,Import','Help, Sync, Export and Import all live in the rail foot');
+  ok(labels.map(t=>t.replace(/ · \d+$/,'')).join(',')==='Help,Sync,Export,Import,Bin',
+    'Help, Sync, Export, Import and Bin all live in the rail foot');
   ok(foot.parentElement.classList.contains('railhide'),'they sit inside the collapsible menu');
   const css=q('style').textContent;
   ok(/@media \(max-width:900px\)[\s\S]*#rail \.railfoot\{order:-1/.test(css),
@@ -714,6 +715,238 @@ console.log('— the day turning while the app stays open —');
   lw.close();
 }
 
+console.log('— recycle bin —');
+{
+  /* clean slate: the wipe itself floods the bin (which proves the central hook),
+     then the records are cleared so the section starts empty */
+  S().days={}; S().carry=[]; S().focus=[];
+  S().floats=[{id:'bf1',name:'Inbox',tasks:[]},{id:'bf2',name:'Errands',tasks:[]}];
+  S().settings.activeFloat='bf1'; S().settings.floatMode=false; S().settings.view='board';
+  A.save();
+  S().tomb={}; S().bin={}; A.save(); A.render(); await wait(30);
+  const bin=()=>w.A.state.bin;
+  const rows=()=>A.binList();
+
+  ok(!!q('#binBtn'),'the Bin entry point sits in the rail foot');
+  ok(q('#binBtn').textContent==='Bin','an empty bin shows no count');
+
+  /* a day task, with a step riding inside it */
+  S().days[T()]={must:[{id:'bt1',title:'day task to bin',done:true,
+    subtasks:[{id:'bs0',title:'inner step',done:true}]}],should:[],extra:[]};
+  A.save(); A.render(); await wait(25);
+  await select('bt1');
+  click('[data-action="del"][data-id="bt1"]'); await wait(25); A.save();
+  ok(!S().days[T()].must.length,'the task left the board');
+  ok(!/day task to bin/.test(q('#board').textContent),'and the board shows no trace of it');
+  ok(!!bin().bt1&&bin().bt1.k==='task','it landed in the bin as a task');
+  ok(bin().bt1.loc.kind==='day'&&bin().bt1.loc.zone==='must','remembering its day and its tier');
+  ok(bin().bt1.body.done===true,'with its ticked state');
+  ok(bin().bt1.body.subtasks.length===1,'and its step riding inside it');
+  ok(!bin().bs0,'the step gets no separate bin row of its own');
+  ok(q('#binBtn').textContent==='Bin · 1','the button counts what waits');
+
+  /* the 5 second Undo still comes first, and takes the entry back out */
+  ok(!!q('[data-action="undo"]'),'the delete toast still offers Undo');
+  click('[data-action="undo"]'); await wait(25); A.save();
+  ok(S().days[T()].must.length===1,'undo puts the task straight back');
+  ok(!bin().bt1,'and empties its bin entry');
+  ok(S().tomb.bt1==null,'and clears the deletion record');
+
+  /* delete again, let the toast lapse, restore from the panel */
+  await select('bt1');
+  click('[data-action="del"][data-id="bt1"]'); await wait(25); A.save();
+  q('#toast').innerHTML='';
+  click('[data-action="bin"]'); await wait(25);
+  ok(!!q('#binModal'),'the Bin opens as a panel');
+  ok(/day task to bin/.test(q('#binModal').textContent),'listing the deleted task');
+  ok(/Prio 0 on/.test(q('#binModal').textContent),'saying where it came from');
+  ok(/30d left/.test(q('#binModal').textContent),'and how long it has left');
+  q('#toast').innerHTML='';
+  click('[data-action="bin-restore"][data-id="bt1"]'); await wait(25); A.save();
+  ok(S().days[T()].must.some(t=>t.id==='bt1'),'Restore puts it back on the same day and tier');
+  ok(S().days[T()].must[0].done===true,'still ticked');
+  ok(S().days[T()].must[0].subtasks.length===1,'still holding its step');
+  ok(!bin().bt1&&S().tomb.bt1==null,'and the bin and the deletion record let go of it');
+  ok(/Restored to Prio 0/.test(q('#toast').textContent),'the toast names where it went');
+  click('[data-action="mclose"][data-close="1"]'); await wait(20);
+
+  /* a task in a Free Floating tab, restored after its tab is gone */
+  S().floats[1].tasks.push({id:'bt2',title:'errand to bin',done:false,subtasks:[]});
+  A.save(); A.render(); await wait(25);
+  click('[data-action="floattoggle"]'); await wait(25);
+  await select('bt2');
+  click('[data-action="del"][data-id="bt2"]'); await wait(25); A.save();
+  ok(bin().bt2.loc.kind==='float'&&bin().bt2.loc.fid==='bf2','a float task remembers its tab');
+  click('[data-action="float-del"][data-fid="bf2"]'); await wait(25); A.save();
+  ok(!!bin().bf2&&bin().bf2.k==='float','the emptied tab lands in the bin too');
+  q('#toast').innerHTML='';
+  A.restoreBin('bt2'); await wait(25); A.save();
+  ok(S().floats[0].tasks.some(t=>t.id==='bt2'),'restoring lands in the first tab when its own is gone');
+  ok(/Inbox/.test(q('#toast').textContent),'the toast says where it went');
+  ok(/old tab is gone/.test(q('#toast').textContent),'and why');
+  A.restoreBin('bf2'); await wait(25); A.save();
+  ok(S().floats.some(f=>f.id==='bf2'),'the tab itself restores');
+  click('[data-action="floattoggle"]'); await wait(25);
+
+  /* a subtask, back under its task, then as its own task once the task is gone */
+  S().days[T()].must[0].subtasks.push({id:'bs1',title:'binnable step',done:true});
+  A.save(); A.render(); await wait(25);
+  await select('bt1');
+  click('[data-action="sdel"][data-id="bt1"][data-sid="bs1"]'); await wait(25); A.save();
+  ok(!!bin().bs1&&bin().bs1.k==='sub','a deleted step lands in the bin');
+  ok(bin().bs1.pid==='bt1','knowing which task it belonged to');
+  A.restoreBin('bs1'); await wait(25); A.save();
+  ok(S().days[T()].must[0].subtasks.some(s=>s.id==='bs1'&&s.done===true),
+    'it returns under its task, still ticked');
+  await select('bt1');
+  click('[data-action="sdel"][data-id="bt1"][data-sid="bs1"]'); await wait(25); A.save();
+  click('[data-action="del"][data-id="bt1"]'); await wait(25); A.save();
+  A.restoreBin('bs1'); await wait(25); A.save();
+  ok(S().floats.some(f=>f.tasks.some(t=>t.id==='bs1'&&t.title==='binnable step')),
+    'restoring a step whose task is gone makes it a task in the first tab');
+
+  /* a popped-out step is a conversion, not a delete */
+  S().days[T()].should=[{id:'bpop',title:'has a step',done:false,
+    subtasks:[{id:'bps',title:'goes solo',done:false}]}];
+  A.save(); A.render(); await wait(25);
+  await select('bpop');
+  click('[data-action="spop"][data-id="bpop"][data-sid="bps"]'); await wait(25); A.save();
+  ok(!bin().bps,'popping a step out to a task does not bin the step');
+  ok(!!S().tomb.bps,'though the old step id is still recorded as gone');
+
+  /* focus item */
+  S().focus.push({id:'bfoc',title:'stay patient',done:false,doneAt:null});
+  A.save(); A.render(); await wait(25);
+  click('[data-action="focus-del"][data-id="bfoc"]'); await wait(25); A.save();
+  ok(!!bin().bfoc&&bin().bfoc.k==='focus','a focus item lands in the bin');
+  A.restoreBin('bfoc'); await wait(25); A.save();
+  ok(S().focus.some(f=>f.id==='bfoc'),'and restores to Focus');
+
+  /* dismissed from the carry-over tray */
+  S().carry.push({id:'bcar',title:'dropped from the tray',done:false,subtasks:[],from:'Prio 0 · Fri'});
+  A.save(); A.render(); await wait(25);
+  click('[data-action="carry-drop"][data-id="bcar"]'); await wait(25); A.save();
+  ok(!!bin().bcar,'a task dropped from the carry tray lands in the bin');
+  ok(bin().bcar.loc.kind==='carry','marked as coming from the tray');
+  A.restoreBin('bcar'); await wait(25); A.save();
+  ok(S().carry.some(t=>t.id==='bcar'&&t.from==='Prio 0 · Fri'),
+    'and returns to the tray with its origin label');
+
+  /* a tab deleted while holding tasks: restore gathers its tasks back */
+  S().floats.push({id:'bf3',name:'Project',tasks:[{id:'bt3',title:'kept work',done:false,subtasks:[]}]});
+  A.save(); A.render(); await wait(25);
+  click('[data-action="floattoggle"]'); await wait(25);
+  click('[data-action="float-del"][data-fid="bf3"]'); await wait(25);
+  ok(!!q('.mback .modal'),'a tab holding tasks still asks first');
+  click('[data-action="float-del-move"][data-fid="bf3"]'); await wait(25); A.save();
+  ok(!S().floats.some(f=>f.id==='bf3'),'the tab went');
+  ok(S().floats.some(f=>f.tasks.some(t=>t.id==='bt3')),'its task was moved out, not deleted');
+  ok(!!bin().bf3&&(bin().bf3.moved||[]).indexOf('bt3')>-1,
+    'the binned tab remembers which tasks it held');
+  q('#toast').innerHTML='';
+  A.restoreBin('bf3'); await wait(25); A.save();
+  ok(S().floats.some(f=>f.id==='bf3'),'restoring brings the tab back');
+  ok(S().floats.find(f=>f.id==='bf3').tasks.some(t=>t.id==='bt3'),
+    'with the task it held gathered back in');
+  ok(S().floats.filter(f=>f.tasks.some(t=>t.id==='bt3')).length===1,'and no copy left behind');
+  ok(/moved back into it/.test(q('#toast').textContent),'the toast says the tasks came home');
+
+  /* but a task scheduled onto a day since then stays where the user put it */
+  click('[data-action="float-del"][data-fid="bf3"]'); await wait(25);
+  click('[data-action="float-del-move"][data-fid="bf3"]'); await wait(25); A.save();
+  A.move('bt3',{kind:'day',date:T(),zone:'should'}); A.save();
+  A.restoreBin('bf3'); await wait(25); A.save();
+  ok(S().days[T()].should.some(t=>t.id==='bt3'),'a task scheduled since stays on its day');
+  ok(!S().floats.find(f=>f.id==='bf3').tasks.length,'rather than being yanked back off it');
+  click('[data-action="floattoggle"]'); await wait(25);
+
+  /* permanent delete: the entry goes, the deletion record stays */
+  S().days[T()].must.push({id:'bperm',title:'never coming back',done:false,subtasks:[]});
+  A.save(); A.render(); await wait(25);
+  await select('bperm');
+  click('[data-action="del"][data-id="bperm"]'); await wait(25); A.save();
+  click('[data-action="bin"]'); await wait(25);
+  click('[data-action="bin-purge"][data-id="bperm"]'); await wait(25); A.save();
+  ok(!!bin().bperm&&!!bin().bperm.purged,'a purged item keeps only a marker');
+  ok(!bin().bperm.body,'its content is gone');
+  ok(rows().every(x=>x.id!=='bperm'),'and it no longer lists');
+  ok(!!S().tomb.bperm,'while the deletion record stays, so no device revives it');
+  click('[data-action="mclose"][data-close="1"]'); await wait(20);
+
+  /* empty bin asks first, since that one is final */
+  S().tomb={}; S().bin={}; A.save();     /* start this part from a clean bin */
+  S().days[T()].must.push({id:'be1',title:'one of two',done:false,subtasks:[]},
+                          {id:'be2',title:'two of two',done:false,subtasks:[]});
+  A.save(); A.render(); await wait(25);
+  await select('be1'); click('[data-action="del"][data-id="be1"]'); await wait(25);
+  await select('be2'); click('[data-action="del"][data-id="be2"]'); await wait(25); A.save();
+  ok(rows().length===2,'two things wait in the bin');
+  click('[data-action="bin"]'); await wait(25);
+  click('[data-action="bin-empty"]'); await wait(25);
+  ok(/cannot be undone/.test(q('#binModal').textContent),'emptying asks first and says it is final');
+  click('[data-action="bin-back"]'); await wait(25);
+  ok(rows().length===2,'backing out keeps everything');
+  click('[data-action="bin-empty"]'); await wait(25);
+  click('[data-action="bin-empty-yes"]'); await wait(25); A.save();
+  ok(rows().length===0,'emptying clears the list');
+  ok(/Nothing in the bin/.test(q('#binModal').textContent),'and says so');
+  ok(q('#binBtn').textContent==='Bin','and the count goes quiet');
+  click('[data-action="mclose"][data-close="1"]'); await wait(20);
+
+  /* 30 day expiry, and the central hook catching a codepath with no button at all */
+  S().days[T()].must.push({id:'bold',title:'ageing away',done:false,subtasks:[]});
+  A.save();
+  S().days[T()].must=S().days[T()].must.filter(t=>t.id!=='bold');
+  A.save();
+  ok(!!bin().bold,'even a task removed by plain code lands in the bin, no path missed');
+  bin().bold.at=Date.now()-31*864e5;
+  S().tomb.bold=Date.now()-31*864e5;
+  A.save();
+  ok(!bin().bold,'after 30 days an entry expires on its own');
+  ok(!!S().tomb.bold,'though the deletion record lives on a while longer');
+}
+
+console.log('— recycle bin across devices —');
+{
+  const now=Date.now();
+  const mk=()=>({ver:2,days:{},carry:[],focus:[],tomb:{},bin:{},
+    floats:[{id:'f1',name:'Inbox',tasks:[],up:100}],
+    settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:'f1',calSel:null,
+      calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false}});
+  const D2='2026-08-05';
+  const body={id:'mx',title:'shared task',done:false,subtasks:[],up:now-6e5};
+  const cp=o=>JSON.parse(JSON.stringify(o));
+
+  { /* deleted on A while B still holds it: the delete and the bin entry both travel */
+    const a=mk(); a.tomb={mx:now-3e5};
+    a.bin={mx:{k:'task',at:now-3e5,body:cp(body),loc:{kind:'day',date:D2,zone:'should'}}};
+    const b=mk(); b.days[D2]={must:[],should:[cp(body)],extra:[]};
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(!Object.keys(A.flatten(m).task).length,'the delete crosses to the device still holding the task');
+    ok(!!m.bin.mx&&!m.bin.mx.purged,'and the bin entry travels with it');
+    ok(A.stateSig(m)===A.stateSig(m2),'whichever side merges, same answer');
+  }
+  { /* A deleted, B restored later: the restore wins and the entry clears everywhere */
+    const a=mk(); a.tomb={mx:now-3e5};
+    a.bin={mx:{k:'task',at:now-3e5,body:cp(body),loc:{kind:'day',date:D2,zone:'should'}}};
+    const b=mk(); const revived=cp(body); revived.up=now-1e5;
+    b.days[D2]={must:[],should:[revived],extra:[]};
+    const r1=A.mergeStates(a,b), r2=A.mergeStates(b,a);
+    ok(Object.keys(A.flatten(r1).task).length===1,'a restore made on one device survives the merge');
+    ok(!r1.bin.mx,'and clears the bin entry everywhere');
+    ok(A.stateSig(r1)===A.stateSig(r2),'from either direction');
+  }
+  { /* a permanent delete beats a copy still waiting on the other device */
+    const a=mk(); a.tomb={mx:now-3e5}; a.bin={mx:{at:now-3e5,purged:now-1e5}};
+    const b=mk(); b.tomb={mx:now-3e5};
+    b.bin={mx:{k:'task',at:now-3e5,body:cp(body),loc:{kind:'day',date:D2,zone:'should'}}};
+    const p1=A.mergeStates(a,b);
+    ok(!!p1.bin.mx.purged,'a purge is final across devices');
+    ok(!p1.bin.mx.body,'and strips the body on the other device too');
+    ok(A.stateSig(p1)===A.stateSig(A.mergeStates(b,a)),'agreed from either direction');
+  }
+}
+
 console.log('— sync merge: end to end across two windows —');
 {
   const cloud={row:null};
@@ -809,6 +1042,15 @@ console.log('— sync merge: end to end across two windows —');
   const pc2=await boot(disk(pc),pcNet); await wait(300);
   ok(shown(pc2).join()===settled.join(),'a reload agrees with what is in the cloud');
   ok(pc2.A.state.tomb&&Object.keys(pc2.A.state.tomb).length>0,'deletions are carried in the saved planner');
+
+  /* the bin rides the same sync: the delete made earlier is waiting on every device */
+  const binned=Object.keys(pc2.A.state.bin).filter(id=>!pc2.A.state.bin[id].purged);
+  ok(binned.length===1,'the binned deletion is in the cloud copy too');
+  ok(!!tab.A.state.bin[binned[0]],'and the other device holds it as well');
+  pc2.A.restoreBin(binned[0]); pc2.A.save(); await pc2.A.syncCycle({}); await wait(60);
+  await tab.A.syncCycle({}); await wait(60);
+  ok(shown(tab).indexOf('from the PC')>-1,'a restore made on one device reaches the other');
+  ok(!tab.A.state.bin[binned[0]],'and clears the bin entry there too');
 }
 
 console.log('\nRESULT: '+pass+' passed, '+fail+' failed');
