@@ -17,6 +17,11 @@ try{
     var __tm=document.querySelector('meta[name="theme-color"]');
     if(__tm) __tm.setAttribute('content','#070708');
   }
+  /* The rail's collapsed state rides the same contract as the theme: device chrome,
+     its own key, never in `state`, never synced. Applied here for the same reason
+     too, so the board does not visibly jump from 308px to full width on every load. */
+  if(localStorage.getItem('agora_dayplanner_rail')==='off')
+    document.documentElement.setAttribute('data-rail','off');
 }catch(e){}
 </script>
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -156,10 +161,8 @@ button{cursor:pointer;border:none;background:none}
 input,select{background:var(--cloud);border:1px solid var(--line2);border-radius:9px;padding:8px 10px;font-size:14px;outline:none;color:var(--txt)}
 input:focus,select:focus{border-color:var(--denim);box-shadow:0 0 0 3px rgba(var(--denim-rgb),.24)}
 select option{background:var(--pearl);color:var(--txt)}
-::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-thumb{background:rgba(var(--ink-rgb),.22);border-radius:9px}
-::-webkit-scrollbar-thumb:hover{background:rgba(var(--ink-rgb),.34)}
-::-webkit-scrollbar-track{background:transparent}
+/* the always-visible scrollbar that used to live here is gone; the one auto-hiding
+   set below governs every scroller in the app, so there is nothing to keep in step */
 
 /* shell */
 #app{position:relative;z-index:1;display:grid;grid-template-columns:var(--rail) minmax(0,1fr);height:100dvh}
@@ -169,6 +172,10 @@ select option{background:var(--pearl);color:var(--txt)}
 
 /* brand */
 .brandrow{display:flex;align-items:center;gap:10px}
+/* the logo is the way back to the board, so it is a real button and carries a name */
+.brandbtn{display:flex;align-items:center;gap:10px;text-align:left;padding:0;border-radius:12px}
+@media (hover:hover){ .brandbtn:hover .brand{color:var(--denim)} }
+.brandbtn:active{transform:scale(.97)}
 .mark{width:34px;height:34px;border-radius:11px;background:var(--gradf);flex:none;display:grid;place-items:center;box-shadow:0 6px 18px rgba(var(--shd-rgb),.28)}
 .mark i{width:11px;height:11px;border-radius:50%;background:var(--cloud);display:block}
 .brand{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:-.015em;line-height:1.1}
@@ -633,6 +640,72 @@ select option{background:var(--pearl);color:var(--txt)}
 #strip button.istoday{border-color:var(--today)}
 #railtoggle{display:none}
 
+/* ---------- scrollbars: present while scrolling, gone at rest ----------
+   ONE mechanism for every scroller in the app, applied through `*`, so nothing has to
+   opt in and a scroller added later is covered the day it is written.
+   WHY IT CANNOT REFLOW: the gutter is reserved PERMANENTLY. The track keeps a constant
+   width whether the thumb is visible or not, and only the thumb's COLOUR changes. So
+   the appearance costs no layout, and no content can ever sit where a scrollbar was a
+   moment ago, because that strip was never content's to begin with.
+   `.scrolling` is put on the scrolling element by a capture-phase listener and taken
+   off after SB_IDLE ms of stillness. Keyboard scrolling (arrows, Page Down, Home) and
+   wheel, trackpad and touch all raise the same event, so the thumb appears for every
+   way of scrolling, not just the ones a pointer can do. */
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track,*::-webkit-scrollbar-corner{background:transparent}
+*::-webkit-scrollbar-thumb{background-color:transparent;border-radius:99px;
+  border:2px solid transparent;background-clip:padding-box;transition:background-color .3s ease}
+.scrolling::-webkit-scrollbar-thumb{background-color:rgba(var(--ink-rgb),.34)}
+/* with a pointer the thumb is also a control, so it surfaces on hover: invisible until
+   you scroll would mean a thumb nobody can aim at and drag. Touch has no hover and
+   needs none, since a finger scrolls the content itself. */
+@media (hover:hover){
+  *:hover::-webkit-scrollbar-thumb{background-color:rgba(var(--ink-rgb),.20)}
+  *::-webkit-scrollbar-thumb:hover{background-color:rgba(var(--ink-rgb),.46)}
+}
+/* Firefox draws no pseudo-elements here, so it gets the standard properties instead:
+   `thin` reserves a constant gutter the same way, and the same two states swap only
+   the thumb colour.
+   THE @supports GATE IS LOAD-BEARING, not decoration. Chrome understands BOTH, and
+   when `scrollbar-width` or `scrollbar-color` is set it IGNORES the ::-webkit rules
+   above and falls back to its own thin overlay bar, which reserves no gutter at all
+   and so lets content sit under the thumb. Gating on the pseudo-element keeps the two
+   mechanisms apart: Chrome takes the ::-webkit block, Firefox takes this one. */
+@supports not selector(::-webkit-scrollbar){
+  *{scrollbar-width:thin;scrollbar-color:transparent transparent}
+  .scrolling{scrollbar-color:rgba(var(--ink-rgb),.34) transparent}
+}
+
+/* ---------- the rail collapses out of the way ----------
+   Wide layouts only. Under 900px the rail is ALREADY a drop-down behind Menu, and a
+   second mechanism there would be two ways to do one thing on the screen with the
+   least room for either; the collapse control is not drawn below 901px and the stored
+   choice has no effect there, so a phone behaves exactly as it did.
+   The state is device chrome: `agora_dayplanner_rail`, its own key, never in `state`,
+   never synced, applied by the head boot script before first paint. */
+#railcollapse,#railshow{display:none}
+#railshow{position:fixed;top:14px;left:12px;z-index:60;width:34px;height:34px;
+  align-items:center;justify-content:center;border-radius:10px;color:var(--mut);
+  border:1px solid var(--line2);background:var(--card);box-shadow:0 2px 6px rgba(var(--shd-rgb),.16)}
+@media (hover:hover){
+  #railshow:hover{color:var(--navy);border-color:var(--denim)}
+  #railcollapse:hover{color:var(--navy);border-color:var(--line)}
+}
+#railshow:active,#railcollapse:active{transform:scale(.94)}
+@media (min-width:901px){
+  #railcollapse{display:inline-flex;align-items:center;justify-content:center;flex:none;
+    width:27px;height:27px;border-radius:8px;color:var(--mut);border:1px solid transparent}
+  /* ONE column, not a zero-width first one. #rail leaves the flow entirely when it is
+     hidden, so a two-column template would drop #main into the empty first column and
+     give the board no width at all. */
+  :root[data-rail="off"] #app{grid-template-columns:minmax(0,1fr)}
+  :root[data-rail="off"] #rail{display:none}
+  :root[data-rail="off"] #railshow{display:inline-flex}
+  /* the freed width goes to the board, less the room the restore button stands in, so
+     nothing is ever drawn underneath it */
+  :root[data-rail="off"] #main{padding-left:56px}
+}
+
 /* responsive */
 @media (max-width:900px){
   body{overflow:auto}
@@ -752,8 +825,11 @@ select option{background:var(--pearl);color:var(--txt)}
   /* 16px keeps the browser from zooming the page when the field takes focus */
   .zaddrow input{font-size:16px;padding:9px 10px;min-height:44px}
   .zaddrow .abtn{min-height:44px}
-  #strip{scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-  #strip::-webkit-scrollbar{display:none}
+  /* the day strip used to opt out of scrollbars entirely. It no longer does: one
+     mechanism, no exceptions, so the strip fades its bar in and out like everything
+     else. Its padding drops by the gutter it now reserves, so the row is the same
+     height it always was. */
+  #strip{scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;padding-bottom:0}
   #strip button{scroll-snap-align:start}
   #main{padding-bottom:calc(40px + env(safe-area-inset-bottom))}
   .colhead{padding:12px 13px 10px}
@@ -793,11 +869,20 @@ select option{background:var(--pearl);color:var(--txt)}
   .kh[data-action],.hhead[data-action]{position:relative}
   .kh[data-action]::before{content:'';position:absolute;inset:-13px 0 -18px}
   .hhead[data-action]::before{content:'';position:absolute;inset:-10px 0 -16px}
+  /* the logo became a control when it became the way back to the board, so it has to
+     offer a finger like every other one. It is drawn from a 34px mark, so it grows */
+  .brandbtn{min-height:44px}
+  /* the rail controls are drawn small on a desktop; on a coarse pointer they grow for
+     real, since a button cannot host the invisible ::before the tick boxes use */
+  #railcollapse,#railshow{min-height:44px;min-width:44px}
   .noterow{min-height:44px}
   .nact,.ntb{min-height:44px;min-width:44px}
   #notePage{min-height:44px}
   .nbtn,.tbtn,.abtn,.mrow button{min-height:44px;min-width:44px}
   .navbtn,.railfoot button,#strip button,.fadd button{min-height:44px}
+  /* the panel add buttons sit in a row that lost ~10px to the reserved scrollbar
+     gutter, which squeezed them under 44px wide on a coarse pointer */
+  .fadd button{min-width:44px}
   #rail .railfoot button{min-height:44px}
   .binrow .nbtn{min-height:44px}
   #fi,#habitAdd,#weekAdd,#calAdd,#syncKeyIn,#jumpDate,#noteTitle,#noteSearch,.addin,.saddrow input,
@@ -816,10 +901,14 @@ select option{background:var(--pearl);color:var(--txt)}
 <body>
 
 <div id="app">
+  <button id="railshow" data-action="railshow" title="Show sidebar" aria-label="Show sidebar"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.8" width="12" height="10.4" rx="1.6"/><path d="M6.4 2.8v10.4"/><path d="M9.2 6.4 10.8 8l-1.6 1.6"/></svg></button>
   <aside id="rail">
     <div class="brandrow">
-      <div class="mark"><i></i></div>
-      <div class="brand">Headspace<span>Day planner</span></div>
+      <button class="brandbtn" data-action="home" title="Back to the board" aria-label="Headspace, back to the board">
+        <div class="mark"><i></i></div>
+        <div class="brand">Headspace<span>Day planner</span></div>
+      </button>
+      <button id="railcollapse" data-action="railcollapse" title="Hide sidebar" aria-label="Hide sidebar"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.8" width="12" height="10.4" rx="1.6"/><path d="M6.4 2.8v10.4"/><path d="M11.2 6.4 9.6 8l1.6 1.6"/></svg></button>
       <button id="railtoggle" data-action="railtoggle">Menu</button>
       <div class="savebadge" id="save">saved</div>
     </div>
@@ -832,7 +921,7 @@ select option{background:var(--pearl);color:var(--txt)}
     </div>
 
     <div class="railhide" style="display:flex;flex-direction:column;gap:14px">
-      <div class="kard" id="fpanel"></div>
+      <div class="kard" id="fpanel" data-action="north-open"></div>
       <div id="habitsRail"></div>
       <div id="weekRail"></div>
 
@@ -899,7 +988,7 @@ const CHEV=open=>'<svg class="chev'+(open?' open':'')+'" viewBox="0 0 16 16" fil
 /* ui.peek: which EMPTY panels the user has opened to add something. Not persisted:
    an empty panel starts collapsed on every load, and the flag is dropped the moment
    the panel holds an item, so emptying it later starts collapsed again. */
-let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:'',peek:{},noteQ:'',
+let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:'',peek:{},northOn:false,noteQ:'',
                     noteHist:null};
 
 function fresh(){
@@ -918,7 +1007,7 @@ function fresh(){
     notes:[],
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
-      habitsOpen:true,lastWeek:null,noteSel:null}
+      habitsOpen:true,weekOpen:true,lastWeek:null,noteSel:null}
   };
 }
 
@@ -1395,7 +1484,7 @@ const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this dev
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
 const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay',
-  'showDone','lastRoll','habitsOpen','lastWeek','noteSel'];
+  'showDone','lastRoll','habitsOpen','weekOpen','lastWeek','noteSel'];
 const POLL_MS=25000;                          /* look for another device's changes this often */
 const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
 const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
@@ -1757,6 +1846,19 @@ function themeSet(t){
   t=THEMES[t]?t:'sky';
   lsSet(THEME_LS,t); themeApply(t); refreshThemeModal();
 }
+
+/* ---------- the rail's collapsed state ----------
+   Same contract as the theme, deliberately: device chrome in its OWN localStorage key,
+   never a field on `state`, so it cannot reach `stateSig`, cannot trigger a push, and
+   cannot arrive from another device. One machine hiding its rail says nothing about
+   any other. Purely a CSS switch, so nothing needs re-rendering when it flips. */
+const RAIL_LS='agora_dayplanner_rail';
+function railOpen(){ return lsGet(RAIL_LS)!=='off' }
+function railApply(open){
+  const r=document.documentElement;
+  if(open) r.removeAttribute('data-rail'); else r.setAttribute('data-rail','off');
+}
+function railSet(open){ lsSet(RAIL_LS,open?'on':'off'); railApply(open); }
 function themeBody(){
   const cur=themeGet();
   const opt=t=>'<button class="nbtn'+(cur===t?' solid':'')+'" style="flex:1" data-action="theme-set" data-t="'+t+
@@ -2124,6 +2226,17 @@ function renderFocus(){
   const held=state.focus.filter(f=>!f.done), aside=state.focus.filter(f=>f.done);
   const isEmpty=!held.length;      /* set-aside statements do not pin the panel open */
   if(!isEmpty) delete ui.peek.focus;
+  /* TWO FLAGS, ONE MEANING EACH, deliberately not merged. `ui.peek.focus` is the old
+     one and is untouched: it opens an EMPTY panel so something can be added, and is
+     dropped the moment the panel holds a statement. `ui.northOn` is Change 6: it says
+     the panel is the one being used, and it gates the WORKING PARTS only, the add
+     field and the Set aside archive. Keeping them apart is what lets the empty-panel
+     collapse rule and the pinned-open rule both survive unchanged; one flag serving
+     both meanings made emptying the panel leave it hanging open.
+     Neither flag can reach the statement itself, so nothing hides a held statement.
+     Both are memory-only, so nothing about either loads, saves or syncs, and a reload
+     starts every panel at rest. */
+  const active=!!ui.peek.focus||!!ui.northOn;
   const expanded=!isEmpty||!!ui.peek.focus;
   let h='<div class="kh'+(expanded?'':' solo')+'"'+
     (isEmpty?' data-action="panel-toggle" data-panel="focus"':'')+'>'+
@@ -2131,11 +2244,13 @@ function renderFocus(){
     'True north'+(isEmpty?'<span class="sp">not set</span>':'')+'</div>';
   if(expanded){
     h+=held.length?held.map(f=>frow(f)).join(''):'<div class="empty">Nothing held yet. A mindset, a quote, a line worth keeping in view.</div>';
-    h+='<div class="fadd"><input id="fi" placeholder="A line to steer by…" data-enter="focus" autocomplete="off">'+
-       '<button data-action="focus-add">Set</button></div>';
-    if(aside.length){
-      h+='<div class="fdone" data-action="focus-toggle-done">'+(state.settings.showDone?'▾':'▸')+' Set aside ('+aside.length+')</div>';
-      if(state.settings.showDone) h+=aside.map(f=>frow(f)).join('');
+    if(active){
+      h+='<div class="fadd"><input id="fi" placeholder="A line to steer by…" data-enter="focus" autocomplete="off">'+
+         '<button data-action="focus-add">Set</button></div>';
+      if(aside.length){
+        h+='<div class="fdone" data-action="focus-toggle-done">'+(state.settings.showDone?'▾':'▸')+' Set aside ('+aside.length+')</div>';
+        if(state.settings.showDone) h+=aside.map(f=>frow(f)).join('');
+      }
     }
   }
   $('#fpanel').innerHTML=h;
@@ -2331,6 +2446,14 @@ function floatCol(f,i){
     /* the header is the tab's drag handle, so a drag starting on a card inside the
        column stays a card drag and the two never compete for the same press */
     '<div class="colhead" draggable="true" title="Drag to reorder tabs"><div class="d1"><span class="dow"> '+esc(f.name)+'</span>'+
+    /* reorder by tap, for the devices that cannot drag: no mobile browser raises HTML5
+       drag events from touch, so the drag below is pointer-only and always was. The
+       ends render NO control rather than a dead one, the same guard the tab delete
+       uses. Both carry a name, which is the bug this header has shipped twice. */
+    (i>0?'<button class="mini" data-action="float-move" data-fid="'+f.id+'" data-d="-1" '+
+      'title="Move tab left" aria-label="Move tab left">‹</button>':'')+
+    (i<state.floats.length-1?'<button class="mini" data-action="float-move" data-fid="'+f.id+'" data-d="1" '+
+      'title="Move tab right" aria-label="Move tab right">›</button>':'')+
     '<button class="mini" data-action="float-rename" data-fid="'+f.id+'" title="Rename">✎</button>'+
     (state.floats.length>1?'<button class="mini" data-action="float-del" data-fid="'+f.id+'" '+
       'title="Delete tab" aria-label="Delete tab">✕</button>':'')+
@@ -2533,10 +2656,12 @@ function renderWeekly(){
   const list=arr(state.week.list), open=list.filter(t=>!t.done).length;
   const isEmpty=!list.length;
   if(!isEmpty) delete ui.peek.week;
-  const expanded=!isEmpty||!!ui.peek.week;
+  /* with items the persisted manual collapse governs, exactly as Habits does; empty,
+     it is the same memory-only peek the other panels get. The header therefore always
+     carries a toggle and always draws a chevron, since it can now always act. */
+  const expanded=isEmpty?!!ui.peek.week:state.settings.weekOpen!==false;
   let h='<div class="'+(wide?'kard':'hpanel')+' wcard">'+
-    '<div class="kh'+(expanded?'':' solo')+'"'+
-    (isEmpty?' data-action="panel-toggle" data-panel="week"':'')+'>'+CHEV(expanded)+
+    '<div class="kh'+(expanded?'':' solo')+'" data-action="week-toggle">'+CHEV(expanded)+
     'This week<span class="sp">'+open+' open</span></div>';
   if(expanded){
     h+=(list.length?list.map(wrow).join(''):'<div class="empty">Nothing yet. Things to do sometime this week, no particular day.</div>')+
@@ -3297,12 +3422,47 @@ document.addEventListener('click',e=>{
     },0);
   }
 
+  /* THE PRESS THAT CLOSES True north: any press that lands outside the panel puts it
+     back to just the statement. Done on the press rather than on the input's blur so
+     it also closes for a tap on bare canvas, where nothing takes focus at all.
+     renderFocus() only, never render(), so nothing else on the screen moves and no
+     other caret is disturbed. */
+  if(ui.northOn&&!e.target.closest('#fpanel')){
+    ui.northOn=false;
+    renderFocus();
+    if(!el) return;
+  }
+
   if(!el) return;
   const a=el.dataset.action, id=el.dataset.id, s=state.settings;
 
   switch(a){
     case 'railtoggle': $('#rail').classList.toggle('open'); return;
     case 'undo': doUndo(); return;
+    /* device chrome, not data: a CSS attribute and a localStorage write, no render,
+       no save(), nothing that could reach state or the cloud */
+    case 'railcollapse': railSet(false); return;
+    case 'railshow': railSet(true); return;
+    /* THE LOGO IS A VIEW RESET, not a reload and not a data change. It puts the view
+       back to its normal state and touches nothing else: no task, note, tab, habit,
+       weekly item, bin entry or tombstone is read or written, the sync connection and
+       any push already in flight are left alone (flushSave is what syncCycle itself
+       calls before a merge, so it can only help one land), and the theme, the rail and
+       the panel collapse states are all deliberately left as the user set them.
+       Anything half-typed is COMMITTED rather than dropped: an open inline add row is
+       committed the way tapping outside it does, and flushSave() forces the 400ms
+       debounce so a note body or title still inside it is written before the view
+       changes under it. */
+    case 'home':{
+      if(ui.adding) closeAdd(true);
+      flushSave();
+      s.view='board'; s.floatMode=false;      /* board, not calendar, not notes, not tabs */
+      s.boardOffset=0; s.stripDay=null;       /* today in view, at both widths */
+      s.calSel=null; s.calOffset=0;           /* no calendar selection carried back */
+      s.noteSel=null;                         /* no note open */
+      ui.sel=null; ui.noteQ=''; ui.peek={}; ui.northOn=false;   /* no card open, no stale search, panels at rest */
+      break;
+    }
     case 'view': s.view=el.dataset.v; if(s.view!=='board') s.floatMode=false; break;
     case 'floattoggle': s.floatMode=!s.floatMode; s.view='board'; break;
     case 'mrange': s.mRange=el.dataset.r; save(); renderMetrics(); return;
@@ -3328,6 +3488,18 @@ document.addEventListener('click',e=>{
       const f=findTask(id); if(!f||f.from.kind!=='day') return;
       const step=+el.dataset.d||1;                 /* -1 back a day, 1 forward */
       move(id,{kind:'day',date:plus(step,f.from.date),zone:f.from.zone}); break;
+    }
+    /* the tap equivalent of the tab drag, and deliberately the SAME function it calls:
+       reorderTab does the array move, so the pos axis is stamped by stampChanges from
+       the changed ordinal exactly as a drop stamps it, the merge sees an ordinary
+       reorder, and no new field is written anywhere. flipTabs is the drag's own
+       finish, so a tap animates identically. */
+    case 'float-move':{
+      const fid=el.dataset.fid, d=+el.dataset.d;
+      const i=state.floats.findIndex(f=>f.id===fid); if(i<0) return;
+      const j=i+d; if(j<0||j>=state.floats.length) return;
+      if(!reorderTab(fid,state.floats[j].id,d>0)) return;
+      save(); flipTabs(); return;
     }
     case 'reorder':{
       const f=findTask(id); if(!f) return;
@@ -3395,6 +3567,24 @@ document.addEventListener('click',e=>{
       ui.peek.habits=!ui.peek.habits;
       if(ui.peek.habits) s.habitsOpen=true;
       break;
+    }
+    /* This week collapses whether or not it holds anything. With items that is the
+       persisted per-device flag Habits already uses; empty, it is the memory-only
+       peek. Opening an empty panel also clears a remembered collapse, so the first
+       item added does not land under it. */
+    case 'week-toggle':{
+      if(arr(state.week.list).length){ s.weekOpen=s.weekOpen===false; break }
+      ui.peek.week=!ui.peek.week;
+      if(ui.peek.week) s.weekOpen=true;
+      break;
+    }
+    /* a press anywhere on the True north panel makes it the panel being used, which is
+       what draws its add field and its archive. Idempotent: pressing it again while
+       already active changes nothing, so a press aimed at a row's own button is never
+       a toggle-off. The press that CLOSES it is one outside the panel (see below). */
+    case 'north-open':{
+      if(ui.northOn) return;
+      ui.northOn=true; renderFocus(); return;
     }
     case 'habit-add':{
       const i=$('#habitAdd'); if(!i||!i.value.trim()) return;
@@ -3571,7 +3761,13 @@ document.addEventListener('click',e=>{
 
     case 'focus-add':{
       const i=$('#fi'); if(!i.value.trim()) return;
-      state.focus.push({id:uid(),title:i.value.trim(),done:false}); i.value=''; break;
+      state.focus.push({id:uid(),title:i.value.trim(),done:false}); i.value='';
+      /* someone who just set a statement is plainly using the panel, so it stays
+         active and the field stays under their hands for a second one. Without this
+         the field would vanish the instant the first statement landed, because the
+         empty-panel peek is dropped as soon as the panel holds something. */
+      ui.northOn=true;
+      break;
     }
     /* set aside / bring back write the same done/doneAt the old tick wrote, so
        the dn axis, the merge and every saved planner carry over unchanged */
@@ -3743,6 +3939,8 @@ document.addEventListener('keydown',e=>{
     if(['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
     if($('#modalRoot').innerHTML){ $('#modalRoot').innerHTML=''; return }
     if(ui.adding){ closeAdd(false); render(); return }
+    /* the keyboard's way out of an active True north, matching the outside press */
+    if(ui.northOn){ ui.northOn=false; renderFocus(); return }
     if(ui.sel){ ui.sel=null; render(); return }
   }
 });
@@ -4175,6 +4373,24 @@ document.addEventListener('selectionchange',()=>{
      document.activeElement&&document.activeElement.id==='noteBody') noteToolState();
 });
 
+/* ---------- scrollbars ----------
+   The one class the stylesheet's two scrollbar states hang off. `scroll` does not
+   bubble, so this listens in the CAPTURE phase: that is what lets ONE listener cover
+   every scroller in the app, including any added later, without each one opting in.
+   Passive, so it can never delay a scroll. The element is marked while scrolling and
+   unmarked after SB_IDLE ms of stillness; a rebuilt element simply leaves a stale
+   timer pointing at a detached node, which fires once into nothing. */
+const SB_IDLE=900;
+const sbTimers=new WeakMap();
+document.addEventListener('scroll',e=>{
+  const t=e.target;
+  const el=(!t||t===document||t===window)?document.documentElement:t;
+  if(!el.classList) return;
+  el.classList.add('scrolling');
+  clearTimeout(sbTimers.get(el));
+  sbTimers.set(el,setTimeout(()=>el.classList.remove('scrolling'),SB_IDLE));
+},{capture:true,passive:true});
+
 /* ---------- resize ---------- */
 /* Phones fire resize every time the on-screen keyboard opens or closes, because it
    shrinks the layout viewport. That only ever changes the height. Re-rendering there
@@ -4203,7 +4419,7 @@ window.A={state,ui,render,rollover,findTask,move,reorderTab,tally,streak,save:co
   sync,syncPush:()=>pushNow(true),syncPull:()=>pullNow(true),newSyncKey,
   mergeStates,flatten,stateSig,readCloud,stampLegacy,syncCycle,
   restoreBin,purgeBin,emptyBinNow,binList,fresh,MERGED_KEYS,rollIfNewDay,pastOpenCount,
-  themeGet,themeSet,
+  themeGet,themeSet,railOpen,railSet,
   get live(){ return state }};
 </script>
 </body>

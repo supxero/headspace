@@ -1940,7 +1940,7 @@ console.log('— the weekly list: one flat band, no tiers —');
   /* empty, so it is a header bar first */
   ok(!q('#weekAdd'),'an empty This week panel hides its add field behind the header');
   ok(/0 open/.test(q('#weekRail .kh').textContent),'while the header count reads 0 open');
-  click('#weekRail .kh[data-action="panel-toggle"]'); await wait(20);
+  click('#weekRail .kh[data-action="week-toggle"]'); await wait(20);
   ok(!!q('#weekAdd'),'opening the header reveals the add field');
 
   const stat0=JSON.stringify(A.tally([T()]))+'|'+A.streak();
@@ -2077,7 +2077,11 @@ console.log('— empty panels collapse to a header bar —');
   click('[data-action="focus-del"][data-id="'+fid9+'"]'); await wait(25);
   ok(!q('#fi'),'emptying the panel collapses it back to the header');
   click('[data-action="undo"]'); await wait(25);
-  ok(!!q('#fi'),'and restoring the item expands it again');
+  /* the Undo button lives in the toast, OUTSIDE the panel, so the same press that
+     restores the statement also puts the panel back to rest: the statement returns to
+     view, its working parts do not (Change 6). */
+  ok(!!q('#fpanel .frow'),'and restoring the item brings the statement back into view');
+  ok(!q('#fi'),'with the panel at rest, since the press that restored it landed outside');
   /* the peek flag is not persisted: this is presentation, not state */
   const savedP=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
   ok(savedP.ui===undefined&&savedP.settings.peek===undefined,'nothing about peeking is saved');
@@ -3251,7 +3255,7 @@ console.log('— placement: rail on desktop, board bottom on a phone —');
   ok(!!pq2('#habitAdd'),'the habits header opens the empty band in the phone placement');
   pq2('#habits [data-action="habit-toggle"]').click(); await wait(30);
   ok(!pq2('#habitAdd'),'and closes it again');
-  pq2('#weekMobile [data-action="panel-toggle"]').click(); await wait(30);
+  pq2('#weekMobile [data-action="week-toggle"]').click(); await wait(30);
   ok(!!pq2('#weekAdd'),'the weekly header opens the same way');
   /* with a habit defined the persisted manual collapse governs, exactly as before */
   pw2.A.state.habits.list.push({id:'ph1',name:'stretch',days:[1,2,3,4,5,6],up:Date.now()});
@@ -3447,6 +3451,297 @@ console.log('— themes: the choice survives a fresh boot —');
   ok(!!w2.document.querySelector('#board'),'the planner boots normally under mono');
   ok(w2.A.state.settings.view==='board','with its settings untouched by the theme');
   w2.close();
+}
+
+console.log('— layout: the rail collapses, device-local and unsynced —');
+{
+  const root=doc.documentElement;
+  const hide=q('#railcollapse'), show=q('#railshow');
+  ok(!!hide&&!!show,'a control to hide the rail and one to bring it back');
+  ok(hide.tagName==='BUTTON'&&show.tagName==='BUTTON','both are real buttons');
+  ok((hide.getAttribute('aria-label')||'').trim()==='Hide sidebar','the hide control is named');
+  ok((show.getAttribute('aria-label')||'').trim()==='Show sidebar','the show control is named');
+  ok(!!hide.querySelector('svg')&&!!show.querySelector('svg'),'drawn as inline SVG');
+  ok(!/[\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}]/u.test(hide.innerHTML+show.innerHTML),'and no emoji');
+  ok(!show.closest('#rail'),'the restore control is OUTSIDE the rail, or hiding it would hide the way back');
+
+  const sig0=A.stateSig(S()), saved0=w.localStorage.getItem('agora_dayplanner_v1');
+  ok(root.getAttribute('data-rail')===null,'the rail starts open');
+  hide.click(); await wait(20);
+  ok(root.getAttribute('data-rail')==='off','the hide control collapses it');
+  ok(w.localStorage.getItem('agora_dayplanner_rail')==='off','and remembers the choice on this device');
+  ok(A.railOpen()===false,'the app agrees');
+  show.click(); await wait(20);
+  ok(root.getAttribute('data-rail')===null,'the show control brings it back');
+  ok(w.localStorage.getItem('agora_dayplanner_rail')==='on','and remembers that too');
+
+  /* the whole point of a separate key: it can never reach state, the sig, or the cloud */
+  hide.click(); await wait(20);
+  ok(A.stateSig(S())===sig0,'collapsing changes no signature, so sync has nothing to push');
+  ok(w.localStorage.getItem('agora_dayplanner_v1')===saved0,'and writes nothing to the planner');
+  const savedR=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+  ok(!('rail' in savedR.settings)&&!('railOpen' in savedR.settings),'no rail field in saved settings');
+  ok(JSON.stringify(savedR).indexOf('agora_dayplanner_rail')<0,'and the key name appears nowhere in the planner');
+  ok(A.MERGED_KEYS.indexOf('rail')<0,'the merge has no rail key to carry');
+  show.click(); await wait(20);
+}
+
+console.log('— layout: the rail choice survives a fresh boot —');
+{
+  const dom3=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+    beforeParse(win){ try{win.localStorage.setItem('agora_dayplanner_rail','off')}catch(e){} }});
+  await wait(300);
+  const w3=dom3.window;
+  ok(w3.document.documentElement.getAttribute('data-rail')==='off',
+    'a fresh boot collapses the rail from the head script, before first paint');
+  ok(!!w3.A&&w3.A.railOpen()===false,'the app agrees after boot');
+  ok(!!w3.document.querySelector('#board'),'the planner boots normally with the rail collapsed');
+  ok(w3.A.state.settings.view==='board','with its settings untouched by the rail');
+  ok(JSON.stringify(w3.A.state).indexOf('data-rail')<0,'and nothing about it in state');
+  w3.close();
+}
+
+console.log('— layout: scrollbars appear while scrolling and go at rest —');
+{
+  /* one mechanism, applied through `*`, so a scroller added later is covered the day
+     it is written. The gutter is constant; only the thumb colour moves. */
+  ok(/\*::-webkit-scrollbar\{width:10px;height:10px\}/.test(html),'every scroller reserves a constant gutter');
+  ok(/\*::-webkit-scrollbar-thumb\{background-color:transparent/.test(html),'the thumb is invisible at rest');
+  ok(/\.scrolling::-webkit-scrollbar-thumb\{background-color:rgba\(var\(--ink-rgb\)/.test(html),
+    'and coloured while scrolling, from a theme variable rather than a hardcoded colour');
+  ok(/\*\{scrollbar-width:thin;scrollbar-color:transparent transparent\}/.test(html),
+    'Firefox gets the same constant gutter and the same two states');
+  ok(/\.scrolling\{scrollbar-color:rgba\(var\(--ink-rgb\)/.test(html),'with its thumb colour themed too');
+  /* the width is declared ONCE and never varies by state, which is what makes the
+     appearance free of layout: a rule that changed it would reflow the content */
+  ok((html.match(/::-webkit-scrollbar\{width:/g)||[]).length===1,
+    'the gutter width is declared once and no state changes it');
+  ok(!/\.scrolling::-webkit-scrollbar\{/.test(html),'no scrolling-state rule touches the track size');
+
+  const el=q('#rail');
+  el.classList.remove('scrolling');
+  el.dispatchEvent(new w.Event('scroll',{bubbles:false}));
+  await wait(20);
+  ok(el.classList.contains('scrolling'),'a scroll marks the element that scrolled');
+  const board=q('#board');
+  board.dispatchEvent(new w.Event('scroll',{bubbles:false}));
+  await wait(20);
+  ok(board.classList.contains('scrolling'),'a different scroller is marked independently');
+  ok(el.classList.contains('scrolling'),'and the first is still marked, they do not share a timer');
+  await wait(1000);
+  ok(!el.classList.contains('scrolling')&&!board.classList.contains('scrolling'),
+    'both go quiet once the scrolling stops');
+  /* scroll does not bubble, so the listener has to be in the capture phase or a
+     scroller nested anywhere below document would never be seen */
+  ok(/addEventListener\('scroll'[\s\S]{0,400}?capture:true/.test(html),'the listener is capture-phase');
+  ok(/addEventListener\('scroll'[\s\S]{0,400}?passive:true/.test(html),'and passive, so it cannot delay a scroll');
+  /* the keyboard scrolls too, and raises the same event, so nothing is hover-only */
+  ok(!/@media \(hover:hover\)\{[^}]*\.scrolling/.test(html),'the scrolling state is not gated on hover');
+}
+
+console.log('— layout: the logo resets the view —');
+{
+  const logo=q('.brandbtn');
+  ok(!!logo&&logo.tagName==='BUTTON','the logo is a real button');
+  ok((logo.getAttribute('aria-label')||'').trim().length>0,'and carries a name');
+  ok(!!logo.querySelector('.mark')&&!!logo.querySelector('.brand'),'wrapping the mark and the wordmark');
+
+  /* put the view as far from normal as it goes, with data in every list */
+  S().notes.push({id:'hn1',title:'a note',body:'some body',up:1,dn:1,pos:1});
+  S().settings.view='notes'; S().settings.noteSel='hn1';
+  S().settings.floatMode=true; S().settings.boardOffset=3; S().settings.stripDay=T();
+  S().settings.calSel=T(); S().settings.calOffset=2;
+  A.ui.noteQ='searching'; A.ui.sel='whatever';
+  A.save(); A.render(); await wait(30);
+  const before=JSON.stringify({days:S().days,notes:S().notes,floats:S().floats,
+    habits:S().habits,week:S().week,focus:S().focus,bin:S().bin,tomb:S().tomb});
+  const sigBefore=A.stateSig(S());
+  const syncBefore=JSON.stringify({key:A.sync.key,state:A.sync.state});
+
+  logo.click(); await wait(40);
+  ok(S().settings.view==='board','the logo lands on the board');
+  ok(S().settings.floatMode===false,'out of Free Floating');
+  ok(S().settings.boardOffset===0,'today back in view');
+  ok(S().settings.stripDay===null,'and today on the narrow strip too');
+  ok(S().settings.calSel===null&&S().settings.calOffset===0,'no calendar selection carried back');
+  ok(S().settings.noteSel===null,'no note left open');
+  ok(A.ui.noteQ===''&&A.ui.sel===null,'no stale search and no card left open');
+  ok(!!q('#board .col'),'and the board is actually on screen');
+
+  ok(JSON.stringify({days:S().days,notes:S().notes,floats:S().floats,
+    habits:S().habits,week:S().week,focus:S().focus,bin:S().bin,tomb:S().tomb})===before,
+    'not one item of planner data was touched');
+  ok(A.stateSig(S())===sigBefore,'the signature is unchanged, so it pushes nothing of its own');
+  ok(JSON.stringify({key:A.sync.key,state:A.sync.state})===syncBefore,'and the sync connection is left alone');
+  ok(!/location\.reload|window\.location\s*=/.test(html),'it is a view reset, never a page reload');
+
+  { /* an edit still inside the save debounce is COMMITTED by the reset, not dropped */
+    S().settings.view='notes'; S().settings.noteSel='hn1'; A.render(); await wait(30);
+    const ed=q('#noteBody'); ed.focus();
+    ed.textContent='typed but not yet committed';
+    fire(ed,'input'); await wait(10);              /* inside the 400ms debounce */
+    q('.brandbtn').click(); await wait(40);
+    const savedH=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+    ok(/typed but not yet committed/.test((savedH.notes.find(n=>n.id==='hn1')||{}).body||''),
+      'the half-typed body was flushed to storage before the view changed under it');
+    ok(S().settings.view==='board','and the reset still happened');
+  }
+  S().notes=S().notes.filter(n=>n.id!=='hn1'); A.save(); A.render(); await wait(20);
+}
+
+console.log('— tabs: reorder by tap, the fix for risk 12 —');
+{
+  S().settings.floatMode=true; S().settings.view='board';
+  S().floats=[{id:'tA',name:'Alpha',tasks:[],up:1,pos:1},
+              {id:'tB',name:'Bravo',tasks:[],up:1,pos:2},
+              {id:'tC',name:'Charlie',tasks:[],up:1,pos:3}];
+  A.save(); A.render(); await wait(30);
+  const heads=()=>qa('.col.backlog');
+  const order=()=>S().floats.map(f=>f.id).join(',');
+  const mv=(fid,d)=>q('[data-action="float-move"][data-fid="'+fid+'"][data-d="'+d+'"]');
+
+  ok(heads().length===3,'three tabs on the board');
+  ok(!mv('tA',-1),'the first tab renders NO left control rather than a dead one');
+  ok(!!mv('tA',1),'but it can go right');
+  ok(!!mv('tB',-1)&&!!mv('tB',1),'a middle tab has both');
+  ok(!mv('tC',1),'the last tab renders no right control');
+  ok(!!mv('tC',-1),'but it can go left');
+  qa('[data-action="float-move"]').forEach(b=>{
+    ok((b.getAttribute('aria-label')||'').trim().length>0&&b.textContent.trim().length>0,
+      'every move control has a name AND a visible label: '+(b.getAttribute('aria-label')||''));
+  });
+  ok(qa('[data-action="float-move"]').length===4,'four move controls across three tabs');
+  ok(mv('tB',-1).className===q('[data-action="float-rename"]').className,
+    'styled as the minis they sit beside');
+
+  const posBefore=S().floats.map(f=>f.pos);
+  mv('tA',1).click(); await wait(40);
+  ok(order()==='tB,tA,tC','tapping right moves the tab one position');
+  A.save(); await wait(10);
+  ok(S().floats.find(f=>f.id==='tA').pos>posBefore[0],'and the move is written to the pos axis');
+  mv('tA',-1).click(); await wait(40);
+  ok(order()==='tA,tB,tC','tapping left moves it back');
+  mv('tC',-1).click(); await wait(40);
+  ok(order()==='tA,tC,tB','the last tab can move left');
+  /* the guard IS the refusal: having moved to the end, tB stops offering a right
+     control at all, so there is no dead button to press */
+  ok(!mv('tB',1),'a tab that reaches the end stops offering the control that took it there');
+  ok(!!mv('tB',-1),'and offers only the direction it can still go');
+  ok(order()==='tA,tC,tB','with the order left exactly where the last move put it');
+
+  /* no new state field anywhere: a tap writes exactly what a drop writes */
+  A.save(); await wait(10);
+  const savedT=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+  savedT.floats.forEach(f=>ok(Object.keys(f).every(k=>['id','name','tasks','up','pos','dn'].includes(k)),
+    'a reordered tab carries only the fields it always had: '+Object.keys(f).join('/')));
+  ok(!('floatOrder' in savedT.settings),'and no ordering field was invented in settings');
+
+  { /* it merges as an ordinary reorder, exactly as a drag-produced one does */
+    const mine=JSON.parse(JSON.stringify(S()));
+    const theirs=JSON.parse(JSON.stringify(S()));
+    mine.floats=[mine.floats[1],mine.floats[0],mine.floats[2]];
+    mine.floats.forEach((f,i)=>{ f.pos=9e12+i });      /* the later word on order */
+    const m=A.mergeStates(mine,theirs);
+    ok(m.floats.map(f=>f.id).join(',')===mine.floats.map(f=>f.id).join(','),
+      'the later reorder wins the merge, the same rule a drag lands under');
+    ok(m.floats.length===3,'and no tab is lost or duplicated by it');
+  }
+  /* the drag path is untouched: still a draggable header, still one handler */
+  ok(qa('.col.backlog .colhead[draggable="true"]').length===3,'every header is still a drag handle');
+  S().settings.floatMode=false; A.save(); A.render(); await wait(20);
+}
+
+console.log('— This week collapses with content in it —');
+{
+  S().week.list=[{id:'wk1',title:'book the dentist',done:false,up:1,pos:1}];
+  S().settings.weekOpen=true; A.save(); A.render(); await wait(30);
+  const kh=()=>q('#weekRail .kh');
+  ok(!!kh()&&kh().dataset.action==='week-toggle','the header carries a toggle even with items in it');
+  ok(!!q('#weekRail .chev'),'and draws a chevron it can honour');
+  ok(!!q('#weekAdd'),'it starts expanded');
+  kh().click(); await wait(30);
+  ok(S().settings.weekOpen===false,'clicking it collapses the panel');
+  ok(!q('#weekAdd'),'the add field goes with it');
+  ok(!q('#weekRail .wrow'),'and so do the items');
+  ok(/1 open/.test(q('#weekRail .kh').textContent),'while the header still reports the count');
+  ok(!!q('#weekRail .chev')&&!q('#weekRail .chev.open'),'the chevron turns to closed');
+  ok(S().week.list.length===1,'collapsing hides the item, it never deletes it');
+  kh().click(); await wait(30);
+  ok(S().settings.weekOpen===true&&!!q('#weekAdd'),'and clicking again opens it');
+
+  { /* per device, like Habits: it is remembered, and it never pushes */
+    const sigW=A.stateSig(S());
+    kh().click(); await wait(30);
+    ok(A.stateSig(S())===sigW,'a collapse changes no signature, so sync has nothing to push');
+    A.save(); await wait(10);
+    const savedW=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+    ok(savedW.settings.weekOpen===false,'the choice is written to this device');
+    /* VIEWSET is what keeps a Pull from taking another screen's collapse states */
+    ok(/'habitsOpen','weekOpen'/.test(html),'and it rides VIEWSET beside habitsOpen, so a Pull never imports it');
+  }
+  { /* survives a reload */
+    const seed=w.localStorage.getItem('agora_dayplanner_v1');
+    const dom4=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+      beforeParse(win){ try{win.localStorage.setItem('agora_dayplanner_v1',seed)}catch(e){} }});
+    await wait(300);
+    const w4=dom4.window;
+    ok(w4.A.state.settings.weekOpen===false,'a fresh boot remembers the collapse');
+    ok(!w4.document.querySelector('#weekAdd'),'and comes back collapsed with the item still held');
+    ok(w4.A.state.week.list.length===1,'the item survived the reload inside the collapsed panel');
+    w4.close();
+  }
+  S().settings.weekOpen=true; S().week.list=[]; A.save(); A.render(); await wait(20);
+}
+
+console.log('— True north shows its working parts only while in use —');
+{
+  S().focus=[{id:'tn1',title:'ship it calmly',done:false,up:1,pos:1},
+             {id:'tn2',title:'an older line',done:true,doneAt:'2026-08-01',up:1,pos:2}];
+  A.ui.northOn=false; delete A.ui.peek.focus;
+  A.save(); A.render(); await wait(30);
+
+  ok(/ship it calmly/.test(q('#fpanel').textContent),'at rest the statement is in view');
+  ok(!q('#fi'),'the add field is not');
+  ok(!q('#fpanel .fdone'),'nor is the Set aside archive');
+  ok(!q('#fpanel .chev'),'and the pinned-open rule still draws no chevron');
+
+  q('#fpanel').click(); await wait(30);
+  ok(!!q('#fi'),'a press on the panel reveals the add field');
+  ok(!!q('#fpanel .fdone'),'and the archive');
+  ok(/ship it calmly/.test(q('#fpanel').textContent),'the statement is still there');
+
+  q('#board').click(); await wait(30);
+  ok(!q('#fi')&&!q('#fpanel .fdone'),'a press outside puts the working parts away');
+  ok(/ship it calmly/.test(q('#fpanel').textContent),'and the statement NEVER goes, which is the point of the panel');
+
+  q('#fpanel').click(); await wait(30);
+  ok(!!q('#fi'),'open again');
+  doc.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+  await wait(30);
+  ok(!q('#fi'),'Escape closes it too');
+  ok(/ship it calmly/.test(q('#fpanel').textContent),'statement still held');
+
+  { /* a first statement is always reachable: empty, the header opens the panel and
+       the field is right there, which is the path a new device takes */
+    S().focus=[]; A.ui.northOn=false; delete A.ui.peek.focus;
+    A.save(); A.render(); await wait(30);
+    ok(!q('#fi'),'an empty panel is a header bar');
+    ok(!!q('#fpanel .kh[data-action="panel-toggle"]'),'whose header offers a toggle');
+    click('#fpanel .kh[data-action="panel-toggle"]'); await wait(30);
+    ok(!!q('#fi'),'opening it puts the add field in reach with no statement held');
+    q('#fi').value='the very first line';
+    click('[data-action="focus-add"]'); await wait(30);
+    ok(S().focus.length===1,'a first statement can be set');
+    ok(!!q('#fi'),'and the field stays under your hands for a second one');
+  }
+  { /* neither flag is ever written anywhere */
+    A.ui.northOn=true; A.save(); await wait(10);
+    const savedN=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+    ok(savedN.settings.northOn===undefined&&savedN.northOn===undefined,'northOn is never saved');
+    ok(JSON.stringify(savedN).indexOf('northOn')<0,'it appears nowhere in the planner at all');
+    ok(A.stateSig(S()).indexOf('northOn')<0,'and never reaches the signature');
+  }
+  S().focus=[]; A.ui.northOn=false; A.save(); A.render(); await wait(20);
 }
 
 console.log('— the docs match reality —');

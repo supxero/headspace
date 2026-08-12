@@ -1062,7 +1062,7 @@ async function runProfile(browser, base, prof) {
     check('collapse: an emptied weekly panel is a header bar', !c.add && c.chev && !c.open, JSON.stringify(c));
     check('collapse: its count still reads 0 open', /0 open/.test(c.head), c.head);
     await audit('week-collapsed');
-    await act({ css: host + ' .kh[data-action="panel-toggle"]' });
+    await act({ css: host + ' .kh[data-action="week-toggle"]' });
     const opened = await A(() => !!document.querySelector('#weekAdd'));
     check('collapse: tapping the header opens the panel', opened);
     await audit('week-peeked');
@@ -1099,7 +1099,11 @@ async function runProfile(browser, base, prof) {
     const t1 = await A(() => window.A.state.focus[0].title);
     check('north: rename in place commits', t1 === 'Steady, not rushed', t1);
 
-    /* add a second statement through the always-present add row */
+    /* Change 6: the add row belongs to an ACTIVE panel, so press the panel first.
+       This is exactly what a user does, and it is the affordance under test. */
+    await act({ css: '#fpanel .kh' });
+    const revealed = await A(() => !!document.querySelector('#fi'));
+    check('north: a press on the panel reveals the add field', revealed);
     await typeInto('#fi', 'Less but better');
     await act({ css: '[data-action="focus-add"]' });
     let n = await A(() => window.A.state.focus.length);
@@ -1962,6 +1966,324 @@ async function runProfile(browser, base, prof) {
     await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
   });
 
+  /* ---- K2. the rail collapses, and the board takes the width ---- */
+  await flow('rail-collapse', async () => {
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+    const wide = prof.width >= 901;
+    const vis = () => A(() => {
+      const c = document.getElementById('railcollapse'), s = document.getElementById('railshow');
+      const box = el => { const r = el.getBoundingClientRect();
+        return { on: getComputedStyle(el).display !== 'none', w: Math.round(r.width), h: Math.round(r.height),
+                 right: Math.round(r.right) }; };
+      return { c: box(c), s: box(s),
+               attr: document.documentElement.getAttribute('data-rail'),
+               rail: getComputedStyle(document.getElementById('rail')).display,
+               board: Math.round(document.getElementById('board').getBoundingClientRect().width),
+               boardLeft: Math.round(document.getElementById('board').getBoundingClientRect().left),
+               ls: (() => { try { return localStorage.getItem('agora_dayplanner_rail') } catch (e) { return 'ERR' } })() };
+    });
+
+    const v0 = await vis();
+    if (!wide) {
+      /* under 900px the rail is already behind Menu; neither control is drawn, and
+         that is the whole answer for narrow, not a second mechanism */
+      check('rail: no collapse control on a narrow layout', !v0.c.on && !v0.s.on,
+        JSON.stringify({ c: v0.c.on, s: v0.s.on }));
+      const menu = await A(() => {
+        const t = document.getElementById('railtoggle');
+        return getComputedStyle(t).display !== 'none';
+      });
+      check('rail: Menu is the narrow mechanism and is still there', menu);
+      return;
+    }
+
+    check('rail: the collapse control is drawn on a wide layout', v0.c.on, JSON.stringify(v0.c));
+    check('rail: the restore control is hidden while the rail is open', !v0.s.on);
+    if (coarse) check('rail: the collapse control offers 44px', Math.min(v0.c.w, v0.c.h) >= 44,
+      v0.c.w + 'x' + v0.c.h);
+
+    await act({ css: '#railcollapse' });
+    const v1 = await vis();
+    check('rail: collapsing sets the attribute', v1.attr === 'off', String(v1.attr));
+    check('rail: and takes the rail off the layout', v1.rail === 'none', v1.rail);
+    check('rail: the choice is remembered on this device', v1.ls === 'off', String(v1.ls));
+    check('rail: the board takes the freed width', v1.board > v0.board + 150,
+      v0.board + ' -> ' + v1.board);
+    check('rail: the restore control appears', v1.s.on, JSON.stringify(v1.s));
+    if (coarse) check('rail: the restore control offers 44px', Math.min(v1.s.w, v1.s.h) >= 44,
+      v1.s.w + 'x' + v1.s.h);
+    /* nothing may be drawn under the restore button: the main column starts clear of it */
+    check('rail: the board starts clear of the restore control', v1.boardLeft >= v1.s.right,
+      'boardLeft=' + v1.boardLeft + ' buttonRight=' + v1.s.right);
+    await audit('rail-collapsed');
+
+    await act({ css: '#railshow' });
+    const v2 = await vis();
+    check('rail: the restore control brings it back', v2.attr === null && v2.rail !== 'none',
+      String(v2.attr) + '/' + v2.rail);
+    check('rail: and that choice is remembered too', v2.ls === 'on', String(v2.ls));
+    check('rail: the board is back to its original width', Math.abs(v2.board - v0.board) <= 1,
+      v0.board + ' -> ' + v2.board);
+    /* it is chrome, not data: nothing about it can reach the planner or the cloud */
+    const clean = await A(() => {
+      const raw = localStorage.getItem('agora_dayplanner_v1') || '';
+      return raw.indexOf('data-rail') < 0 && raw.indexOf('agora_dayplanner_rail') < 0
+        && window.A.state.settings.rail === undefined;
+    });
+    check('rail: nothing about it is written into the planner', clean);
+  });
+
+  /* ---- K3. scrollbars: visible while scrolling, and never costing layout ---- */
+  await flow('scrollbars', async () => {
+    /* Pick a scroller that REALLY overflows at this profile rather than assuming one:
+       the rail scrolls on a desktop and does not on a phone, where the whole document
+       scrolls instead. Everything below is then measured on something that can move. */
+    const target = await A(() => {
+      const cands = ['#rail', '#board', '#cal', '.colbody', '.notelist', '.noteed'];
+      for (const s of cands) {
+        const el = document.querySelector(s);
+        if (!el) continue;
+        const cs = getComputedStyle(el);
+        if (!/auto|scroll/.test(cs.overflowY + ' ' + cs.overflowX)) continue;
+        if (el.scrollHeight > el.clientHeight + 4 || el.scrollWidth > el.clientWidth + 4) return s;
+      }
+      /* narrow layouts hand scrolling to the PAGE: the rail goes overflow:visible and
+         the board stacks, so the only scroller left is the document itself */
+      const de = document.scrollingElement || document.documentElement;
+      if (de.scrollHeight > de.clientHeight + 4) return ':root';
+      return null;
+    });
+    check('scrollbars: the profile has a scroller to measure', !!target, String(target));
+    if (!target) return;
+    const isDoc = target === ':root';
+    const m = await page.evaluate(sel => {
+      const doc = sel === ':root';
+      const el = doc ? (document.scrollingElement || document.documentElement)
+                     : document.querySelector(sel);
+      /* the document's gutter is the classic measurement: the width the viewport lost
+         to the page scrollbar. An element's is what the scrollbar takes out of its
+         own content box, border aside. */
+      const gut = () => doc ? Math.round(window.innerWidth - document.documentElement.clientWidth)
+                            : Math.round(el.offsetWidth - el.clientWidth -
+                                ((parseFloat(getComputedStyle(el).borderLeftWidth) || 0) +
+                                 (parseFloat(getComputedStyle(el).borderRightWidth) || 0)));
+      el.classList.remove('scrolling');
+      const rest = { cw: el.clientWidth, ch: el.clientHeight, ow: el.offsetWidth, g: gut() };
+      el.classList.add('scrolling');
+      el.getBoundingClientRect();
+      const on = { cw: el.clientWidth, ch: el.clientHeight, ow: el.offsetWidth, g: gut() };
+      el.classList.remove('scrolling');
+      return { rest, on, vert: el.scrollHeight > el.clientHeight + 4 };
+    }, target);
+    /* THE POINT OF THE WHOLE MECHANISM: showing the thumb costs no layout at all */
+    check('scrollbars: showing the thumb changes no box',
+      m.rest.cw === m.on.cw && m.rest.ch === m.on.ch && m.rest.ow === m.on.ow && m.rest.g === m.on.g,
+      JSON.stringify(m));
+    /* and the gutter is genuinely reserved, so content never sat where the bar appears.
+       TWO CASES, and the difference is the platform's, not the page's. Every scroller
+       the page styles reserves its gutter. The TOP-LEVEL page bar on a touch profile
+       is the browser's own transient overlay, which no page can opt out of and which
+       reserves nothing anywhere, in any app, on that device. It costs no layout either
+       way, so the no-reflow guarantee holds in both; only the "never under content"
+       half is the platform's call, and only for the page itself. */
+    if (isDoc && coarse) {
+      check('scrollbars: the page bar on a touch profile is the platform overlay, reserving nothing',
+        m.rest.g === 0, 'gutter=' + m.rest.g + 'px');
+    } else {
+      check('scrollbars: the gutter is reserved even at rest, so nothing sits under the bar',
+        !m.vert || m.rest.g >= 6, 'gutter=' + m.rest.g + 'px on ' + target + ' vertical=' + m.vert);
+    }
+
+    /* a REAL scroll marks the element, and it goes quiet on its own */
+    const cycle = await page.evaluate(async sel => {
+      const doc = sel === ':root';
+      const el = doc ? (document.scrollingElement || document.documentElement)
+                     : document.querySelector(sel);
+      const vert = el.scrollHeight > el.clientHeight + 4;
+      el.scrollTop = 0; el.scrollLeft = 0;
+      if (vert) el.scrollTop = 40; else el.scrollLeft = 40;
+      await new Promise(r => setTimeout(r, 80));
+      const during = el.classList.contains('scrolling');
+      const moved = vert ? el.scrollTop > 0 : el.scrollLeft > 0;
+      await new Promise(r => setTimeout(r, 1200));
+      const after = el.classList.contains('scrolling');
+      el.scrollTop = 0; el.scrollLeft = 0;
+      return { during, after, moved };
+    }, target);
+    check('scrollbars: the test scroll actually moved the scroller', cycle.moved, JSON.stringify(cycle));
+    check('scrollbars: a real scroll shows the bar', cycle.during, JSON.stringify(cycle));
+    check('scrollbars: and it goes when the scrolling stops', !cycle.after, JSON.stringify(cycle));
+
+    /* every scroller in the app is covered by the one rule, not a list someone maintains */
+    const all = await A(() => {
+      const out = [];
+      document.querySelectorAll('*').forEach(el => {
+        const cs = getComputedStyle(el);
+        const scrolls = /auto|scroll/.test(cs.overflowY + ' ' + cs.overflowX);
+        if (!scrolls || !el.getClientRects().length) return;
+        const before = { cw: el.clientWidth, ch: el.clientHeight };
+        el.classList.add('scrolling');
+        el.getBoundingClientRect();
+        const same = el.clientWidth === before.cw && el.clientHeight === before.ch;
+        el.classList.remove('scrolling');
+        out.push({ id: el.id || el.className || el.tagName, same });
+      });
+      return out;
+    });
+    const bad = all.filter(x => !x.same);
+    check('scrollbars: no scroller anywhere reflows when its bar appears',
+      bad.length === 0 && all.length >= 2,
+      all.length + ' scrollers, ' + bad.length + ' reflowed' +
+      (bad.length ? ': ' + JSON.stringify(bad.slice(0, 3)) : ''));
+  });
+
+  /* ---- K4. tab reorder by tap: the coarse profiles are the whole reason ---- */
+  await flow('tab-move', async () => {
+    await act({ css: '.navbtn[data-action="floattoggle"]' });
+    await A(() => {
+      window.A.state.floats = [{ id: 'vA', name: 'Alpha', tasks: [], up: 1, pos: 1 },
+                               { id: 'vB', name: 'Bravo', tasks: [], up: 1, pos: 2 },
+                               { id: 'vC', name: 'Charlie', tasks: [], up: 1, pos: 3 }];
+      window.A.save(); window.A.render();
+    });
+    await sleep(320);
+    const shape = await A(() => {
+      const g = (fid, d) => document.querySelector('[data-action="float-move"][data-fid="' + fid + '"][data-d="' + d + '"]');
+      /* the same effective size the audit measures: a control drawn small on purpose
+         grows an invisible hit area through an absolutely positioned ::before with
+         negative offsets, which is the app's coarse-pointer idiom for minis */
+      const box = el => { if (!el) return null; const r = el.getBoundingClientRect();
+        const ps = getComputedStyle(el, '::before');
+        let ew = r.width, eh = r.height;
+        if (ps.content !== 'none' && ps.position === 'absolute') {
+          ew = r.width - ((parseFloat(ps.left) || 0) + (parseFloat(ps.right) || 0));
+          eh = r.height - ((parseFloat(ps.top) || 0) + (parseFloat(ps.bottom) || 0));
+        }
+        return { w: Math.round(r.width), h: Math.round(r.height),
+                 ew: Math.round(ew), eh: Math.round(eh),
+                 label: (el.getAttribute('aria-label') || '').trim(),
+                 text: (el.textContent || '').trim() }; };
+      return { aL: box(g('vA', -1)), aR: box(g('vA', 1)),
+               bL: box(g('vB', -1)), bR: box(g('vB', 1)),
+               cL: box(g('vC', -1)), cR: box(g('vC', 1)),
+               order: window.A.state.floats.map(f => f.id).join(',') };
+    });
+    check('tabs: the first tab renders no left control', shape.aL === null);
+    check('tabs: the last tab renders no right control', shape.cR === null);
+    check('tabs: a middle tab has both', !!shape.bL && !!shape.bR);
+    check('tabs: every move control is named and visibly labelled',
+      [shape.aR, shape.bL, shape.bR, shape.cL].every(b => b && b.label.length > 0 && b.text.length > 0),
+      JSON.stringify([shape.aR, shape.bL]));
+    if (coarse) {
+      const sizes = [shape.aR, shape.bL, shape.bR, shape.cL].map(b => Math.min(b.ew, b.eh));
+      check('tabs: every move control offers 44px to a finger',
+        Math.min.apply(null, sizes) >= 44,
+        'min=' + Math.min.apply(null, sizes) + 'px (drawn ' + shape.bL.w + 'x' + shape.bL.h + ')');
+    }
+    /* the tap itself, through the profile's real input: this is the reachability that
+       the drag has never had on a touch device */
+    await A(() => window.A.save());
+    const pos0 = await A(() => +window.A.state.floats.find(f => f.id === 'vA').pos);
+    await act({ css: '[data-action="float-move"][data-fid="vA"][data-d="1"]' });
+    const o1 = await A(() => window.A.state.floats.map(f => f.id).join(','));
+    check('tabs: a tap moves the tab one position', o1 === 'vB,vA,vC', o1);
+    /* commit while the order really has changed: pos is stamped from the changed
+       ordinal, exactly as a drop stamps it */
+    const pos1 = await A(() => { window.A.save();
+      return +window.A.state.floats.find(f => f.id === 'vA').pos; });
+    check('tabs: the move is written to the pos axis, as a drop writes it', pos1 > pos0,
+      pos0 + ' -> ' + pos1);
+    await act({ css: '[data-action="float-move"][data-fid="vA"][data-d="-1"]' });
+    const o2 = await A(() => window.A.state.floats.map(f => f.id).join(','));
+    check('tabs: and a tap the other way moves it back', o2 === 'vA,vB,vC', o2);
+    await audit('tab-move');
+    /* the drag surface is untouched */
+    const drag = await A(() => document.querySelectorAll('.col.backlog .colhead[draggable="true"]').length);
+    check('tabs: every header is still a drag handle', drag === 3, String(drag));
+    await act({ css: '.navbtn[data-action="floattoggle"]' });
+  });
+
+  /* ---- K5. This week collapses with content; True north rests ---- */
+  await flow('panels', async () => {
+    if (narrow) await act('#railtoggle');
+    const host = narrow ? '#weekMobile' : '#weekRail';
+    await A(() => {
+      window.A.state.week.list = [{ id: 'vw1', title: 'Book the dentist', done: false, up: 1, pos: 1 }];
+      window.A.state.settings.weekOpen = true;
+      window.A.state.focus = [{ id: 'vn1', title: 'Steady, not rushed', done: false, up: 1, pos: 1 }];
+      window.A.ui.northOn = false;
+      window.A.save(); window.A.render();
+    });
+    await sleep(320);
+    const w0 = await page.evaluate(h => {
+      const kh = document.querySelector(h + ' .kh');
+      return { add: !!document.querySelector('#weekAdd'),
+        toggle: kh ? (kh.dataset.action || null) : 'NO .kh IN ' + h,
+        chev: !!document.querySelector(h + ' .chev') };
+    }, host);
+    check('week: the header carries a toggle even holding an item', w0.toggle === 'week-toggle', String(w0.toggle));
+    check('week: and starts expanded', w0.add && w0.chev, JSON.stringify(w0));
+    await act({ css: host + ' .kh' });
+    const w1 = await A(() => ({ add: !!document.querySelector('#weekAdd'),
+      flag: window.A.state.settings.weekOpen,
+      items: window.A.state.week.list.length }));
+    check('week: tapping the header collapses it with content in it', !w1.add && w1.flag === false,
+      JSON.stringify(w1));
+    check('week: and the item is hidden, never deleted', w1.items === 1, String(w1.items));
+    await audit('week-collapsed-full');
+    await act({ css: host + ' .kh' });
+    const w2 = await A(() => !!document.querySelector('#weekAdd'));
+    check('week: tapping again opens it', w2);
+
+    /* True north at rest shows the statement and nothing else */
+    const n0 = await A(() => ({ text: document.querySelector('#fpanel').textContent,
+      fi: !!document.querySelector('#fi'), arch: !!document.querySelector('#fpanel .fdone'),
+      chev: !!document.querySelector('#fpanel .chev') }));
+    check('north: at rest the statement is in view', /Steady, not rushed/.test(n0.text));
+    check('north: and its working parts are not', !n0.fi && !n0.arch, JSON.stringify(n0));
+    check('north: the pinned-open rule still draws no chevron', !n0.chev);
+    await act({ css: '#fpanel .kh' });
+    const n1 = await A(() => ({ fi: !!document.querySelector('#fi'),
+      text: document.querySelector('#fpanel').textContent }));
+    check('north: a press on the panel reveals the add field', n1.fi);
+    check('north: with the statement still there', /Steady, not rushed/.test(n1.text));
+    await audit('north-active');
+    await act({ css: '#board' });
+    const n2 = await A(() => ({ fi: !!document.querySelector('#fi'),
+      text: document.querySelector('#fpanel').textContent }));
+    check('north: a press outside puts the working parts away', !n2.fi);
+    check('north: and the statement NEVER goes', /Steady, not rushed/.test(n2.text));
+    if (narrow) await act('#railtoggle');
+  });
+
+  /* ---- K6. the logo resets the view ---- */
+  await flow('logo-home', async () => {
+    if (narrow) await act('#railtoggle');
+    await A(() => {
+      window.A.state.settings.view = 'notes';
+      window.A.state.settings.floatMode = true;
+      window.A.state.settings.boardOffset = 3;
+      window.A.save(); window.A.render();
+    });
+    await sleep(320);
+    const before = await A(() => JSON.stringify(window.A.state.days).length + '|' +
+      window.A.state.notes.length + '|' + window.A.state.floats.length);
+    await act({ css: '.brandbtn' });
+    const after = await A(() => ({ view: window.A.state.settings.view,
+      floatMode: window.A.state.settings.floatMode,
+      off: window.A.state.settings.boardOffset,
+      noteSel: window.A.state.settings.noteSel,
+      board: !!document.querySelector('#board .col'),
+      data: JSON.stringify(window.A.state.days).length + '|' +
+            window.A.state.notes.length + '|' + window.A.state.floats.length }));
+    check('logo: lands on the board', after.view === 'board' && after.board, JSON.stringify(after));
+    check('logo: out of Free Floating and back to today', after.floatMode === false && after.off === 0);
+    check('logo: with no note left open', after.noteSel === null, String(after.noteSel));
+    check('logo: and not one item of planner data touched', after.data === before,
+      before + ' -> ' + after.data);
+    if (narrow) await act('#railtoggle');
+  });
+
   /* ---- L. final state ---- */
   await flow('final', async () => {
     await audit('final');
@@ -2016,7 +2338,13 @@ function summarize(results) {
 (async () => {
   const srv = await serve();
   const base = 'http://127.0.0.1:' + srv.address().port;
+  /* ignoreDefaultArgs drops Puppeteer's own `--hide-scrollbars`, which headless adds
+     for screenshot stability. With it in place every scrollbar in the browser is
+     zero-width, so the auto-hiding scrollbars could not be measured at all and the
+     rest of the geometry was being read off a browser that draws no bars. Off, the
+     pass measures what a real Chrome lays out. */
   const browser = await puppeteer.launch({ executablePath: findChrome(), headless: true,
+    ignoreDefaultArgs: ['--hide-scrollbars'],
     args: ['--disable-lcd-text', '--force-color-profile=srgb'] });
   const results = [];
   try {
