@@ -159,7 +159,12 @@ function bootstrap(seedJson) {
       const r = el.getBoundingClientRect();
       const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       const canHit = cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight;
-      if (canHit) {
+      /* A DISABLED CONTROL IS MEANT TO BE UNHITTABLE. The Notes step buttons are
+         pointer-transparent while disabled on purpose, so the press falls through to
+         the toolbar, which prevents it, rather than blurring the editor and dropping
+         a phone keyboard (index.html, `.ntb[disabled]`). Exempt from the hit test
+         only; its size and its label are still audited below. */
+      if (canHit && !el.disabled) {
         const hit = document.elementFromPoint(cx, cy);
         if (!hit || (hit !== el && !el.contains(hit)))
           out.hitMisses.push({ el: desc(el), hit: hit ? desc(hit) : 'null',
@@ -1298,8 +1303,40 @@ async function runProfile(browser, base, prof) {
         .map(el => { const r = el.getBoundingClientRect();
           return Math.round(Math.min(r.width, r.height)); }));
       check('notes: every toolbar control offers at least 44px',
-        tb.length >= 14 && Math.min.apply(null, tb) >= 44,
+        tb.length >= 16 && Math.min.apply(null, tb) >= 44,
         'min=' + Math.min.apply(null, tb) + 'px across ' + tb.length + ' controls');
+      /* the step buttons measured by name, so a regression names itself rather than
+         hiding inside the minimum above */
+      const sz = await A(() => ['undo', 'redo'].map(c => {
+        const el = document.querySelector('#noteTools .ntb[data-cmd="' + c + '"]');
+        if (!el) return -1;
+        const r = el.getBoundingClientRect();
+        return Math.round(Math.min(r.width, r.height));
+      }));
+      check('notes: Undo offers at least 44px', sz[0] >= 44, sz[0] + 'px');
+      check('notes: Redo offers at least 44px', sz[1] >= 44, sz[1] + 'px');
+    }
+    /* THE ROW STILL FITS. It carries two more controls and a separator than it did,
+       and it is the densest strip in the app, so prove it at every width: nothing
+       sticks out of the box, the box does not scroll, and the page does not either. */
+    {
+      const row = await A(() => {
+        const bar = document.getElementById('noteTools');
+        const b = bar.getBoundingClientRect();
+        const kids = [...bar.children].map(el => el.getBoundingClientRect());
+        return {
+          n: kids.length,
+          out: kids.filter(k => k.right > b.right + 0.5 || k.left < b.left - 0.5).length,
+          scroll: Math.round(bar.scrollWidth - bar.clientWidth),
+          rows: new Set(kids.map(k => Math.round(k.top))).size,
+          doc: Math.round(document.documentElement.scrollWidth - document.documentElement.clientWidth),
+        };
+      });
+      check('notes: the toolbar row does not overflow its box',
+        row.out === 0 && row.scroll <= 1,
+        'outside=' + row.out + ' scroll=' + row.scroll + ' controls=' + row.n + ' lines=' + row.rows);
+      check('notes: and the toolbar starts no horizontal page scroll', row.doc <= 1, 'doc=' + row.doc);
+      check('notes: the toolbar really is carrying the two extra controls', row.n >= 17, 'children=' + row.n);
     }
     /* a foreign render mid-formatting: the caret comes back to the same character */
     const caret = await A(() => {
@@ -1329,6 +1366,122 @@ async function runProfile(browser, base, prof) {
       return b.scrollHeight - b.clientHeight;
     });
     check('notes: the editor grows with the text, no inner scrollbar', grow <= 2, 'inner=' + grow);
+
+    /* ---- UNDO AND REDO THROUGH THE BUTTONS, with the profile's real input ----
+       This is the half jsdom cannot prove. On the coarse profiles every press below
+       is a real touchscreen tap, which is the case the buttons exist for: Ctrl+Z is
+       not reachable on a phone. The contract under test is that a tap runs the step
+       AND leaves the caret where the step was taken from, which needs the editor to
+       still be focused after the press (Section 4's mousedown rule). */
+    {
+      const nb = () => A(() => (window.A.state.notes.find(x => x.title === 'Packing list') || {}).body || '');
+      /* markup-blind: the formatting pass above leaves a highlight or a size live at
+         the caret, so Chrome wraps the new typing in a span. That is correct engine
+         behaviour, and the step run is about the WORDS, so compare what is read. */
+      const ntx = () => A(() => (document.getElementById('noteBody') || {}).textContent || '');
+      const stepState = () => A(() => {
+        const g = c => document.querySelector('#noteTools .ntb[data-cmd="' + c + '"]');
+        const u = g('undo'), r = g('redo');
+        return { has: !!u && !!r, u: u && u.disabled, r: r && r.disabled,
+                 svg: !!(u && u.querySelector('svg')) && !!(r && r.querySelector('svg')),
+                 un: (u && u.getAttribute('aria-label') || '').trim(),
+                 rn: (r && r.getAttribute('aria-label') || '').trim(),
+                 first: document.querySelector('#noteTools .ntb') === u,
+                 rpe: r && getComputedStyle(r).pointerEvents };
+      });
+      /* a clean body and a fresh history */
+      await A(() => { const n = window.A.state.notes.find(x => x.title === 'Packing list');
+        n.body = ''; window.A.render(); });
+      await sleep(320);
+      const s0 = await stepState();
+      check('notes: the toolbar carries a named Undo and Redo',
+        s0.has && s0.un === 'Undo' && s0.rn === 'Redo', JSON.stringify(s0));
+      check('notes: both are drawn as inline SVG', s0.svg);
+      check('notes: they lead the strip, where an editor puts them', s0.first);
+      check('notes: an untouched note offers neither step', s0.u === true && s0.r === true,
+        'undo=' + s0.u + ' redo=' + s0.r);
+      check('notes: a disabled step button is pointer-transparent, so a dead press cannot blur',
+        s0.rpe === 'none', s0.rpe);
+      /* a dead press must do nothing AND leave the editor alone */
+      await act({ css: '#noteBody' });
+      await act({ css: '#noteTools' });
+      const deadFocus = await A(() => document.activeElement && document.activeElement.id);
+      check('notes: a press on the dead end of the strip does not blur the editor',
+        deadFocus === 'noteBody', 'focus=' + deadFocus);
+
+      await act({ css: '#noteBody' });
+      await page.keyboard.type('s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 ');
+      await sleep(320);
+      const full = await nb();
+      const s1 = await stepState();
+      check('notes: ten typed words make Undo available', s1.u === false, 'undo disabled=' + s1.u);
+      check('notes: and leave Redo unavailable', s1.r === true, 'redo disabled=' + s1.r);
+
+      for (let i = 0; i < 10; i++) await act({ css: '#noteTools .ntb[data-cmd="undo"]' });
+      const back = await ntx();
+      check('notes: ten taps of Undo walk back ten whole words', back === 's1', 'text=' + JSON.stringify(back));
+      const caretAfter = await A(() => {
+        const ed = document.getElementById('noteBody'), s = getSelection();
+        if (!s.rangeCount) return { ok: false, why: 'no range' };
+        const r = s.getRangeAt(0);
+        return { ok: ed.contains(r.startContainer), off: r.startOffset,
+                 txt: (r.startContainer.data || ''),
+                 focus: document.activeElement && document.activeElement.id };
+      });
+      check('notes: a tap of Undo leaves focus in the editor',
+        caretAfter.focus === 'noteBody', JSON.stringify(caretAfter));
+      check('notes: and the caret comes back with the text, at the end of the restored word',
+        caretAfter.ok && caretAfter.off === 2, JSON.stringify(caretAfter));
+
+      const s2 = await stepState();
+      check('notes: with steps spent, Redo reads available', s2.r === false, 'redo disabled=' + s2.r);
+      let fwd = 0;
+      while (fwd < 40 && !(await stepState()).r) {
+        await act({ css: '#noteTools .ntb[data-cmd="redo"]' }); fwd++;
+      }
+      const s3 = await stepState();
+      check('notes: Redo walks forward at least ten steps and then reads unavailable',
+        fwd >= 10 && s3.r === true, 'steps=' + fwd + ' redo disabled=' + s3.r);
+      check('notes: and the forward end is the text the run started from',
+        (await nb()) === full, 'body=' + JSON.stringify(await nb()));
+      check('notes: while Undo is live again at the top of the stack', s3.u === false, 'undo disabled=' + s3.u);
+
+      /* the caret is not decoration: the next character must land where the step was
+         taken from. Typing also kills the redo branch, which the button must follow. */
+      await act({ css: '#noteTools .ntb[data-cmd="undo"]' });
+      const beforeX = await ntx();
+      await page.keyboard.type('X');
+      await sleep(240);
+      check('notes: the next keystroke after a tapped Undo lands at the restored caret',
+        (await ntx()) === beforeX + 'X', 'text=' + JSON.stringify(await ntx()));
+      const s4 = await stepState();
+      check('notes: and a fresh edit kills the redo branch, which the button reports',
+        s4.r === true, 'redo disabled=' + s4.r);
+
+      /* ONE history: a chord and a tap wind the same stack, not two of their own */
+      const base = await nb();
+      await act({ css: '#noteBody' });
+      await page.keyboard.down('Control'); await page.keyboard.press('KeyZ'); await page.keyboard.up('Control');
+      await sleep(220);
+      const afterChord = await nb();
+      await act({ css: '#noteTools .ntb[data-cmd="undo"]' });
+      const afterBoth = await nb();
+      check('notes: a chord then a tap are two steps of ONE stack',
+        afterChord.length < base.length && afterBoth.length < afterChord.length,
+        'base=' + base.length + ' chord=' + afterChord.length + ' tap=' + afterBoth.length);
+      await act({ css: '#noteTools .ntb[data-cmd="redo"]' });
+      check('notes: and the tap redoes the step the chord took',
+        (await nb()) === afterChord, 'body=' + JSON.stringify(await nb()));
+      await page.keyboard.down('Control'); await page.keyboard.press('KeyY'); await page.keyboard.up('Control');
+      await sleep(220);
+      check('notes: while the chord redoes the step the tap took',
+        (await nb()) === base, 'body=' + JSON.stringify(await nb()));
+      await audit('notes-steps');
+      /* leave the note as the rest of the pass expects to find it */
+      await A(() => { const n = window.A.state.notes.find(x => x.title === 'Packing list');
+        n.body = 'socks and passport'; window.A.render(); });
+      await sleep(300);
+    }
 
     /* search: filters in place, never touches the editor or steals its focus */
     await act('#noteSearch');

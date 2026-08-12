@@ -513,11 +513,21 @@ select option{background:var(--pearl);color:var(--txt)}
   border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:14px}
 .ntb{min-width:28px;padding:4px 7px;border-radius:7px;font-size:12.5px;font-weight:600;
   color:var(--mut);border:1px solid transparent;transition:.15s;line-height:1.25}
-@media (hover:hover){ .ntb:hover{color:var(--navy);border-color:var(--line)} }
-.ntb:active{transform:scale(.93)}
+@media (hover:hover){ .ntb:not([disabled]):hover{color:var(--navy);border-color:var(--line)} }
+.ntb:not([disabled]):active{transform:scale(.93)}
 .ntb.on{color:var(--navy);background:rgba(var(--ink-rgb),.09);border-color:var(--line2)}
+/* a step that does not exist reads as unavailable rather than as a live control. The
+   native attribute, so the press, the hover and the accessibility tree all agree at
+   once; opacity rather than a colour, so neither theme needs a variable for it. */
+/* pointer-events:none is load-bearing, not decoration. Chrome does not dispatch
+   mousedown from a disabled button, so the toolbar's preventDefault never runs and
+   the press would blur the editor, dropping a phone keyboard for nothing. Made
+   transparent, the press lands on #noteTools instead, which does prevent it. */
+.ntb[disabled]{opacity:.34;cursor:default;pointer-events:none}
 .ntb .swc{display:inline-block;width:13px;height:13px;border-radius:4px;border:1px solid var(--line2);vertical-align:-2px}
 .ntb .a1{font-size:10.5px}.ntb .a2{font-size:12.5px}.ntb .a3{font-size:15.5px}
+.ntb.stepb{display:inline-flex;align-items:center;justify-content:center}
+.ntb.stepb svg{width:15px;height:15px}
 .ntsep{width:1px;height:15px;background:var(--line);margin:0 5px;flex:none}
 #notePage{margin-left:auto;font-size:12px;padding:4px 7px;background:var(--pearl)}
 #noteBody{width:100%;border:none;background:transparent;box-shadow:none;border-radius:0;
@@ -2553,6 +2563,10 @@ function renderWeekly(){
    same body string. The search box keeps its own restore; the list is sorted at
    DISPLAY time, pinned first then by last edit, and browsing never churns a stamp. */
 const PIN='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5h5v4l1.5 2.5h-8L5.5 6.5z"/><path d="M8 9v4.5"/></svg>';
+/* the two step arrows, mirrored: an arrowhead and the arc it came round. Glyphs, so
+   they are aria-hidden and the button carries the name. */
+const UNDO_I='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.6 3.8 2.8 6.6l2.8 2.8"/><path d="M2.8 6.6h6a3.4 3.4 0 0 1 0 6.8H6.4"/></svg>';
+const REDO_I='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.4 3.8 13.2 6.6l-2.8 2.8"/><path d="M13.2 6.6h-6a3.4 3.4 0 0 0 0 6.8h2.4"/></svg>';
 const noteEditedAt=n=>Math.max(upOf(n),dnOf(n));   /* pos moves are not edits */
 const noteOrder=list=>list.slice().sort((a,b)=>
   ((b.pinned?1:0)-(a.pinned?1:0))||(noteEditedAt(b)-noteEditedAt(a)));
@@ -2951,10 +2965,33 @@ function noteUndo(ed,redo){
   h.cur=snap; h.at=0;             /* the next keystroke starts its own step */
   n.body=snap.body;
   ed.innerHTML=noteBodyHtml(snap.body);
+  /* THE CARET. A step restores the text AND the place it was typed from, so the next
+     keystroke lands where the word came out rather than at the top of the note. The
+     focus call is what makes that true for the BUTTONS: a chord arrives with the
+     editor already focused, but a press only keeps focus because mousedown was
+     prevented, and on a touch keyboard even that is not guaranteed. Focus first,
+     then set the range: focusing after would collapse it back to the start. */
+  if(document.activeElement!==ed){ try{ ed.focus({preventScroll:true}) }catch(err){ ed.focus() } }
   noteCaretSet(ed,snap.s,snap.e);
   notePatchRow(n);
   save(); noteToolState();
   return true;
+}
+/* Exactly the conditions noteUndo accepts, read by the toolbar so an enabled button
+   always does something and a disabled one is never hiding a working step. Same
+   history, same sync rule; noteUndo re-checks rather than trusting this. */
+function noteStepsAvail(){
+  const n=state.notes.find(x=>x.id===state.settings.noteSel), h=ui.noteHist;
+  if(!n||!h||h.id!==n.id||h.cur.body!==(n.body||'')) return {undo:false,redo:false};
+  return {undo:h.past.length>0, redo:h.future.length>0};
+}
+/* the cheap half of noteToolState: the two step buttons only. Runs on every keystroke,
+   where walking the caret's ancestors for fifteen buttons would be waste. */
+function noteStepState(){
+  const bar=$('#noteTools'); if(!bar) return;
+  const av=noteStepsAvail();
+  const set=(cmd,on)=>{ const b=bar.querySelector('.ntb[data-cmd="'+cmd+'"]'); if(b) b.disabled=!on };
+  set('undo',av.undo); set('redo',av.redo);
 }
 /* the in-place patches that keep the list row and the meta line honest while someone
    is typing. One copy, read by the input handler and by undo alike. */
@@ -3047,11 +3084,21 @@ function noteToolState(){
     else if(c==='ol') on=!!noteAncestor(ed,el=>el.tagName==='OL');
     b.classList.toggle('on',on);
   });
+  noteStepState();
 }
 function noteToolsHtml(cur){
   const b=(cmd,label,name)=>'<button class="ntb" data-action="note-fmt" data-cmd="'+cmd+
     '" aria-label="'+name+'" title="'+name+'">'+label+'</button>';
+  /* undo and redo lead the strip, where every editor puts them, and are reachable
+     without a keyboard: the chords do not exist on a phone or a tablet. They carry
+     .ntb, so they inherit the 44px coarse-pointer target and the mousedown contract
+     (Section 4) for free, and they route to the SAME noteUndo the chords call. */
+  const av=noteStepsAvail();
+  const st=(cmd,label,name,on)=>'<button class="ntb stepb" data-action="note-step" data-cmd="'+cmd+
+    '" aria-label="'+name+'" title="'+name+'"'+(on?'':' disabled')+'>'+label+'</button>';
   return '<div class="ntools" id="noteTools">'+
+    st('undo',UNDO_I,'Undo',av.undo)+st('redo',REDO_I,'Redo',av.redo)+
+    '<span class="ntsep" aria-hidden="true"></span>'+
     b('bold','<b>B</b>','Bold')+b('italic','<i>I</i>','Italic')+
     b('underline','<u>U</u>','Underline')+b('strike','<s>S</s>','Strikethrough')+
     '<span class="ntsep" aria-hidden="true"></span>'+
@@ -3436,6 +3483,13 @@ document.addEventListener('click',e=>{
       noteHistTrack(ed,n);   /* a command is structural, so always its own undo step */
       notePatchRow(n);
       save(); noteToolState();
+      return;
+    }
+    /* the buttons are the chords: one history, one function, one set of rules. No
+       render, for the same reason note-fmt does not: the caret lives in the editor. */
+    case 'note-step':{
+      const ed=$('#noteBody'); if(!ed) return;
+      noteUndo(ed,el.dataset.cmd==='redo');
       return;
     }
     case 'note-del':{
@@ -4081,6 +4135,7 @@ document.addEventListener('input',e=>{
       n.body=noteSerialize(e.target);
       noteHistTrack(e.target,n);   /* one snapshot per word, see noteHistBreak */
       notePatchRow(n);
+      noteStepState();             /* the first word makes Undo live, and a fresh edit kills Redo */
     }
     save();
   }
@@ -4103,11 +4158,15 @@ document.addEventListener('paste',e=>{
   if(t&&document.execCommand){ try{ document.execCommand('insertText',false,t) }catch(err){} }
 });
 /* pressing a toolbar button must not blur the editor: the selection it is about to
-   format lives there. mousedown is prevented on the buttons only; the page select
-   keeps its default so its dropdown still opens. */
+   format lives there, and an undo fired against a lost selection restores text with
+   nowhere to put the caret. Prevented across the strip rather than on the buttons
+   alone, so a press that lands on the padding, on a separator, or on a DISABLED step
+   button (which is pointer-transparent, so the press arrives here) is caught too.
+   The page select keeps its default so its dropdown still opens. */
 document.addEventListener('mousedown',e=>{
-  const b=e.target&&e.target.closest?e.target.closest('#noteTools .ntb'):null;
-  if(b) e.preventDefault();
+  const t=e.target;
+  if(!t||!t.closest) return;
+  if(t.closest('#noteTools')&&!t.closest('#notePage')) e.preventDefault();
 });
 /* the toolbar mirrors the caret: bold lights while the caret sits in bold text.
    Cheap, and gated to the one view that has a toolbar at all. */

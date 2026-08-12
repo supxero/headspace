@@ -2996,6 +2996,130 @@ console.log('— Notes: undo and redo —');
     await wait(10);
     ok(bodyOf('u4')==='first second third','nor does Ctrl+Z in the search box');
   }
+
+  /* ---- the toolbar's step buttons: the chords do not exist on a phone ---- */
+  const ub=()=>q('#noteTools .ntb[data-cmd="undo"]');
+  const rb=()=>q('#noteTools .ntb[data-cmd="redo"]');
+
+  { /* they exist, they are real buttons, and neither renders blank */
+    await openNote('tb1','seed');
+    ok(!!ub()&&!!rb(),'the toolbar carries an undo and a redo button');
+    ok(ub().tagName==='BUTTON'&&rb().tagName==='BUTTON','both are real buttons, not glyphs on a div');
+    ok((ub().getAttribute('aria-label')||'').trim()==='Undo','the undo button is named');
+    ok((rb().getAttribute('aria-label')||'').trim()==='Redo','the redo button is named');
+    ok(!!ub().getAttribute('title')&&!!rb().getAttribute('title'),'both carry a tooltip as well');
+    ok(ub().innerHTML.includes('<svg')&&rb().innerHTML.includes('<svg'),'drawn as inline SVG');
+    ok(!/[\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}]/u.test(ub().innerHTML+rb().innerHTML),'and no emoji');
+    ok(ub().classList.contains('ntb')&&rb().classList.contains('ntb'),
+      'both carry .ntb, so they inherit the 44px coarse target and the mousedown contract');
+    ok(q('#noteTools').contains(ub())&&q('#noteTools').contains(rb()),'both sit in the toolbar row');
+  }
+
+  { /* the guard at both ends: unavailable rather than sitting there doing nothing */
+    const ed=await openNote('tb2','seed');
+    ok(ub().disabled===true,'a note just opened has nothing to undo, so Undo is unavailable');
+    ok(rb().disabled===true,'and nothing to redo either');
+    const before=bodyOf('tb2');
+    rb().click(); ub().click(); await wait(10);
+    ok(bodyOf('tb2')===before,'pressing either dead button does nothing at all');
+    typeIn(ed,' one'); await wait(10);
+    ok(ub().disabled===false,'the first finished word makes Undo available');
+    ok(rb().disabled===true,'while Redo stays unavailable, nothing has been undone yet');
+    ub().click(); await wait(10);
+    ok(bodyOf('tb2')==='seed','the press took the step');
+    ok(ub().disabled===true,'back at the bottom, Undo reads unavailable again');
+    ok(rb().disabled===false,'and Redo has become available');
+    typeIn(q('#noteBody'),' two'); await wait(10);
+    ok(rb().disabled===true,'a fresh edit kills the redo branch and the button follows');
+  }
+
+  { /* TEN STEPS IN EACH DIRECTION, driven by the buttons alone */
+    const ed=await openNote('tb3','');
+    typeIn(ed,'a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 '); await wait(10);
+    const full=bodyOf('tb3'), deep=w.A.ui.noteHist.past.length;
+    ok(deep>=10,'ten finished words are at least ten steps ('+deep+')');
+    /* the run the requirement names: ten presses, ten whole words gone */
+    for(let i=0;i<10;i++){ ub().click(); await wait(4) }
+    await wait(10);
+    ok(bodyOf('tb3')==='a1','ten presses of Undo walk back ten whole steps ('+bodyOf('tb3')+')');
+    /* and on to the true bottom, counting, so the depth is measured rather than assumed */
+    let back=10;
+    while(!ub().disabled&&back<200){ ub().click(); await wait(2); back++ }
+    await wait(10);
+    ok(back>=10,'the history holds at least ten steps back ('+back+')');
+    ok(ub().disabled===true,'at the bottom Undo reads unavailable');
+    ok(bodyOf('tb3')==='','and the bottom is the note as it was opened');
+    ok(rb().disabled===false,'with every one of those steps waiting on Redo');
+    let fwd=0;
+    while(!rb().disabled&&fwd<200){ rb().click(); await wait(2); fwd++ }
+    await wait(10);
+    ok(fwd===back,'Redo climbs exactly as many steps as Undo took ('+fwd+' of '+back+')');
+    ok(fwd>=10,'which is at least ten forward as well ('+fwd+')');
+    ok(bodyOf('tb3')===full,'and lands on the text the run started from');
+    ok(q('#noteBody').textContent===full,'the editor shows it');
+    ok(rb().disabled===true,'Redo is spent');
+    ok(ub().disabled===false,'while Undo is live again, so the run is repeatable');
+  }
+
+  { /* ONE history, not two: a chord and a button wind the same stack */
+    const ed=await openNote('tb4','');
+    typeIn(ed,'one two three four '); await wait(10);
+    const full=bodyOf('tb4');
+    undo(); await wait(10);                      /* chord */
+    ub().click(); await wait(10);                /* button */
+    ok(bodyOf('tb4')==='one two three',
+      'a chord then a button are two steps of ONE stack, not one step each of two ('+bodyOf('tb4')+')');
+    rb().click(); await wait(10);                /* button redoes the chord's step */
+    ok(bodyOf('tb4')==='one two three four','the button redoes the step the chord took');
+    key({ctrlKey:true,key:'y'}); await wait(10); /* chord redoes the button's step */
+    ok(bodyOf('tb4')===full,'and the chord redoes the step the button took');
+    ok(rb().disabled===true,'the button reads the same exhausted stack the chord emptied');
+    key({ctrlKey:true,key:'y'}); await wait(10);
+    ok(bodyOf('tb4')===full,'a chord past the end changes nothing');
+    ok(rb().disabled===true,'and leaves the button unavailable');
+  }
+
+  { /* the caret after a BUTTON undo: text without a caret is half a feature */
+    const ed=await openNote('tb5','alpha');
+    typeIn(ed,' beta'); await wait(10);
+    typeIn(q('#noteBody'),' gamma'); await wait(10);
+    ok(bodyOf('tb5')==='alpha beta gamma','two words typed');
+    ub().click(); await wait(10);
+    ok(bodyOf('tb5')==='alpha beta','the button took one step back');
+    const r=w.getSelection().getRangeAt(0);
+    ok(q('#noteBody').contains(r.startContainer),'the caret is inside the editor after a button undo');
+    ok(r.startOffset===10,'at the character the step was taken from ('+r.startOffset+')');
+    ok(doc.activeElement===q('#noteBody'),
+      'and the editor holds focus, so the next keystroke lands where the word came out');
+    typeIn(q('#noteBody'),'!'); await wait(10);
+    ok(bodyOf('tb5')==='alpha beta!','which it does');
+  }
+
+  { /* Section 4's contract. An undo fired against a lost selection restores text with
+       nowhere to put the caret, so the press must never blur the editor. */
+    const ed=await openNote('tb6','seed');
+    typeIn(ed,' one'); await wait(10);
+    const md=el=>{ const e=new w.MouseEvent('mousedown',{bubbles:true,cancelable:true});
+      el.dispatchEvent(e); return e.defaultPrevented };
+    ok(md(ub())===true,'mousedown on Undo is prevented, so the editor keeps focus and selection');
+    ok(rb().disabled===true,'Redo is unavailable at this point');
+    ok(md(q('#noteTools'))===true,
+      'and the strip itself prevents it, so a press on a dead button cannot blur the editor either');
+    ok(/\.ntb\[disabled\][^}]*pointer-events:none/.test(html),
+      'a disabled step button is pointer-transparent, which is what routes that press to the strip');
+    ok(md(q('#notePage'))===false,'the page select keeps its default, so its dropdown still opens');
+  }
+
+  { /* the buttons obey the sync rule for free, because they call the same function */
+    const ed=await openNote('tb7','seed');
+    typeIn(ed,' local words'); await wait(10);
+    S().notes.find(n=>n.id==='tb7').body='from the other device';
+    A.render(); await wait(25);
+    ok(ub().disabled===true,
+      'after a foreign body the button reads unavailable rather than offering a step that would refuse');
+    ub().click(); await wait(10);
+    ok(bodyOf('tb7')==='from the other device','and a press cannot overwrite what just arrived');
+  }
   S().settings.view='board'; A.render(); await wait(20);
 }
 
