@@ -4080,20 +4080,91 @@ console.log('— True north: red statements on a light backdrop, measured —');
   const monoBlock=(css.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0];
   ok(/--north:#3F6488/.test(rootBlock),
     'cloud blue statements are the palette text-safe denim, the zone-button ink, not an imported red');
-  ok(/--northbg:#F5F4EF/.test(rootBlock),'on pearl, the lightest blue surface');
+  ok(/--northbg:#F6F6F7/.test(rootBlock),'on #F6F6F7, the app stand-in for white');
   ok(/--north:#E8443C/.test(monoBlock),'mono statements are the existing red, no second red invented');
-  ok(/--northbg:#313138/.test(monoBlock),'on the mono pearl');
+  ok(/--northbg:#F6F6F7/.test(monoBlock),'on that same #F6F6F7, so the panel is a light island in both themes');
+  const bgSky=(rootBlock.match(/--northbg:\s*(#[0-9A-Fa-f]{6})/)||[])[1];
+  const bgMono=(monoBlock.match(/--northbg:\s*(#[0-9A-Fa-f]{6})/)||[])[1];
+  ok(!!bgSky&&bgSky===bgMono,'both themes name one backdrop value ('+bgSky+' / '+bgMono+')');
+  /* white in effect, never #ffffff: the backdrop is mono's brightest existing
+     value, which is what lets the no-pure-white rule stand with no exception */
+  ok(!/#fff\b|#ffffff/i.test(bgSky||''),'and it is not pure white, so the no-white rule needs no exception');
+
+  /* the panel is a light island, so it carries its OWN ink set: a dark theme
+     cannot lend a near-white panel its near-white inks. Both blocks declare the
+     whole set, the same contract every other role in the palette lives under. */
+  const NORTHVARS=['northtxt','northmut','northmut2','northline','northfield','northink-rgb','northfocus','northfocus-rgb'];
+  const missSky=NORTHVARS.filter(v=>!new RegExp('--'+v+'\\s*:').test(rootBlock));
+  const missMono=NORTHVARS.filter(v=>!new RegExp('--'+v+'\\s*:').test(monoBlock));
+  ok(missSky.length===0,'cloud blue declares the whole panel ink set ('+missSky.join(',')+')');
+  ok(missMono.length===0,'mono declares the whole panel ink set ('+missMono.join(',')+')');
+  ok(/#fpanel\{[^}]*--txt:var\(--northtxt\)/.test(css)&&/#fpanel\{[^}]*--mut:var\(--northmut\)/.test(css)&&
+     /#fpanel\{[^}]*--cloud:var\(--northfield\)/.test(css),
+    'the panel re-points the roles once, so no rule inside it has to know its theme');
 
   /* contrast measured, not eyeballed, and the backdrop really is lighter than the rail */
   const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
   const lum=h=>{h=h.replace('#','');return 0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16))};
   const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
-  const rSky=ratio('#3F6488','#F5F4EF'), rMono=ratio('#E8443C','#313138');
+  const rSky=ratio('#3F6488',bgSky), rMono=ratio('#E8443C',bgMono);
   ok(rSky>=4.5,'cloud blue: statement ink on its backdrop measures '+rSky.toFixed(2)+', over 4.5');
   ok(rMono>=3&&rMono<4.5,
     'mono: red on its backdrop measures '+rMono.toFixed(2)+': over the large-text bar, under the normal one, which is why the 19px/700 face is load-bearing');
-  ok(lum('#F5F4EF')>lum('#CFE3F1'),'sky: the backdrop sits lighter than the rail powder');
-  ok(lum('#313138')>lum('#161619'),'mono: and lighter than the mono rail');
+  /* the whole island, role by role, on the backdrop it actually sits on */
+  const readV=b=>{const o={};[...b.matchAll(/--([a-z0-9-]+)\s*:\s*(#[0-9A-Fa-f]{6})\b/g)].forEach(m=>o[m[1]]=m[2]);return o};
+  for(const [nm,blk,bg] of [['cloud blue',rootBlock,bgSky],['mono',monoBlock,bgMono]]){
+    const v=readV(blk);
+    ok(ratio(v.northtxt,bg)>=4.5,nm+': the panel strong ink reads at '+ratio(v.northtxt,bg).toFixed(2));
+    ok(ratio(v.northmut,bg)>=4.5,nm+': the panel label ink reads at '+ratio(v.northmut,bg).toFixed(2));
+    ok(ratio(v.northmut2,bg)>=3,nm+': the panel whisper ink holds 3+ at '+ratio(v.northmut2,bg).toFixed(2));
+    ok(ratio(v.northtxt,v.northfield)>=4.5,nm+': the add field text reads on the field at '+ratio(v.northtxt,v.northfield).toFixed(2));
+    ok(v.northline!==bg,nm+': the panel has a rim at all, distinct from its own surface');
+  }
+  /* the rim is the half of "panel, not hole" that the stylesheet owns, and the two
+     themes need different amounts of it. Cloud blue's panel was always a light card
+     on a light rail and keeps the palette hairline it always drew, unchanged. Mono's
+     panel is new: a near-white island in a near-black rail, where the edge is the
+     thing standing between "card" and "cut-out", so it carries a real 3:1 boundary. */
+  const monoInk=readV(monoBlock);
+  ok(ratio(monoInk.northline,bgMono)>=3,
+    'mono: the island carries a true edge on its backdrop ('+ratio(monoInk.northline,bgMono).toFixed(2)+')');
+  ok(/--northline:#9BBBD4/.test(rootBlock),
+    'cloud blue keeps the palette hairline this panel was always drawn with, so its edge did not move');
+  ok(lum(bgSky)>lum('#CFE3F1'),'sky: the backdrop sits lighter than the rail powder');
+  ok(lum(bgMono)>lum('#161619'),'mono: and far lighter than the mono rail, which is the point of an island');
+}
+
+console.log('— one size: the four nav labels and the held statement —');
+{
+  const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+  const navRule=(css.match(/\n\.navbtn\{([^}]*)\}/)||[])[1]||'';
+  const stRule=(css.match(/#fpanel \.frow:not\(\.done\) \.ftxt\{([^}]*)\}/)||[])[1]||'';
+  const navSize=parseFloat((navRule.match(/font-size:([\d.]+)px/)||[])[1]);
+  const stSize=parseFloat((stRule.match(/font-size:([\d.]+)px/)||[])[1]);
+  const stWeight=parseInt((stRule.match(/font-weight:(\d+)/)||[])[1],10);
+  ok(navSize===19,'the four nav labels read at 19px ('+navSize+')');
+  ok(stSize===navSize,'and a held statement reads at exactly that size ('+stSize+' vs '+navSize+')');
+  ok(!/font-size:13\.5px/.test(navRule),'the old 13.5px nav face is gone');
+  /* WHY the match was made by raising the nav rather than shrinking the statement:
+     contrast does not move with type size, only the bar that applies does. Mono's
+     red measures 3.65 on the backdrop, so the statement is legal as WCAG large
+     text and illegal as normal text, and the large-text floor at weight 700 is
+     14pt = 18.66px. Nothing on the scale between 17 and 19 can hold that. */
+  ok(stWeight>=700&&stSize>=18.66,
+    'the shared size holds the 14pt bold large-text floor ('+stSize+'px/'+stWeight+')');
+  const scale=[...css.matchAll(/font-size:([\d.]+)px/g)].map(m=>parseFloat(m[1]));
+  ok(scale.filter(s=>s===19).length>=2,'19px was already a step on the scale, not a size invented for this');
+  ok(!scale.some(s=>s>17&&s<19),'and nothing sits between 17 and 19 that could have held the floor instead');
+  /* nav labels at 19px are still weight 500, so they are NORMAL text and 4.5 is
+     their bar; both palettes clear it, which is why the growth costs no contrast */
+  const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
+  const lum=h=>{h=h.replace('#','');return 0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16))};
+  const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+  ok(/\.navbtn\{[^}]*font-weight:500/.test(css),'the labels stay at weight 500, so 4.5 is their bar, not 3');
+  ok(ratio('#41627F','#CFE3F1')>=4.5,'cloud blue: a resting label on the rail measures '+ratio('#41627F','#CFE3F1').toFixed(2));
+  ok(ratio('#ABABB3','#161619')>=4.5,'mono: a resting label on the rail measures '+ratio('#ABABB3','#161619').toFixed(2));
+  ok(ratio('#243A5E','#F5F4EF')>=4.5,'cloud blue: the active label on its pearl measures '+ratio('#243A5E','#F5F4EF').toFixed(2));
+  ok(ratio('#ECECEF','#313138')>=4.5,'mono: the active label on its pearl measures '+ratio('#ECECEF','#313138').toFixed(2));
 }
 
 console.log('— the docs match reality —');

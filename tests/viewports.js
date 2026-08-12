@@ -242,8 +242,16 @@ function bootstrap(seedJson) {
         ['--onpri', '--done', 3],
         ['--denim', '--cloud', 3], ['--denim', '--pearl', 3],
         ['--today', '--canvas', 3, true], ['--txt', '--canvas', 4.5, true], ['--ocean', '--canvas', 3, true],
-        /* the True north statement is 19px/700, WCAG large text: 3:1 is its bar */
+        /* the True north statement is 19px/700, WCAG large text: 3:1 is its bar.
+           It measures 3.65 on the #F6F6F7 backdrop, up from 3.27 on the old mono
+           pearl and still short of 4.5, which is why the 19px face is the floor
+           and why matching the nav meant raising the labels, not shrinking this. */
         ['--north', '--northbg', 3],
+        /* the panel is a near-white island in BOTH themes now, so it carries its
+           own ink set and each role is measured on the backdrop it really sits on.
+           Under mono these are the inversion: dark ink on a light panel. */
+        ['--northtxt', '--northbg', 4.5], ['--northmut', '--northbg', 4.5],
+        ['--northmut2', '--northbg', 3], ['--northtxt', '--northfield', 4.5],
       ];
       for (const p of PAIRS) {
         if (p[3] && !mono) continue;
@@ -288,6 +296,15 @@ function bootstrap(seedJson) {
       sample('.badge', 3, 'the TODAY badge on its tint');
       /* the red-on-light pair Change 4 introduced: live, composited, both themes */
       sample('#fpanel .frow:not(.done) .ftxt', 3, 'the True north statement on its backdrop');
+      /* the rest of the panel, live: the near-white backdrop would have left the
+         header at 2.11 and the whisper tier at 3.39 under mono if the island did
+         not re-point its own inks, so measure them where they actually render */
+      sample('#fpanel .kh', 4.5, 'the True north panel header on its backdrop');
+      sample('#fpanel .frow .mini', 3, 'a True north row control on its backdrop');
+      /* the nav labels now read at the statement's size; 19px at weight 500 is
+         still normal text, so 4.5 is their bar in both themes */
+      sample('#rail .navbtn:not(.on)', 4.5, 'a resting nav label on the rail');
+      sample('#rail .navbtn.on', 4.5, 'the active nav label on its pearl');
       sample('#stickyPad', 4.5, 'the sticky note text on its panel');
     })();
 
@@ -1100,7 +1117,36 @@ async function runProfile(browser, base, prof) {
     check('north: no tick box and no tick action', !p0.box && !p0.tick);
     check('north: holding a statement, no chevron and no toggle', !p0.chev && !p0.toggle);
     check('north: the header never says open', !p0.open);
-    check('north: the panel sits on palette pearl', p0.bg === 'rgb(245, 244, 239)', p0.bg);
+    /* ONE backdrop, both themes: the panel is a near-white island wherever it sits,
+       so read it under sky and again with the mono attribute forced on. #F6F6F7 is
+       the app's stand-in for white (mono's brightest existing value), never #ffffff. */
+    const bgBoth = await A(() => {
+      const e = document.documentElement, was = e.getAttribute('data-theme');
+      const p = document.querySelector('#fpanel');
+      e.removeAttribute('data-theme');
+      const sky = getComputedStyle(p).backgroundColor;
+      e.setAttribute('data-theme', 'mono');
+      const mono = getComputedStyle(p).backgroundColor;
+      if (was) e.setAttribute('data-theme', was); else e.removeAttribute('data-theme');
+      return { sky, mono };
+    });
+    check('north: the panel sits on the near-white backdrop', bgBoth.sky === 'rgb(246, 246, 247)', bgBoth.sky);
+    check('north: and takes that same backdrop under mono, not the rail surface',
+      bgBoth.mono === 'rgb(246, 246, 247)', bgBoth.mono);
+    /* the rail speaks at one size: the RENDERED statement and the RENDERED nav
+       labels must report the same computed font-size, measured, not assumed */
+    const oneSize = await A(() => {
+      const st = document.querySelector('#fpanel .frow:not(.done) .ftxt');
+      const nav = [...document.querySelectorAll('#rail .navbtn')];
+      return { stmt: parseFloat(getComputedStyle(st).fontSize),
+        weight: +getComputedStyle(st).fontWeight,
+        nav: nav.map(b => parseFloat(getComputedStyle(b).fontSize)),
+        labels: nav.map(b => b.textContent.trim().slice(0, 14)) };
+    });
+    check('north: the statement and all four nav labels render at one size',
+      oneSize.nav.length === 4 && oneSize.nav.every(s => s === oneSize.stmt), JSON.stringify(oneSize));
+    check('north: and that size holds the 14pt bold large-text floor',
+      oneSize.stmt >= 18.66 && oneSize.weight >= 700, oneSize.stmt + 'px/' + oneSize.weight);
     await audit('true-north', { root: '#fpanel' });
 
     /* rename in place */

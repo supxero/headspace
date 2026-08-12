@@ -59,11 +59,19 @@ try{
   --onpri:#EDF4FA;       /* ink on the primary action and the completion fill */
   --oncanvas:#A9C4DB;    /* hint text sitting directly on the canvas */
   --toastact:#8FB6D8; --toastact-rgb:143,182,216; /* the Undo button inside a toast */
-  /* True north: the statement ink and the panel backdrop, split from the shared
-     roles so each theme can pick its own statement voice. In this theme the ink
-     is the deep text-safe denim the zone buttons already use (--should-t), never
-     an imported red, and the backdrop stays pearl, the lightest blue surface. */
-  --north:#3F6488; --northbg:#F5F4EF;
+  /* True north: the statement ink, the panel backdrop, and the panel's OWN ink set.
+     The ink here is the deep text-safe denim the zone buttons already use
+     (--should-t), never an imported red. The backdrop is #F6F6F7 in BOTH themes:
+     the app's stand-in for white, mono's brightest existing value, deliberately
+     short of #ffffff so the no-white rule needs no exception. A backdrop that is
+     near-white in both themes makes the panel a light island, and an island needs
+     its own inks, because a dark theme cannot lend a light panel its near-white
+     ones. In this theme they are the values the panel already used: nothing but
+     the backdrop moves, and the blue panel is unchanged to the pixel. */
+  --north:#3F6488; --northbg:#F6F6F7;
+  --northtxt:#243A5E; --northmut:#41627F; --northmut2:#6A88A3;
+  --northline:#9BBBD4; --northfield:#EDF4FA; --northink-rgb:36,58,94;
+  --northfocus:#5F86A6; --northfocus-rgb:95,134,166;
   --grad:linear-gradient(135deg,#2F4156,#5F86A6);          /* text-safe */
   --gradf:linear-gradient(135deg,#2F4156,#5F86A6 55%,#8FB6D8); /* decorative */
   --ring1:#2F4156; --ring2:#5F86A6; --ring3:#8FB6D8;       /* the progress ring's stops */
@@ -131,11 +139,19 @@ try{
   --oncanvas:#9B9BA5;
   --toastact:#151518; --toastact-rgb:21,21,24;
   /* the statements are the red, at 19px/700 (WCAG large text, the 3:1 bar), on
-     the mono pearl, the brightest surface in the theme and well lighter than the
-     rail. Red on this backdrop measures 3.27:1: over the large-text bar the
-     statement face earns, but under 4.5, which is why the type size is part of
-     the design and not a flourish. Measured, not eyeballed. */
-  --north:#E8443C; --northbg:#313138;
+     #F6F6F7: the same near-white backdrop the blue theme takes, and the brightest
+     value this palette owns. Red measures 3.65:1 there, up from 3.27 on the old
+     mono pearl but still UNDER the 4.5 normal-text bar, so the type size remains
+     load-bearing and not a flourish. Measured, not eyeballed.
+     A near-white panel in a near-black rail inverts every OTHER role it uses: ink
+     and hairlines come down the grey ramp instead of up it, and the add field
+     takes a light surface so its text can be dark. Without this the panel header
+     would sit at 2.11 and its dates, mini buttons and set-aside rows at 3.39 on
+     the new backdrop, and anything reaching --txt would vanish at 1.12. */
+  --north:#E8443C; --northbg:#F6F6F7;
+  --northtxt:#161619; --northmut:#40404A; --northmut2:#6F6F79;
+  --northline:#40404A; --northfield:#E9E9EC; --northink-rgb:22,22,25;
+  --northfocus:#40404A; --northfocus-rgb:64,64,74;
   --grad:linear-gradient(135deg,#E8443C,#E8443C);
   --gradf:linear-gradient(135deg,#E9E9EC,#E9E9EC);
   --ring1:#E8443C; --ring2:#E8443C; --ring3:#E8443C;
@@ -197,7 +213,13 @@ select option{background:var(--pearl);color:var(--txt)}
 
 /* rail buttons */
 .navgrp{display:flex;flex-direction:column;gap:6px}
-.navbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;border-radius:var(--r2);font-size:13.5px;font-weight:500;color:var(--mut);border:1px solid transparent;transition:.16s}
+/* the four nav labels read at 19px, the same size as a held True north statement,
+   so the rail speaks at one size. The convergence had to go UP, not down: the
+   statement carries mono's red at 3.65:1, which holds the 3:1 large-text bar only
+   while the face stays at or above 18.66px (14pt) bold, and no smaller step on the
+   scale can do that. At 19px/500 these labels are still normal text, so 4.5 stays
+   their bar, and both palettes clear it: 4.85 blue, 7.92 mono. */
+.navbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;border-radius:var(--r2);font-size:19px;font-weight:500;color:var(--mut);border:1px solid transparent;transition:.16s}
 .navbtn:hover{background:rgba(var(--ink-rgb),.06);color:var(--txt)}
 /* the active view carries the accent: an inset bar and a tinted icon in the
    today colour, which is the palette's "you are here" role in both themes: the
@@ -234,15 +256,31 @@ select option{background:var(--pearl);color:var(--txt)}
    more padding, and the display face for the statement itself. No new colour,
    no gradient, no stripe, no icon; row hairlines and the tick are gone because
    a statement is read, not processed. */
-#fpanel{background:var(--northbg);border-color:var(--line2);padding:15px 15px 14px}
+/* the panel is a light island in both themes, so it re-points the roles it uses
+   rather than every rule inside it learning which theme it is in. Each rule below
+   (.kh, .chev, .empty, .fdate, .mini, .fdone, the add field) keeps reading exactly
+   the variable it always read; only the values change, and only inside the panel.
+   In cloud blue these resolve to the values those roles already held, so the blue
+   panel does not move. In mono they are the inversion the near-white backdrop
+   forces. What keeps it reading as a panel and not a hole punched in the sidebar
+   is that the surface still carries the card's 14px radius and a --northline rim
+   in both themes, and its contents are inked FOR it: a bright rectangle with the
+   rail's own near-white text sitting in it is what would have looked like a cut. */
+#fpanel{background:var(--northbg);border-color:var(--northline);padding:15px 15px 14px;
+  --txt:var(--northtxt);--navy:var(--northtxt);--mut:var(--northmut);--mut2:var(--northmut2);
+  --line2:var(--northline);--cloud:var(--northfield);--ink-rgb:var(--northink-rgb);
+  --denim:var(--northfocus);--denim-rgb:var(--northfocus-rgb)}
 .frow{display:flex;align-items:flex-start;gap:8px;padding:8px 0}
 /* the held statements are the one highlighted thing in the sidebar: statement
-   ink (--north) at 19px/700. The size is load-bearing, not taste: 19px at 700
-   is WCAG large text, and mono's red on its light backdrop clears the 3:1
-   large-text bar (3.27) while falling short of the 4.5 normal-text bar, so
-   shrinking this face breaks accessibility, not just looks. Scoped to the
-   panel: the weekly list shares .ftxt and keeps its own size. Set-aside rows
-   keep their muted small face through the .frow.done override below. */
+   ink (--north) at 19px/700, now the same size the nav labels read at. The size
+   is load-bearing, not taste: 19px at 700 is WCAG large text, and mono's red on
+   the #F6F6F7 backdrop clears the 3:1 large-text bar (3.65) while falling short
+   of the 4.5 normal-text bar, so shrinking this face breaks accessibility, not
+   just looks. Contrast does not move with type size; only which bar applies
+   does, which is why matching the nav meant raising the labels to this face
+   rather than lowering the statement to theirs. Scoped to the panel: the weekly
+   list shares .ftxt and keeps its own size. Set-aside rows keep their muted
+   small face through the .frow.done override below. */
 #fpanel .frow:not(.done) .ftxt{font-size:19px;font-weight:700;line-height:1.35;color:var(--north)}
 /* block, not inline: at 19px a statement wraps in the rail, and a wrapped inline
    span's box no longer covers its own centre, so the tap that should open the
