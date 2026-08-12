@@ -4176,37 +4176,72 @@ console.log('— True north: red statements on a light backdrop, measured —');
   ok(lum(bgMono)>lum('#161619'),'mono: and far lighter than the mono rail, which is the point of an island');
 }
 
-console.log('— one size: the four nav labels and the held statement —');
+console.log('— the rail: five panels on one surface, and the sizes unpaired —');
 {
   const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+  const rootBlock=(css.match(/:root\{[^}]*\}/)||[''])[0];
+  const monoBlock=(css.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0];
   const navRule=(css.match(/\n\.navbtn\{([^}]*)\}/)||[])[1]||'';
+  const onRule=(css.match(/\n\.navbtn\.on\{([^}]*)\}/)||[])[1]||'';
   const stRule=(css.match(/#fpanel \.frow:not\(\.done\) \.ftxt\{([^}]*)\}/)||[])[1]||'';
   const navSize=parseFloat((navRule.match(/font-size:([\d.]+)px/)||[])[1]);
   const stSize=parseFloat((stRule.match(/font-size:([\d.]+)px/)||[])[1]);
   const stWeight=parseInt((stRule.match(/font-weight:(\d+)/)||[])[1],10);
-  ok(navSize===19,'the four nav labels read at 19px ('+navSize+')');
-  ok(stSize===navSize,'and a held statement reads at exactly that size ('+stSize+' vs '+navSize+')');
-  ok(!/font-size:13\.5px/.test(navRule),'the old 13.5px nav face is gone');
-  /* WHY the match was made by raising the nav rather than shrinking the statement:
-     contrast does not move with type size, only the bar that applies does. Mono's
-     red measures 3.65 on the backdrop, so the statement is legal as WCAG large
-     text and illegal as normal text, and the large-text floor at weight 700 is
-     14pt = 18.66px. Nothing on the scale between 17 and 19 can hold that. */
-  ok(stWeight>=700&&stSize>=18.66,
-    'the shared size holds the 14pt bold large-text floor ('+stSize+'px/'+stWeight+')');
-  const scale=[...css.matchAll(/font-size:([\d.]+)px/g)].map(m=>parseFloat(m[1]));
-  ok(scale.filter(s=>s===19).length>=2,'19px was already a step on the scale, not a size invented for this');
-  ok(!scale.some(s=>s>17&&s<19),'and nothing sits between 17 and 19 that could have held the floor instead');
-  /* nav labels at 19px are still weight 500, so they are NORMAL text and 4.5 is
-     their bar; both palettes clear it, which is why the growth costs no contrast */
+
+  /* THE PAIRING IS UNDONE. The two were briefly both 19px so the rail read at one
+     size; they are independent again and only one of them is load-bearing. */
+  ok(navSize===13.5,'the nav labels are back to 13.5px ('+navSize+')');
+  ok(stSize===19&&stWeight===700,'and the statement holds 19px/700 ('+stSize+'px/'+stWeight+')');
+  ok(stSize!==navSize,'the two are no longer tied to each other');
+  ok(stSize>=18.66&&stWeight>=700,
+    'the statement still clears the 14pt bold large-text floor, which is what makes mono legal at 3.65');
+
+  /* ONE SURFACE: the four nav items take the True north backdrop */
+  ok(/\.navbtn\{[^}]*background:var\(--northbg\)/.test(css),
+    'the nav items take the True north backdrop, so the five rail panels share one surface');
+  ok(/--northbg:#F6F6F7/.test(rootBlock)&&/--northbg:#F6F6F7/.test(monoBlock),
+    'and it is #F6F6F7 in both themes');
+  /* a near-white pill needs the island ink for exactly the reason #fpanel did */
+  ok(/\.navbtn\{[^}]*--mut:var\(--northmut\)/.test(css)&&/\.navbtn\{[^}]*--navy:var\(--northtxt\)/.test(css)&&
+     /\.navbtn\{[^}]*--ink-rgb:var\(--northink-rgb\)/.test(css),
+    'and the island ink with it, or a dark theme lends a white pill its near-white text');
+  /* hover must LAYER over the surface. As a background-color the translucent wash
+     replaces the white and lets the rail through, which under mono is near-black. */
+  ok(/\.navbtn:hover\{background-image:linear-gradient/.test(css),
+    'hover paints over the surface rather than replacing it');
+  ok(!/\.navbtn:hover\{background:rgba/.test(css),
+    'so a hovered item can never show the rail through itself');
+
+  /* THE ACTIVE ITEM lost the surface that used to be half its signal, so the marks
+     it keeps have to carry it alone. Each is checked, and none of them is new. */
+  ok(!/background:/.test(onRule),'the active item no longer has a surface of its own');
+  ok(/border-color:var\(--northline\)/.test(onRule),'it keeps its rim');
+  ok(/inset 3px 0 0 var\(--today\)/.test(onRule),'and the inset accent bar');
+  ok(/font-weight:600/.test(onRule),
+    'and takes the heavier label, the way .pday.today and .cell.today .n already mark the current one');
+  ok(/color:var\(--navy\)/.test(onRule),'and the strong ink against the resting muted one');
+  ok(/\.navbtn\.on \.em\{color:var\(--today\)\}/.test(css),'with the icon tinted to match the bar');
+  ok(/\.pday\.today\{[^}]*font-weight:700/.test(css),
+    'the weight idiom it borrows really does exist elsewhere, so nothing was invented');
+
   const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
   const lum=h=>{h=h.replace('#','');return 0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16))};
   const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
-  ok(/\.navbtn\{[^}]*font-weight:500/.test(css),'the labels stay at weight 500, so 4.5 is their bar, not 3');
-  ok(ratio('#41627F','#CFE3F1')>=4.5,'cloud blue: a resting label on the rail measures '+ratio('#41627F','#CFE3F1').toFixed(2));
-  ok(ratio('#ABABB3','#161619')>=4.5,'mono: a resting label on the rail measures '+ratio('#ABABB3','#161619').toFixed(2));
-  ok(ratio('#243A5E','#F5F4EF')>=4.5,'cloud blue: the active label on its pearl measures '+ratio('#243A5E','#F5F4EF').toFixed(2));
-  ok(ratio('#ECECEF','#313138')>=4.5,'mono: the active label on its pearl measures '+ratio('#ECECEF','#313138').toFixed(2));
+  const BG='#F6F6F7';
+  /* the labels are 13.5px at weight 500, so normal text and a 4.5 bar, measured on
+     the surface they now sit on rather than the rail they used to sit on */
+  ok(ratio('#41627F',BG)>=4.5,'cloud blue: a resting nav label measures '+ratio('#41627F',BG).toFixed(2));
+  ok(ratio('#40404A',BG)>=4.5,'mono: a resting nav label measures '+ratio('#40404A',BG).toFixed(2));
+  ok(ratio('#243A5E',BG)>=4.5,'cloud blue: the active nav label measures '+ratio('#243A5E',BG).toFixed(2));
+  ok(ratio('#161619',BG)>=4.5,'mono: the active nav label measures '+ratio('#161619',BG).toFixed(2));
+  /* the bar and the icon are non-text marks, so 3:1 is their bar */
+  ok(ratio('#567C8D',BG)>=3,'cloud blue: the accent bar and icon read at '+ratio('#567C8D',BG).toFixed(2));
+  ok(ratio('#E8443C',BG)>=3,'mono: the accent bar and icon read at '+ratio('#E8443C',BG).toFixed(2));
+  /* and the ink step is a real step, not a hair, since it is now doing more work */
+  ok(ratio('#243A5E',BG)/ratio('#41627F',BG)>=1.5,
+    'cloud blue: active ink is a clear step above resting ('+(ratio('#243A5E',BG)/ratio('#41627F',BG)).toFixed(2)+'x)');
+  ok(ratio('#161619',BG)/ratio('#40404A',BG)>=1.5,
+    'mono: active ink is a clear step above resting ('+(ratio('#161619',BG)/ratio('#40404A',BG)).toFixed(2)+'x)');
 }
 
 console.log('— the docs match reality —');

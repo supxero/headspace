@@ -459,6 +459,50 @@ Under 900px the pad is already the full column, so height is the only axis left 
 
 Expected count moved 1267 to 1276. Both suites green: `node tests/test.js` at 1276, and the viewport pass clean across all four profiles under both themes with no horizontal overflow and no control under 44px.
 
+## 14. One rail surface, and the size pairing undone (new, 2026-08-12)
+
+Two changes to the rail. No layout, behaviour, sync or merge change.
+
+### 14.1 The nav items take the True north backdrop
+
+`.navbtn` now paints `var(--northbg)`, so the four nav items and `#fpanel` are five panels on one surface, `#F6F6F7` in both themes. That makes each nav item a light island for exactly the reason `#fpanel` was one, and it needs the same treatment: a dark theme cannot lend a near-white pill its near-white ink. Under mono, unfixed, the resting label would have sat at **2.11:1**, the active label at **1.09:1** and the hover ink at **1.12:1**. So `.navbtn` re-points the roles it actually consumes, reusing the ink set Section 12 already introduced rather than adding variables: `--mut` and `--txt` and `--navy` onto `--northmut`/`--northtxt`, and `--ink-rgb` onto `--northink-rgb`, which is what retints the hover wash, the count pill and the press glow.
+
+**Hover had to change shape, not just value.** It was `background:rgba(var(--ink-rgb),.06)`, which as a background-color *replaces* the surface. On a pill that now has a white background of its own, that meant swapping the white for a translucent film and letting the rail show through: under mono a hovered item would have gone nearly black, the exact inverse of a hover. It is now `background-image:linear-gradient(...)`, a layer over the surface, which is the same layered-wash idiom `--traybg` already uses. The wash itself was left at 6%: measured, it moves the surface from `#F6F6F7` to `#e9ebee` in blue and `#e9e9ea` in mono, a 1.11 and 1.12 step, which is the same order of visibility it had against the old rail and is clearly legible in a rendered comparison. The press glow needed nothing: it is an `::after` radial in `rgba(var(--ink-rgb),.18)` and composites over whatever is beneath, so re-pointing the triplet was enough to turn it from a light glow into a dark one.
+
+### 14.2 The active state, which had to be solved first
+
+The active item used to be distinguished partly by its surface: `--pearl` against the resting items' transparency. All five panels sharing one backdrop removes that, so what remains has to carry it alone. Four marks do, and every one of them already existed:
+
+| mark | Cloud blue | Monochrome |
+|---|---|---|
+| inset 3px `--today` bar | teal, **4.17:1** on the backdrop | red, **3.65:1** |
+| `--today` icon tint | same | same |
+| `--northline` rim | 1.86:1, present but quiet | 9.48:1 |
+| ink step, resting to active | 5.93 to **10.56** (1.78x) | 9.48 to **16.72** (1.76x) |
+| label weight, 500 to 600 | | |
+
+The weight is the one addition, and it is not a new device: `.pday.today` and `.cell.today .n` already say "this is the current one" by going heavier, and a test asserts that precedent still exists rather than taking the claim on trust. No new colour, border style or effect was introduced. Cloud blue was the case to worry about, since its accent is teal rather than red and its rim is weak at 1.86, but the bar clears the 3:1 non-text bar at 4.17 and the ink step is the larger of the two themes, and the rendered result reads at a glance.
+
+### 14.3 Monochrome: does it still read as a sidebar
+
+**Yes, but it is now two families of card and that is worth saying plainly.** The rail's dark ground is still what you see between and around the panels: 6px gutters between the nav items, the rail's side padding, the header row with the logo and the saved badge, and everything below True north (Habits, This week, Momentum, Streak and Month) which all stay on the dark card surface. The bright area is a stack of five rounded cards, not a slab, and at 390px where the rail sits behind Menu the nav is a horizontal strip of three-and-a-bit pills, a much smaller proportion.
+
+What did change, and was not asked for, is that the rail now has a visible split: bright cards down to True north, dark cards from Habits onward, with nothing in the design explaining why the boundary falls there. It happens to land on a real semantic seam (navigation and the statement above, the measures below), so it is defensible, but it is a stronger division than existed before and it is the honest cost of the change. The value was not softened to hide it.
+
+### 14.4 The size pairing, undone
+
+The statement goes back to nothing, because it never moved: it has been 19px/700 throughout, and only the nav labels were changed to match it. Those are back to **13.5px**, and the two are independent again. Re-measured on the `#F6F6F7` backdrop:
+
+- statement, 19px/700: **5.74:1** blue, **3.65:1** mono. Mono clears the 3:1 large-text bar and not the 4.5 normal-text bar, which is what Section 11.4 records and what makes the 19px/700 face load-bearing rather than decorative.
+- nav labels, 13.5px/500, so normal text and a 4.5 bar, on the surface that changed under them: resting **5.93:1** blue and **9.48:1** mono, active **10.56:1** and **16.72:1**. All four clear it, and the resting pair improved on what they had against the old rail (4.85 blue, 7.92 mono) because the new surface is lighter than either rail.
+
+### 14.5 What the audits gained
+
+- `tests/test.js`: the "one size" section became a rail section. It now pins the pairing as undone (nav 13.5, statement 19/700, and the two explicitly unequal), the shared backdrop in both theme blocks, the island ink re-point on `.navbtn`, hover being a layer rather than a replacement, all five active-state marks including the borrowed weight idiom's precedent, and the six contrast numbers plus the ink-step ratio.
+- `tests/viewports.js`: the rendered-size check flipped from "all five at one size" to "unpaired, and the statement still above its floor". Added a `distinct()` probe run in **both** themes that reads the rendered active and resting items and asserts they share a surface, differ by bar and rim and weight, keep an ink step of at least 1.5x, and clear 4.5 on both inks; plus a check that the pills sit on the rail rather than replacing it.
+
+Expected count moved 1276 to 1289. Both suites green, and the viewport pass is clean across all four profiles under both themes: no control under 44px on the three coarse ones, no horizontal overflow, and the rail legible at 390px behind Menu.
+
 ### 11.3 The active nav accent (Change 3)
 
 `.navbtn.on` draws a 3px inset bar and tints its icon with `var(--today)`, and `render()` sets `aria-current="page"` alongside the class. The choice for Cloud blue: **the today teal (`#567C8D`), because "you are here" is the role that colour already plays** (today's column ring, the TODAY badge, the strip, the calendar cell); no red exists in the blue palette and none was imported. Under Monochrome `--today` IS the red, so the accent is red there with no new declaration, which is why the jsdom red whitelist needed no entry for this change; the live sweep's element whitelist gained the `.navbtn.on` subtree (Section 0). Float mode keeps the pre-existing `.on` semantics (Board remains lit behind the Free Floating entry), deliberately unchanged. Contrast of the accent against the active row's pearl: 4.09 sky, 3.27 mono, both over the 3:1 non-text bar.
@@ -468,6 +512,8 @@ Expected count moved 1267 to 1276. Both suites green: `node tests/test.js` at 12
 Two new variables in both theme blocks: `--northbg` (the panel backdrop; pearl in both themes, which was already the surface the panel sat on and is lighter than the rail in both: the change formalises the role so a theme can retune it) and `--north` (the statement ink: `#E8443C` in mono, and in Cloud blue `#3F6488`, the palette's text-safe denim that already inks the Prio 1 zone buttons, chosen because it belongs to the existing family while standing apart from the navy body ink). Held statements render at 19px/700 in the display face, scoped to `#fpanel .frow:not(.done)` so the weekly list (which shares `.ftxt`) and set-aside rows keep their faces. **The size is load-bearing, not styling**: 19px/700 is WCAG large text, and the measured ratios were sky 5.63:1 (over even the 4.5 normal-text bar) and mono 3.27:1, which clears the 3:1 large-text bar and would FAIL the normal-text bar, so shrinking the face breaks accessibility. Measured three ways: computed from declared values in `tests/test.js` (with the under-4.5 fact asserted so the reasoning is in the suite), the declared-pair check in the viewport auditor, and a live composited sample of the rendered statement. The whitelist half is Section 0: `--north` joined the mono red list in the same commit as the nav accent, both audits updated together.
 
 **Superseded in part by Section 12**: the backdrop is now `#F6F6F7` in both themes and the mono ratio is 3.65:1, not 3.27:1. The conclusion is unchanged and in fact firmer: still over 3, still under 4.5, so 19px/700 is still the floor.
+
+**Re-confirmed at Section 14**, after the nav labels were briefly sized to match this face and then unpaired again. Measured on the `#F6F6F7` backdrop at 19px/700: **5.74:1 in Cloud blue** and **3.65:1 in Monochrome**. Mono clears the 3:1 large-text bar and does not reach 4.5, exactly as this section has said since it was written, so the 19px/700 face remains the thing making it legal. The statement's size has now survived two rounds of pressure without moving, and the nav labels going back to 13.5px changed nothing about it: the two were never causally linked, only briefly matched.
 
 ## 12. The white backdrop and the one rail size (new, 2026-08-12)
 
@@ -508,7 +554,7 @@ Expected count moved 1239 to 1267. The viewport pass is clean across all four pr
 
 ## Housekeeping notes
 
-- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
+- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, the one-rail-surface commit to 1289, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
 - `IOS-CHECKLIST.md` predates the theme and does not yet exercise it on a device; the two items worth a minute when someone next holds a phone: the status-bar/browser chrome colour following a switch (the meta), and Silkscreen's legibility at the smallest labels on a real OLED.
 - `SETUP.md`/`START-HERE.md` predate sync, the tray changes, the bin, and the Notes view, and have not been re-verified; SETUP.md's one line naming the focus panel was updated to True north during the rename, the rest untouched. The in-app Help also does not mention Notes yet; adding a line there is copy work awaiting the owner's wording.
 - `IOS-CHECKLIST.md` (retitled inside to "Manual device checklist") is the manual companion to Section 7, rewritten 2026-08-10 for the app as it stands: thirteen risk-ordered items with concrete steps and pass/fail descriptions, now covering the rich-notes update-pickup stakes (a stale build shows markup as text), rich-text sync between two physical devices, the Notes editor under Safari's keyboard/autocorrect/caret, the 44px overlays under a real finger on iPhone AND an Android tablet, True north's uncollapsible-with-content rule on a small screen, and the touch tab-reorder gap verified inert. Budget stated in the file: one ~45 minute sitting plus a second-device item and an overnight item.

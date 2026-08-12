@@ -1133,20 +1133,20 @@ async function runProfile(browser, base, prof) {
     check('north: the panel sits on the near-white backdrop', bgBoth.sky === 'rgb(246, 246, 247)', bgBoth.sky);
     check('north: and takes that same backdrop under mono, not the rail surface',
       bgBoth.mono === 'rgb(246, 246, 247)', bgBoth.mono);
-    /* the rail speaks at one size: the RENDERED statement and the RENDERED nav
-       labels must report the same computed font-size, measured, not assumed */
-    const oneSize = await A(() => {
+    /* the sizes are UNPAIRED again: they were briefly both 19px. Measured on the
+       rendered elements, not on the stylesheet text. Only the statement's size is
+       load-bearing, because mono's red is legal only as WCAG large text. */
+    const sizes = await A(() => {
       const st = document.querySelector('#fpanel .frow:not(.done) .ftxt');
       const nav = [...document.querySelectorAll('#rail .navbtn')];
       return { stmt: parseFloat(getComputedStyle(st).fontSize),
         weight: +getComputedStyle(st).fontWeight,
-        nav: nav.map(b => parseFloat(getComputedStyle(b).fontSize)),
-        labels: nav.map(b => b.textContent.trim().slice(0, 14)) };
+        nav: nav.map(b => parseFloat(getComputedStyle(b).fontSize)) };
     });
-    check('north: the statement and all four nav labels render at one size',
-      oneSize.nav.length === 4 && oneSize.nav.every(s => s === oneSize.stmt), JSON.stringify(oneSize));
-    check('north: and that size holds the 14pt bold large-text floor',
-      oneSize.stmt >= 18.66 && oneSize.weight >= 700, oneSize.stmt + 'px/' + oneSize.weight);
+    check('north: the statement renders at 19px/700, its large-text floor',
+      sizes.stmt >= 18.66 && sizes.weight >= 700, sizes.stmt + 'px/' + sizes.weight);
+    check('north: and the nav labels are back off that size, the pairing undone',
+      sizes.nav.length === 4 && sizes.nav.every(s => s === 13.5), JSON.stringify(sizes));
     await audit('true-north', { root: '#fpanel' });
 
     /* rename in place */
@@ -2569,10 +2569,39 @@ async function runProfile(browser, base, prof) {
         shadow: getComputedStyle(b).boxShadow,
         icon: getComputedStyle(b.querySelector('.em')).color };
     });
+    /* The active item no longer has a surface of its own: all five rail panels are
+       one backdrop now. So what actually separates it from a resting item has to be
+       measured, in both themes, on the rendered elements. Four marks, each read
+       here, plus the proof that the surfaces really are identical. */
+    const distinct = () => A(() => {
+      const on = document.querySelector('#rail .navbtn.on');
+      const off = [...document.querySelectorAll('#rail .navbtn')].find(b => !b.classList.contains('on'));
+      if (!on || !off) return null;
+      const a = getComputedStyle(on), b = getComputedStyle(off);
+      const lin = c => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+      const parse = s => { const m = String(s).match(/rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/); return m ? [+m[1], +m[2], +m[3]] : null; };
+      const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      const ratio = (x, y) => { const p = lum(x), q = lum(y); return (Math.max(p, q) + .05) / (Math.min(p, q) + .05); };
+      const bg = parse(a.backgroundColor), ink = parse(a.color), inkOff = parse(b.color);
+      return { sameSurface: a.backgroundColor === b.backgroundColor,
+        bar: a.boxShadow !== b.boxShadow && /inset/.test(a.boxShadow),
+        rim: a.borderTopColor !== b.borderTopColor,
+        weight: +a.fontWeight > +b.fontWeight,
+        inkStep: bg && ink && inkOff ? +(ratio(ink, bg) / ratio(inkOff, bg)).toFixed(2) : null,
+        activeInk: bg && ink ? +ratio(ink, bg).toFixed(2) : null,
+        restingInk: bg && inkOff ? +ratio(inkOff, bg).toFixed(2) : null };
+    });
     const sky = await read();
     check('nav: Board is marked current on the board view', sky.on && sky.cur === 'page', JSON.stringify(sky));
     check('nav: the accent bar paints the today teal in cloud blue', /86, 124, 141/.test(sky.shadow), sky.shadow);
     check('nav: and the icon takes the same accent', /86, 124, 141/.test(sky.icon), sky.icon);
+    const dSky = await distinct();
+    check('nav: cloud blue, active and resting really do share one surface',
+      dSky && dSky.sameSurface, JSON.stringify(dSky));
+    check('nav: cloud blue, the active item is still told apart by bar, rim, weight and ink',
+      dSky && dSky.bar && dSky.rim && dSky.weight && dSky.inkStep >= 1.5, JSON.stringify(dSky));
+    check('nav: cloud blue, both inks clear the normal-text bar on that surface',
+      dSky && dSky.activeInk >= 4.5 && dSky.restingInk >= 4.5, JSON.stringify(dSky));
     await A(() => document.documentElement.setAttribute('data-theme', 'mono'));
     /* .navbtn transitions box-shadow over .22s, so give the flip time to land:
        a 140ms read catches the accent mid-interpolation between teal and red */
@@ -2580,6 +2609,22 @@ async function runProfile(browser, base, prof) {
     const mono = await read();
     check('nav: under mono the same bar is the red', /232, 68, 60/.test(mono.shadow), mono.shadow);
     check('nav: and the icon follows it', /232, 68, 60/.test(mono.icon), mono.icon);
+    const dMono = await distinct();
+    check('nav: mono, active and resting really do share one surface',
+      dMono && dMono.sameSurface, JSON.stringify(dMono));
+    check('nav: mono, the active item is still told apart by bar, rim, weight and ink',
+      dMono && dMono.bar && dMono.rim && dMono.weight && dMono.inkStep >= 1.5, JSON.stringify(dMono));
+    check('nav: mono, both inks clear the normal-text bar on that surface',
+      dMono && dMono.activeInk >= 4.5 && dMono.restingInk >= 4.5, JSON.stringify(dMono));
+    /* a near-white pill in a near-black rail: the rail must still be the thing
+       behind it, or the sidebar has become a white block with gaps in it */
+    const island = await A(() => {
+      const b = document.querySelector('#rail .navbtn'), rail = document.querySelector('#rail');
+      return { pill: getComputedStyle(b).backgroundColor, rail: getComputedStyle(rail).backgroundColor,
+        gap: getComputedStyle(document.querySelector('#rail .navgrp')).gap };
+    });
+    check('nav: mono, the pills sit on the rail rather than replacing it',
+      island.pill !== island.rail && parseFloat(island.gap) > 0, JSON.stringify(island));
     await A(() => document.documentElement.removeAttribute('data-theme'));
     await sleep(500);
     /* the mark follows the view, one at a time */
