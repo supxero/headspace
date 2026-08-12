@@ -63,6 +63,10 @@ function seedState() {
               marks: { [hweek(plus(-7))]: { h1: { 1: Date.now() - 7 * 864e5 } } } },
     week: { list: [{ id: 'w1', title: 'Water the plants', done: false, up: 1 },
                    { id: 'w2', title: 'File taxes', done: false, up: 1 }], hist: {} },
+    folders: [{ id: 'fldA', name: 'Plans', up: 1 }],
+    notes: [{ id: 'sn1', title: 'Grocery run', body: 'eggs and bread', up: 1 },
+            { id: 'sn2', title: 'Trip ideas', body: 'coast road', up: 1, folder: 'fldA' }],
+    sticky: { text: 'seeded sticky text', at: 1 },
     settings: { view: 'board', boardOffset: 0, floatMode: false, activeFloat: null,
       calSel: null, calOffset: 0, mRange: 'day', stripDay: null, lastRoll: yday,
       showDone: false, habitsOpen: true, lastWeek: hweek(today) },
@@ -238,6 +242,8 @@ function bootstrap(seedJson) {
         ['--onpri', '--done', 3],
         ['--denim', '--cloud', 3], ['--denim', '--pearl', 3],
         ['--today', '--canvas', 3, true], ['--txt', '--canvas', 4.5, true], ['--ocean', '--canvas', 3, true],
+        /* the True north statement is 19px/700, WCAG large text: 3:1 is its bar */
+        ['--north', '--northbg', 3],
       ];
       for (const p of PAIRS) {
         if (p[3] && !mono) continue;
@@ -280,6 +286,9 @@ function bootstrap(seedJson) {
       sample('.modal p:not(.synchint)', 4.5, 'modal copy on its card');
       sample('.modal p.synchint', 3, 'modal small print on its card');
       sample('.badge', 3, 'the TODAY badge on its tint');
+      /* the red-on-light pair Change 4 introduced: live, composited, both themes */
+      sample('#fpanel .frow:not(.done) .ftxt', 3, 'the True north statement on its backdrop');
+      sample('#stickyPad', 4.5, 'the sticky note text on its panel');
     })();
 
     /* ---- red discipline (mono only): the accent may paint nothing beyond
@@ -289,8 +298,12 @@ function bootstrap(seedJson) {
       const redHex = (rootCS => rootCS.getPropertyValue('--done').trim())(getComputedStyle(document.documentElement));
       const m = redHex.match(/^#([0-9a-f]{6})$/i);
       const redTriplet = m ? [0, 1, 2].map(i => parseInt(m[1].slice(i * 2, i * 2 + 2), 16)).join(', ') : null;
+      /* WIDENED DELIBERATELY 2026-08-12: the active nav item (accent bar and icon
+         tint read --today, red under mono) and the True north statements (--north).
+         Anything else red is still a defect. */
       const ALLOWED = '.badge,.col.today,.box,.sbox,#qb,.fadd button,.mrow button.pri,.rp,' +
-        '.cell.today,.cell.today .n,#strip button.istoday,.hdow.now,.bar.now,.allok,.pday.today,.dotm';
+        '.cell.today,.cell.today .n,#strip button.istoday,.hdow.now,.bar.now,.allok,.pday.today,.dotm,' +
+        '.navbtn.on,.navbtn.on .em,.navbtn.on .em *,#fpanel .frow:not(.done) .ftxt,#fpanel .frow:not(.done) .ftxt *';
       if (redTriplet) {
         const seen = {};
         for (const el of document.querySelectorAll('*')) {
@@ -1559,9 +1572,11 @@ async function runProfile(browser, base, prof) {
 
     await act({ css: '.noterow', text: 'Untitled' });
     const emptyId = await A(() => (window.A.state.notes.find(n => !n.title) || {}).id);
+    const countBefore = await A(() => window.A.state.notes.length);
     await act({ css: '[data-action="note-del"]' });
     const left = await A(() => window.A.state.notes.length);
-    check('notes: delete leaves one note', left === 1, 'notes=' + left);
+    check('notes: delete removes exactly the one note', left === countBefore - 1,
+      countBefore + '->' + left);
     await A(() => window.A.save());
     const binned = await page.evaluate(id => !!(id && window.A.state.bin[id]), emptyId);
     check('notes: the deleted note waits in the bin', binned);
@@ -2281,6 +2296,234 @@ async function runProfile(browser, base, prof) {
     check('logo: with no note left open', after.noteSel === null, String(after.noteSel));
     check('logo: and not one item of planner data touched', after.data === before,
       before + ' -> ' + after.data);
+    if (narrow) await act('#railtoggle');
+  });
+
+  /* ---- N1. folders in Notes: create, name, move in and out, delete, all through
+     the profile's REAL input (touch taps on the coarse profiles, which is the
+     population drag could never serve) ---- */
+  await flow('note-folders', async () => {
+    /* self-seeded: the notes-editing flow replaces state.notes wholesale, so this
+       flow must not depend on the boot seed having survived the run this far */
+    await A(() => {
+      window.A.state.notes = [
+        { id: 'sn1', title: 'Grocery run', body: 'eggs and bread', up: 1, dn: 1, pos: 1 },
+        { id: 'sn2', title: 'Trip ideas', body: 'coast road', up: 1, dn: 1, pos: 2, folder: 'fldA' }];
+      window.A.state.folders = [{ id: 'fldA', name: 'Plans', up: 1, dn: 1, pos: 1 }];
+      window.A.state.settings.noteSel = null;
+      window.A.save(); window.A.render();
+    });
+    await sleep(300);
+    await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
+    /* the seeded folder renders as a heading, its note under it, loose notes first */
+    const seq = await A(() => [...document.querySelectorAll('#noteRows > *')].map(e =>
+      e.classList.contains('fldhead') ? 'head:' + e.querySelector('.fldname').textContent
+        : (e.querySelector('.noterow') ? e.querySelector('.noterow').dataset.id : '?')));
+    check('folders: the folder renders as a heading in the list', seq.some(x => x === 'head:Plans'), seq.join(','));
+    check('folders: its note sits under it', seq.indexOf('sn2') === seq.indexOf('head:Plans') + 1, seq.join(','));
+    check('folders: loose notes come first, unheaded', seq.indexOf('sn1') < seq.indexOf('head:Plans'), seq.join(','));
+
+    /* create a folder through the real control, name it through the real keyboard */
+    await act({ css: '[data-action="folder-new"]' });
+    await page.keyboard.type('Errands');
+    await page.keyboard.press('Enter');
+    await sleep(320);
+    const named = await A(() => window.A.state.folders.map(f => f.name).join(','));
+    check('folders: created and named in place', /Errands/.test(named), named);
+
+    /* a loose note moves IN from its list row: tap Move, tap the folder */
+    await act({ css: '.noteli [data-action="note-movemenu"][data-id="sn1"]' });
+    const chooser = await A(() => !!document.querySelector('#noteMoveModal'));
+    check('folders: the row Move opens the chooser without opening the note', chooser);
+    await audit('folder-chooser', { root: '#noteMoveModal' });
+    await act({ css: '#noteMoveModal .popt', text: 'Errands' });
+    const movedIn = await A(() => { const n = window.A.state.notes.find(x => x.id === 'sn1');
+      const f = n && n.folder && window.A.state.folders.find(y => y.id === n.folder);
+      return f ? f.name : ''; });
+    check('folders: a loose note moves into a folder from the list, no drag anywhere', movedIn === 'Errands', movedIn);
+
+    /* and BETWEEN folders from the open page's own Move */
+    await act({ css: '.noterow[data-id="sn1"]' });
+    await act({ css: '.notemeta [data-action="note-movemenu"]' });
+    const marked = await A(() => { const on = document.querySelector('#noteMoveModal .popt.on');
+      return on ? on.textContent : ''; });
+    check('folders: the chooser marks where the note sits now', /Errands/.test(marked), marked);
+    await act({ css: '#noteMoveModal .popt', text: 'Plans' });
+    const movedAcross = await A(() => window.A.state.notes.find(x => x.id === 'sn1').folder === 'fldA');
+    check('folders: and between folders from the open note', movedAcross);
+
+    /* and back OUT to the loose list */
+    await act({ css: '.noteli [data-action="note-movemenu"][data-id="sn1"]' });
+    await act({ css: '#noteMoveModal .popt', text: 'No folder' });
+    const looseAgain = await A(() => !window.A.state.notes.find(x => x.id === 'sn1').folder);
+    check('folders: and back out to the loose list', looseAgain);
+    await audit('note-folders');
+
+    /* deleting a folder that holds notes asks first, moves them out, offers Undo */
+    await act({ css: '[data-action="folder-del"][data-fid="fldA"]' });
+    const confirm = await A(() => !!document.querySelector('.mback') &&
+      /should not delete them/.test(document.querySelector('.modal').textContent));
+    check('folders: deleting a full folder asks first and promises the notes are safe', confirm);
+    await audit('folder-del-confirm', { root: '#modalRoot .modal' });
+    await act({ css: '[data-action="folder-del-move"]' });
+    const after = await A(() => ({
+      gone: !window.A.state.folders.some(f => f.id === 'fldA'),
+      note: !!window.A.state.notes.find(n => n.id === 'sn2'),
+      loose: !window.A.state.notes.find(n => n.id === 'sn2').folder,
+      undo: !!document.querySelector('#toast [data-action="undo"]') }));
+    check('folders: the folder goes, the note stays, loose', after.gone && after.note && after.loose, JSON.stringify(after));
+    check('folders: with the 5 second Undo offered', after.undo);
+    await act({ css: '#toast [data-action="undo"]' });
+    const undone = await A(() => window.A.state.folders.some(f => f.id === 'fldA') &&
+      window.A.state.notes.find(n => n.id === 'sn2').folder === 'fldA');
+    check('folders: Undo puts the folder back with its note inside', undone);
+
+    /* an empty folder goes at once, no confirm */
+    const eid = await A(() => (window.A.state.folders.find(f => f.name === 'Errands') || {}).id);
+    if (eid) {
+      await act({ css: '[data-action="folder-del"][data-fid="' + eid + '"]' });
+      const gone = await A(() => !document.querySelector('.mback') &&
+        !window.A.state.folders.some(f => f.name === 'Errands'));
+      check('folders: an empty folder goes without a confirm', gone);
+    }
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+  });
+
+  /* ---- N2. the sticky note at every placement ---- */
+  await flow('sticky', async () => {
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+    const measure = () => A(() => {
+      const s = document.getElementById('sticky');
+      const r = s.getBoundingClientRect();
+      const cs = getComputedStyle(s);
+      return { display: s.style.display, pos: cs.position, w: Math.round(r.width),
+        top: Math.round(r.top), right: Math.round(window.innerWidth - r.right),
+        bottom: Math.round(window.innerHeight - r.bottom),
+        visible: r.width > 0 && r.height > 0 };
+    });
+    /* board */
+    const b = await measure();
+    check('sticky: present on the board', b.display !== 'none' && b.visible, JSON.stringify(b));
+    if (!narrow) {
+      check('sticky: floats in the bottom right corner on wide layouts',
+        b.pos === 'absolute' && b.right >= 0 && b.right < 60 && b.bottom >= 0 && b.bottom < 60, JSON.stringify(b));
+      check('sticky: stays a margin note, never a second panel', b.w <= 260, 'w=' + b.w);
+    } else {
+      check('sticky: joins the flow full width on narrow layouts, never a floating corner',
+        b.pos === 'static' && b.w > 300, JSON.stringify(b));
+    }
+    const seeded = await page.$eval('#stickyPad', el => el.value);
+    check('sticky: the seeded text arrives', seeded === 'seeded sticky text', seeded);
+    /* type through the real input, caret parked at the end first */
+    await act('#stickyPad');
+    await A(() => { const p = document.getElementById('stickyPad');
+      p.focus(); p.setSelectionRange(p.value.length, p.value.length); });
+    await page.keyboard.type(' plus more');
+    await sleep(200);
+    const st = await A(() => window.A.state.sticky);
+    check('sticky: typing lands in state with its moment', /plus more$/.test(st.text) && st.at > 1, JSON.stringify(st));
+    await audit('sticky-board');
+    /* Free Floating keeps it */
+    await act({ css: '.navbtn[data-action="floattoggle"]' });
+    const f = await measure();
+    check('sticky: present on Free Floating', f.display !== 'none' && f.visible, JSON.stringify(f));
+    await audit('sticky-float');
+    await act({ css: '.navbtn[data-action="floattoggle"]' });
+    /* Notes: top right on wide, in flow on narrow; never over the page */
+    await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
+    const n = await measure();
+    check('sticky: present in Notes', n.display !== 'none' && n.visible, JSON.stringify(n));
+    if (!narrow) {
+      /* in flow at the top right, never a floating corner: an overlay here would
+         cover the page's toolbar, and a reserved side margin would gut the page */
+      check('sticky: sits top right in Notes, in flow', n.pos === 'static' && n.top < 200 && n.right < 60, JSON.stringify(n));
+      const overlap = await A(() => {
+        const s = document.getElementById('sticky').getBoundingClientRect();
+        const p = document.querySelector('.notepage');
+        if (!p) return false;
+        const pr = p.getBoundingClientRect();
+        return s.left < pr.right && s.right > pr.left && s.top < pr.bottom && s.bottom > pr.top;
+      });
+      check('sticky: and never covers the page or its toolbar', !overlap);
+    }
+    const everywhere = await page.$eval('#stickyPad', el => el.value);
+    check('sticky: one block in every placement, not three', /plus more$/.test(everywhere), everywhere);
+    await audit('sticky-notes');
+    /* the calendar keeps its full width */
+    await act({ css: '.navbtn[data-action="view"][data-v="calendar"]' });
+    const c = await A(() => document.getElementById('sticky').style.display === 'none');
+    check('sticky: hidden on the calendar', c);
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+  });
+
+  /* ---- N3. the active nav accent, measured as painted under both themes ---- */
+  await flow('nav-accent', async () => {
+    const read = () => A(() => {
+      const b = document.querySelector('#rail .navbtn[data-v="board"]');
+      return { on: b.classList.contains('on'), cur: b.getAttribute('aria-current'),
+        shadow: getComputedStyle(b).boxShadow,
+        icon: getComputedStyle(b.querySelector('.em')).color };
+    });
+    const sky = await read();
+    check('nav: Board is marked current on the board view', sky.on && sky.cur === 'page', JSON.stringify(sky));
+    check('nav: the accent bar paints the today teal in cloud blue', /86, 124, 141/.test(sky.shadow), sky.shadow);
+    check('nav: and the icon takes the same accent', /86, 124, 141/.test(sky.icon), sky.icon);
+    await A(() => document.documentElement.setAttribute('data-theme', 'mono'));
+    /* .navbtn transitions box-shadow over .22s, so give the flip time to land:
+       a 140ms read catches the accent mid-interpolation between teal and red */
+    await sleep(500);
+    const mono = await read();
+    check('nav: under mono the same bar is the red', /232, 68, 60/.test(mono.shadow), mono.shadow);
+    check('nav: and the icon follows it', /232, 68, 60/.test(mono.icon), mono.icon);
+    await A(() => document.documentElement.removeAttribute('data-theme'));
+    await sleep(500);
+    /* the mark follows the view, one at a time */
+    await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
+    const marked = await A(() => [...document.querySelectorAll('#rail .navbtn.on')]
+      .map(x => x.textContent.trim()).join(','));
+    check('nav: the mark follows the view', marked === 'Notes', marked);
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+  });
+
+  /* ---- N4. True north: the statement voice, measured as painted ---- */
+  await flow('north-style', async () => {
+    if (narrow) await act('#railtoggle');
+    const read = () => A(() => {
+      const p = document.getElementById('fpanel');
+      const t = p.querySelector('.frow:not(.done) .ftxt');
+      if (!t) return null;
+      const parse = c => { const m = String(c).match(/rgba?\((\d+)[, ]+(\d+)[, ]+(\d+)/);
+        return m ? [+m[1], +m[2], +m[3]] : null; };
+      const lin = x => { x /= 255; return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+      const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      const pcs = getComputedStyle(p), tcs = getComputedStyle(t);
+      const railTone = parse(getComputedStyle(document.documentElement).getPropertyValue('--panel').trim()
+        .replace(/^#(..)(..)(..)$/, (_, r, g, b2) => 'rgb(' + parseInt(r, 16) + ',' + parseInt(g, 16) + ',' + parseInt(b2, 16) + ')'));
+      const ink = parse(tcs.color), bg = parse(pcs.backgroundColor);
+      const ratio = (a, b2) => { const x = lum(a), y = lum(b2); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
+      return { ink: tcs.color, size: tcs.fontSize, weight: tcs.fontWeight,
+        r: ink && bg ? +ratio(ink, bg).toFixed(2) : 0,
+        lighter: bg && railTone ? lum(bg) > lum(railTone) : null };
+    });
+    const sky = await read();
+    check('north: a statement is on screen to measure', !!sky, JSON.stringify(sky));
+    check('north: statements carry the display size that makes them WCAG large text',
+      sky && sky.size === '19px' && +sky.weight >= 700, JSON.stringify(sky));
+    check('north: sky ink is the palette denim, no red imported into the blue theme',
+      sky && /63, 100, 136/.test(sky.ink), sky && sky.ink);
+    check('north: the backdrop sits lighter than the rail tone', sky && sky.lighter === true);
+    check('north: sky contrast measured at ' + (sky ? sky.r : '?') + ', over even the 4.5 normal-text bar',
+      sky && sky.r >= 4.5);
+    await A(() => document.documentElement.setAttribute('data-theme', 'mono'));
+    await sleep(500);
+    const mono = await read();
+    check('north: mono statements are the red', mono && /232, 68, 60/.test(mono.ink), mono && mono.ink);
+    check('north: on a backdrop still lighter than the mono rail', mono && mono.lighter === true);
+    check('north: mono contrast measured at ' + (mono ? mono.r : '?') + ', over the 3:1 large-text bar its face earns',
+      mono && mono.r >= 3);
+    await A(() => document.documentElement.removeAttribute('data-theme'));
+    await sleep(500);
+    await audit('north-statement');
     if (narrow) await act('#railtoggle');
   });
 

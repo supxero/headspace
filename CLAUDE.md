@@ -22,6 +22,9 @@ This is a single-file day-planner web app. Read this before making changes.
 - Scrollbars are auto-hiding everywhere, through ONE rule set applied via `*`, not a per-element opt-in: the gutter width is constant and only the thumb colour changes, which is what keeps the appearance free of reflow. Do not add a `width` to any `:state` scrollbar rule, and do not give an element its own `scrollbar-width`/`scrollbar-color` (in Chrome either one disables the `::-webkit-scrollbar` rules for that element and takes the reserved gutter away). The Firefox fallback is gated behind `@supports not selector(::-webkit-scrollbar)` for exactly that reason. A test enforces both.
 - The Notes editor claims four keys while the caret is inside `#noteBody`, at the TOP of the app-wide `keydown` handler, before the Enter/Escape branches: Ctrl/Cmd+Z, Ctrl+Y, Ctrl/Cmd+Shift+Z (its own undo history, `ui.noteHist`, because the browser's native stack does not survive a re-render here) and, conditionally, the space bar (the `- ` list rules). A new global shortcut on any of those will be swallowed in the editor. Undo never syncs and never enters `state`.
 - Spellcheck is left ON in the editor. Only `#syncKeyIn` opts out, because a sync key is a random string. Do not disable it anywhere else: the red underline is the browser's and cannot be cleared per word from a page, so switching it off is hiding the problem, not solving it. A test counts the opt-outs.
+- Note folders are one flat level and a note's `folder` field is PLACEMENT: it rides the pos axis (`POSF.note`, `sigP`) beside `pinned`, so moving a note composes with concurrent title/body edits and can never revive a deleted note. A dead folder reference means loose; read it through `noteFolderOf`, never `n.folder` directly. Deleting a folder must move its notes out (the confirm modal), never delete them.
+- The sticky note is ONE synced block, `state.sticky = {text, at}`, not an item: the stamp is written AT the keystroke together with the text (never let those two separate, or the debounce race from Section 5 of REVIEW.md comes back), it merges whole by later `at`, and its `<textarea>` is static markup that no render may rebuild. Two devices editing it concurrently keep the later text whole; that limit is documented, not solved.
+- Red in Monochrome backs exactly FOUR variables: `--done`, `--today`, `--grad`, `--north`. The active-nav accent and True north statements are the only UI added to red's reach, and both audits (jsdom declaration whitelist, viewport live sweep) enumerate them; widen those whitelists deliberately or not at all. Cloud blue still never contains the red hex: the nav accent reuses `--today` (teal there) and the statements use `--north` (`#3F6488`). The True north statement face is 19px/700 BECAUSE mono's red on its backdrop is 3.27:1: WCAG large text is what makes that legal, so do not shrink it.
 
 ## After ANY change to index.html
 1. Run the tests (see below). They must stay green.
@@ -34,7 +37,7 @@ From the project root:
   ```
   cd tests && npm install   # first time only, installs jsdom
   cd ..                     # run from the project root: test.js reads ./index.html
-  node tests/test.js        # expect: RESULT: 1127 passed, 0 failed
+  node tests/test.js        # expect: RESULT: 1239 passed, 0 failed
                             # the suite checks this number itself and tells you when to bump it
   ```
 - Optional visual/browser suite (needs Python + Playwright; skip if not set up):

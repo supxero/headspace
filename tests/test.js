@@ -3377,11 +3377,14 @@ console.log('— themes: one variable set, no hardcoded colour, red confined —
   const monoHex=[...monoClean.matchAll(/#([0-9A-Fa-f]{6})\b/g)].map(m=>m[1]);
   const maxCh=Math.max(...monoHex.flatMap(h=>[0,2,4].map(i=>parseInt(h.slice(i,i+2),16))));
   ok(maxCh<0xFF,'the brightest mono channel is 0x'+maxCh.toString(16).toUpperCase()+', short of pure white in every channel');
-  /* red appears only where something must stand out */
+  /* red appears only where something must stand out. WIDENED DELIBERATELY on
+     2026-08-12: --north (the True north statements) joined the list. The active
+     nav accent added NOTHING here: it reuses --today, so mono gets its red and
+     cloud blue its teal from one variable. Anything else red is still a failure. */
   const redDecls=[...monoClean.matchAll(/--([a-z0-9-]+)\s*:[^;]*#E8443C/gi)].map(m=>m[1]);
-  const allowedRed=['done','today','grad','ring1','ring2','ring3'];
+  const allowedRed=['done','today','grad','ring1','ring2','ring3','north'];
   ok(redDecls.length>0&&redDecls.every(v=>allowedRed.includes(v)),
-    'red backs only completion, today and the primary action ('+redDecls.join(',')+')');
+    'red backs only completion, today, the primary action and the north statements ('+redDecls.join(',')+')');
   const redRgb=[...monoClean.matchAll(/--([a-z0-9-]+)\s*:[^;]*232\s*,\s*68\s*,\s*60/g)].map(m=>m[1]);
   ok(redRgb.join(',')==='today-rgb','the red channel triplet backs only the today tint');
   ok(!/#E8443C|232\s*,\s*68\s*,\s*60/i.test(rootBlock),'cloud blue never sees the red');
@@ -3431,7 +3434,12 @@ console.log('— themes: WCAG contrast holds in both palettes —');
     ok(ratio(v.onpri,v.done)>=3,name+': the tick glyph reads on its fill');
     ok(gs.length>0&&gs.every(s=>ratio(v.onpri,s)>=3),name+': the primary label reads on its fill');
     ok(pair('denim','cloud')>=3&&pair('denim','pearl')>=3,name+': focus and drag cues stay visible');
+    /* the True north statement is 19px/700, WCAG large text, so 3:1 is its bar */
+    ok(pair('north','northbg')>=3,
+      name+': the north statement holds the large-text bar on its backdrop ('+pair('north','northbg').toFixed(2)+')');
   }
+  ok(ratio(skyV.north,skyV.northbg)>=4.5,
+    'cloud blue: the statement ink clears even the normal-text bar ('+ratio(skyV.north,skyV.northbg).toFixed(2)+')');
   /* mono only: the red and the ink must also carry against the near-black canvas,
      something the blue theme never asks of its canvas */
   ok(ratio(monoV.today,monoV.canvas)>=3,'mono: red reads on the canvas');
@@ -3742,6 +3750,350 @@ console.log('— True north shows its working parts only while in use —');
     ok(A.stateSig(S()).indexOf('northOn')<0,'and never reaches the signature');
   }
   S().focus=[]; A.ui.northOn=false; A.save(); A.render(); await wait(20);
+}
+
+console.log('— Notes: folders — create, rename, delete —');
+{
+  S().notes=[
+    {id:'fd1',title:'Loose one',body:'body a',up:1,dn:1,pos:1},
+    {id:'fd2',title:'Loose two',body:'body b',up:2,dn:2,pos:2},
+  ];
+  S().folders=[]; S().settings.view='notes'; S().settings.noteSel='fd1';
+  A.ui.noteQ='';
+  A.save(); A.render(); await wait(30);
+  ok(!!q('[data-action="folder-new"]'),'the note list offers + New folder');
+  click('[data-action="folder-new"]'); await wait(40);
+  ok(S().folders.length===1,'pressing it creates a folder');
+  const fid=S().folders[0].id;
+  ok(S().folders[0].name==='New folder','with a starter name');
+  const ren=q('.fldname[data-kind="folderrename"]');
+  ok(!!ren,'and its rename already open, like a new tab');
+  ren.textContent='Work'; fire(ren,'blur'); await wait(30);
+  ok(S().folders[0].name==='Work','the typed name lands');
+  ok(/Work/.test(q('#noteRows').textContent),'the folder renders as a heading in the list');
+  ok(/Empty/.test(q('#noteRows').textContent),'an empty folder says so instead of hiding');
+  A.save(); await wait(10);
+  const ff=A.flatten(S()).folder[fid];
+  ok(!!ff&&ff.up>1&&ff.dn>0&&ff.pos>0,'a folder carries all three stamps like any item');
+
+  /* rename by the mini, not only at creation */
+  click('[data-action="folder-rename"][data-fid="'+fid+'"]'); await wait(20);
+  const ren2=q('.fldname[data-kind="folderrename"]');
+  ok(!!ren2,'the pencil opens the rename in place');
+  const upBefore=A.flatten(S()).folder[fid].up;
+  ren2.textContent='Deep work'; fire(ren2,'blur'); await wait(30);
+  A.save(); await wait(10);
+  ok(S().folders[0].name==='Deep work','the new name lands');
+  ok(A.flatten(S()).folder[fid].up>=upBefore&&A.flatten(S()).folder[fid].up>1,
+    'a rename rides the content stamp');
+
+  /* an empty folder deletes at once, with the 5 second Undo */
+  click('[data-action="folder-del"][data-fid="'+fid+'"]'); await wait(30);
+  ok(!q('.mback'),'an empty folder is not worth a confirmation');
+  ok(S().folders.length===0,'it goes immediately');
+  ok(/Folder deleted/.test(q('#toast').textContent)&&!!q('[data-action="undo"]'),
+    'the toast says so and offers Undo');
+  click('[data-action="undo"]'); await wait(30);
+  ok(S().folders.length===1&&S().folders[0].id===fid,'Undo brings the same folder back');
+  q('#toast').innerHTML='';
+
+  /* deleting a folder that holds notes asks first and moves them out */
+  S().notes.find(n=>n.id==='fd1').folder=fid;
+  A.save(); A.render(); await wait(25);
+  click('[data-action="folder-del"][data-fid="'+fid+'"]'); await wait(30);
+  ok(!!q('.mback'),'deleting a folder with notes inside asks first');
+  ok(/should not delete them/.test(q('.modal').textContent),'and says the notes are safe');
+  click('[data-action="folder-del-move"][data-fid="'+fid+'"]'); await wait(30);
+  ok(S().folders.length===0,'the folder goes');
+  ok(S().notes.length===2,'the notes do not');
+  ok(!('folder' in S().notes.find(n=>n.id==='fd1')),'the note is back in the loose list, the field gone entirely');
+  ok(/Folder deleted/.test(q('#toast').textContent)&&!!q('[data-action="undo"]'),
+    'with the same 5 second Undo a tab delete gets');
+  click('[data-action="undo"]'); await wait(30);
+  ok(S().folders.length===1&&S().notes.find(n=>n.id==='fd1').folder===fid,
+    'Undo restores the folder with its note back inside');
+
+  /* past the toast: the tomb records it and the bin can bring it back whole */
+  click('[data-action="folder-del"][data-fid="'+fid+'"]'); await wait(30);
+  click('[data-action="folder-del-move"][data-fid="'+fid+'"]'); await wait(30);
+  q('#toast').innerHTML=''; A.save(); await wait(20);
+  ok(!!S().tomb[fid],'the deletion is recorded so other devices learn of it');
+  ok(!!S().bin[fid]&&S().bin[fid].k==='folder','and the folder waits in the bin');
+  ok(!S().bin.fd1,'the notes it held never touch the bin: they were moved, not deleted');
+  A.restoreBin(fid); await wait(25);
+  ok(S().folders.some(f=>f.id===fid),'Restore brings the folder back');
+  ok(S().notes.find(n=>n.id==='fd1').folder===fid,'and gathers its still-loose notes back in');
+  ok(/Restored to Notes/.test(q('#toast').textContent),'the toast names where it went');
+  q('#toast').innerHTML='';
+  S().folders=[]; delete S().notes.find(n=>n.id==='fd1').folder;
+  A.save(); A.render(); await wait(20);
+}
+
+console.log('— Notes: moving in and out, from the row and from the page —');
+{
+  S().folders=[{id:'fw',name:'Work',up:1,dn:1,pos:1},{id:'fh',name:'Home',up:1,dn:1,pos:2}];
+  S().notes=[{id:'mv1',title:'Movable',body:'text here',up:5,dn:5,pos:5}];
+  S().settings.view='notes'; S().settings.noteSel='mv1'; A.ui.noteQ='';
+  A.save(); A.render(); await wait(30);
+
+  ok(!!q('.noteli [data-action="note-movemenu"][data-id="mv1"]'),
+    'the list row offers Move without opening the note');
+  ok(!!q('.notemeta [data-action="note-movemenu"][data-id="mv1"]'),
+    'and the open page offers the same Move');
+  ok(!!q('.notemeta [data-action="note-pin"]')&&!!q('.notemeta [data-action="note-del"]'),
+    'beside the Pin and Delete it does not displace');
+  ok(!q('#notes [draggable="true"]'),'no drag surface anywhere in the notes view: taps are the route');
+
+  const before=A.flatten(S()).note.mv1;
+  /* loose into a folder, from the LIST row */
+  click('.noteli [data-action="note-movemenu"][data-id="mv1"]'); await wait(25);
+  ok(!!q('#noteMoveModal'),'the row Move opens the folder chooser');
+  ok(qa('#noteMoveModal .popt').length===3,'the loose list and both folders are on offer');
+  ok(!!q('#noteMoveModal .popt[data-fid=""].on'),'with the current place marked');
+  click('#noteMoveModal .popt[data-fid="fw"]'); await wait(30);
+  ok(S().notes[0].folder==='fw','a loose note moves into a folder from the list');
+  ok(!q('#noteMoveModal'),'and the chooser closes');
+  ok(/Moved to "Work"/.test(q('#toast').textContent),'the toast names the folder');
+  A.save(); await wait(10);
+  const mid=A.flatten(S()).note.mv1;
+  ok(mid.up===before.up&&mid.dn===before.dn,'the move touches neither the title stamp nor the body stamp');
+  ok(mid.pos>before.pos,'placement rides the pos axis, exactly as pinning does');
+
+  /* the list groups it under the heading */
+  const seq=qa('#noteRows > *').map(e=>
+    e.classList.contains('fldhead')?('head:'+e.querySelector('.fldname').textContent)
+    :(e.querySelector('.noterow')?e.querySelector('.noterow').dataset.id:'?'));
+  ok(seq.indexOf('head:Work')>-1&&seq.indexOf('mv1')===seq.indexOf('head:Work')+1,
+    'the note now renders under its folder heading ('+seq.join(',')+')');
+
+  /* between folders, from the OPEN PAGE */
+  click('.notemeta [data-action="note-movemenu"][data-id="mv1"]'); await wait(25);
+  ok(!!q('#noteMoveModal .popt[data-fid="fw"].on'),'the chooser marks where it sits now');
+  click('#noteMoveModal .popt[data-fid="fh"]'); await wait(30);
+  ok(S().notes[0].folder==='fh','a filed note moves to a different folder from the open note');
+
+  /* and back out to the loose list */
+  click('.noteli [data-action="note-movemenu"][data-id="mv1"]'); await wait(25);
+  click('#noteMoveModal .popt[data-fid=""]'); await wait(30);
+  ok(!('folder' in S().notes[0]),'and back out entirely: the field is absent, exports stay clean');
+
+  A.save(); await wait(10);
+  const after=A.flatten(S()).note.mv1;
+  ok(after.up===before.up&&after.dn===before.dn,
+    'a whole round trip of moves still never touches the content or body stamps');
+
+  /* no folders anywhere and the note loose: no dead Move control renders */
+  S().folders=[]; A.save(); A.render(); await wait(25);
+  ok(!q('[data-action="note-movemenu"]'),'with no folder to move to there is no Move control at all');
+}
+
+console.log('— Notes: folder merge —');
+{
+  const ndev=()=>{const s=dev(); s.notes=[]; s.folders=[]; return s};
+  const mkn=(id,title,body,up,x)=>Object.assign(
+    {id,title:title||'',body:body||'',up:up||100,dn:up||100,pos:up||100},x||{});
+  const mkf=(id,name,up)=>({id,name,up:up||100,dn:up||100,pos:up||100});
+  { /* a folder added on each device: both survive */
+    const a=ndev(); a.folders.push(mkf('gA','Work',200));
+    const b=ndev(); b.folders.push(mkf('gB','Home',210));
+    const m=A.mergeStates(a,b);
+    ok(m.folders.length===2,'a folder added on each device: both survive');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'and both devices agree');
+  }
+  { /* CASE 1: the same note moved to two different folders at once */
+    const now=Date.now();
+    const base=ndev(); base.folders.push(mkf('gA','Work'),mkf('gB','Home'));
+    base.notes.push(mkn('n1','Trip','body',200));
+    const a=clone(base); a.notes[0].folder='gA'; a.notes[0].pos=now;
+    const b=clone(base); b.notes[0].folder='gB'; b.notes[0].pos=now-50;
+    const m=A.mergeStates(a,b);
+    ok(m.notes[0].folder==='gA','moved to two folders at once: the later move holds the whole placement');
+    ok(m.notes.length===1&&m.folders.length===2,'nothing lost, nothing duplicated');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'the same answer on both devices');
+  }
+  { /* CASE 2: moved into a folder here while the folder is deleted there */
+    const now=Date.now();
+    const base=ndev(); base.folders.push(mkf('gA','Work'));
+    base.notes.push(mkn('n1','Trip','body',200));
+    const a=clone(base); a.folders=[]; a.tomb={gA:now};
+    const b=clone(base); b.notes[0].folder='gA'; b.notes[0].pos=now+50;
+    const m=A.mergeStates(a,b), m2=A.mergeStates(b,a);
+    ok(m.folders.length===0,'the folder stays deleted: moving a note into it stamps the note, not the folder');
+    ok(m.notes.length===1&&m.notes[0].body==='body','the note is never lost with it');
+    ok(!m.notes[0].folder,'it lands back in the loose list');
+    ok(A.stateSig(m)===A.stateSig(m2),'from either direction');
+  }
+  { /* CASE 3: renamed here, a note moved into it there: different axes compose */
+    const now=Date.now();
+    const base=ndev(); base.folders.push(mkf('gA','Work'));
+    base.notes.push(mkn('n1','Trip','body',200));
+    const a=clone(base); a.folders[0].name='Deep work'; a.folders[0].up=now;
+    const b=clone(base); b.notes[0].folder='gA'; b.notes[0].pos=now+10;
+    const m=A.mergeStates(a,b);
+    ok(m.folders[0].name==='Deep work','the rename lands');
+    ok(m.notes[0].folder==='gA','and the note lands inside the renamed folder');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'and both agree');
+  }
+  { /* a move into a folder cannot revive a note deleted elsewhere */
+    const now=Date.now();
+    const base=ndev(); base.folders.push(mkf('gA','Work'));
+    base.notes.push(mkn('n1','Trip','body',200));
+    const a=clone(base); a.notes=[]; a.tomb={n1:now};
+    const b=clone(base); b.notes[0].folder='gA'; b.notes[0].pos=now+99;
+    ok(A.mergeStates(a,b).notes.length===0,'moving a note into a folder does not revive its deletion');
+    ok(A.mergeStates(b,a).notes.length===0,'in either direction');
+  }
+  { /* a move composes with a concurrent title AND body edit: three axes at once */
+    const now=Date.now();
+    const base=ndev(); base.folders.push(mkf('gA','Work'));
+    base.notes.push(mkn('n1','Trip','original',200));
+    const a=clone(base); a.notes[0].folder='gA'; a.notes[0].pos=now;
+    const b=clone(base); b.notes[0].title='Trip, renamed'; b.notes[0].up=now-10;
+    b.notes[0].body='rewritten'; b.notes[0].dn=now-5;
+    const m=A.mergeStates(a,b);
+    ok(m.notes[0].folder==='gA'&&m.notes[0].title==='Trip, renamed'&&m.notes[0].body==='rewritten',
+      'a move here and a rename plus body edit there all land on one note');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'convergently');
+  }
+  { /* a planner that predates folders drops nothing */
+    const a=dev();
+    const b=ndev(); b.folders.push(mkf('gA','Work',200));
+    b.notes.push(mkn('n1','Kept','x',210,{folder:'gA'}));
+    const m=A.mergeStates(a,b);
+    ok(m.folders.length===1&&m.notes.length===1&&m.notes[0].folder==='gA',
+      'merging with a pre-folders planner keeps the folder and the filing');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'from either direction');
+  }
+}
+
+console.log('— sticky note: one shared scratch block —');
+{
+  S().settings.view='board'; S().settings.floatMode=false;
+  A.save(); A.render(); await wait(25);
+  ok(!!q('#sticky')&&q('#sticky').style.display!=='none','the sticky panel shows on the board');
+  ok(q('#sticky').dataset.pos==='corner','in its corner placement');
+  ok(q('#stickyPad').tagName==='TEXTAREA','one plain text block: no formatting, no list');
+  ok((q('#stickyPad').getAttribute('aria-label')||'').length>0,'and it is named');
+  ok(q('#stickyPad').getAttribute('spellcheck')===null,'spellcheck stays on, like the notes editor');
+  ok(!q('#notes #sticky'),'it sits beside the notes view, never inside it');
+
+  const pad=q('#stickyPad');
+  pad.value='milk, and call the plumber'; fire(pad,'input'); await wait(10);
+  ok(S().sticky.text==='milk, and call the plumber','typing lands in state as you type');
+  ok(S().sticky.at>0,'stamped at the keystroke, so a merge always weighs the text at its true moment');
+  A.save(); await wait(10);
+  const savedS=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+  ok(savedS.sticky.text==='milk, and call the plumber','and persists through the normal save');
+
+  S().settings.floatMode=true; A.render(); await wait(20);
+  ok(q('#sticky').style.display!=='none','still there on Free Floating');
+  S().settings.floatMode=false; S().settings.view='notes'; A.render(); await wait(20);
+  ok(q('#sticky').style.display!=='none'&&q('#sticky').dataset.pos==='top',
+    'and in Notes, at its top placement');
+  ok(q('#stickyPad').value==='milk, and call the plumber','the same text in every placement: one block, not three');
+  S().settings.view='calendar'; A.render(); await wait(20);
+  ok(q('#sticky').style.display==='none','the calendar keeps its full width');
+  S().settings.view='board'; A.render(); await wait(20);
+  ok(q('#stickyPad')===pad,'a render never rebuilds the pad, so a caret can never be lost to one');
+
+  const sig0=A.stateSig(S());
+  pad.value='changed text'; fire(pad,'input'); await wait(10); A.save(); await wait(10);
+  ok(A.stateSig(S())!==sig0,'a sticky edit changes the signature, so sync pushes it');
+  pad.value=''; fire(pad,'input'); await wait(10); A.save(); await wait(10);
+}
+
+console.log('— sticky note: merge, the honest limit said plainly —');
+{
+  const sdev=t=>{const s=dev(); if(t) s.sticky=t; return s};
+  { /* two edits: the later stamp takes the WHOLE text, the loser is gone */
+    const a=sdev({text:'newer text, kept',at:500}), b=sdev({text:'older text, lost',at:400});
+    const m=A.mergeStates(a,b);
+    ok(m.sticky.text==='newer text, kept','two sticky edits: the later one wins whole');
+    ok(JSON.stringify(m).indexOf('older text')===-1,
+      'the losing text is silently gone, nowhere in the merged state, bin included');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'and both devices agree which survived');
+  }
+  { /* the same moment on both sides still converges */
+    const a=sdev({text:'tied A',at:500}), b=sdev({text:'tied B',at:500});
+    ok(A.stateSig(A.mergeStates(a,b))===A.stateSig(A.mergeStates(b,a)),
+      'a tied stamp resolves the same way on both devices');
+  }
+  { /* a device that predates the sticky cannot blank it */
+    const a=sdev(null), b=sdev({text:'kept across versions',at:100});
+    const m=A.mergeStates(a,b);
+    ok(m.sticky.text==='kept across versions','a pre-sticky planner cannot drop the text');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(b,a)),'from either direction');
+  }
+  { /* an old cloud copy reads clean */
+    const legacy={days:{},floats:[{id:'f1',name:'Inbox',tasks:[]}],settings:{}};
+    const read=A.readCloud(clone(legacy));
+    ok(!!read&&read.sticky.text===''&&read.sticky.at===0&&read.folders.length===0,
+      'an old cloud copy reads with an empty sticky and no folders, never undefined');
+  }
+}
+
+console.log('— nav: the active view carries the accent —');
+{
+  const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+  ok(/\.navbtn\.on\{[^}]*inset 3px 0 0 var\(--today\)/.test(css),
+    'the active nav item draws an accent bar from the today variable');
+  ok(/\.navbtn\.on \.em\{color:var\(--today\)\}/.test(css),'and tints its icon the same way');
+  /* one variable, two palettes: red in mono, the teal now-marker in cloud blue,
+     so no red is ever imported into the blue palette and the mono whitelist
+     needs no new entry for it */
+  const rootBlock=(css.match(/:root\{[^}]*\}/)||[''])[0];
+  const monoBlock=(css.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0];
+  ok(/--today:#567C8D/.test(rootBlock),'cloud blue: the accent is the palette today teal');
+  ok(/--today:#E8443C/.test(monoBlock),'mono: the accent is the existing red');
+
+  S().settings.view='board'; S().settings.floatMode=false; A.save(); A.render(); await wait(25);
+  const onBtns=()=>qa('#rail .navbtn.on').map(b=>b.textContent.trim());
+  ok(onBtns().join()==='Board','Board holds the mark on the board view');
+  ok(q('#rail .navbtn[data-v="board"]').getAttribute('aria-current')==='page',
+    'and names itself the current page');
+  S().settings.view='calendar'; A.render(); await wait(25);
+  ok(onBtns().join()==='Calendar','Calendar takes it on the calendar view');
+  ok(!q('#rail .navbtn[data-v="board"]').getAttribute('aria-current'),'and Board has let it go');
+  S().settings.view='notes'; A.render(); await wait(25);
+  ok(onBtns().join()==='Notes','Notes takes it on the notes view');
+  S().settings.view='board'; S().settings.floatMode=true; A.render(); await wait(25);
+  ok(qa('#rail .navbtn.on').some(b=>/Back to dates/.test(b.textContent)),
+    'Free Floating is marked while float mode is on');
+  ok(q('#rail .navbtn[data-action="floattoggle"]').getAttribute('aria-current')==='page',
+    'and named current');
+  S().settings.floatMode=false; A.save(); A.render(); await wait(20);
+}
+
+console.log('— True north: red statements on a light backdrop, measured —');
+{
+  const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+  ok(/#fpanel\{background:var\(--northbg\)/.test(css),'the panel backdrop is its own variable');
+  ok(/#fpanel \.frow:not\(\.done\) \.ftxt\{[^}]*color:var\(--north\)/.test(css),
+    'held statements read the statement ink variable');
+  ok(/#fpanel \.frow:not\(\.done\) \.ftxt\{[^}]*font-size:19px/.test(css)&&
+     /#fpanel \.frow:not\(\.done\) \.ftxt\{[^}]*font-weight:700/.test(css),
+    'statements are 19px at 700: WCAG large text, so the 3:1 bar is the one they must hold');
+  ok(/\.frow\.done \.ftxt\{[^}]*font-size:12\.5px/.test(css),
+    'set-aside statements keep their muted small face: only held ones are highlighted');
+
+  const rootBlock=(css.match(/:root\{[^}]*\}/)||[''])[0];
+  const monoBlock=(css.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0];
+  ok(/--north:#3F6488/.test(rootBlock),
+    'cloud blue statements are the palette text-safe denim, the zone-button ink, not an imported red');
+  ok(/--northbg:#F5F4EF/.test(rootBlock),'on pearl, the lightest blue surface');
+  ok(/--north:#E8443C/.test(monoBlock),'mono statements are the existing red, no second red invented');
+  ok(/--northbg:#313138/.test(monoBlock),'on the mono pearl');
+
+  /* contrast measured, not eyeballed, and the backdrop really is lighter than the rail */
+  const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
+  const lum=h=>{h=h.replace('#','');return 0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16))};
+  const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+  const rSky=ratio('#3F6488','#F5F4EF'), rMono=ratio('#E8443C','#313138');
+  ok(rSky>=4.5,'cloud blue: statement ink on its backdrop measures '+rSky.toFixed(2)+', over 4.5');
+  ok(rMono>=3&&rMono<4.5,
+    'mono: red on its backdrop measures '+rMono.toFixed(2)+': over the large-text bar, under the normal one, which is why the 19px/700 face is load-bearing');
+  ok(lum('#F5F4EF')>lum('#CFE3F1'),'sky: the backdrop sits lighter than the rail powder');
+  ok(lum('#313138')>lum('#161619'),'mono: and lighter than the mono rail');
 }
 
 console.log('— the docs match reality —');

@@ -59,6 +59,11 @@ try{
   --onpri:#EDF4FA;       /* ink on the primary action and the completion fill */
   --oncanvas:#A9C4DB;    /* hint text sitting directly on the canvas */
   --toastact:#8FB6D8; --toastact-rgb:143,182,216; /* the Undo button inside a toast */
+  /* True north: the statement ink and the panel backdrop, split from the shared
+     roles so each theme can pick its own statement voice. In this theme the ink
+     is the deep text-safe denim the zone buttons already use (--should-t), never
+     an imported red, and the backdrop stays pearl, the lightest blue surface. */
+  --north:#3F6488; --northbg:#F5F4EF;
   --grad:linear-gradient(135deg,#2F4156,#5F86A6);          /* text-safe */
   --gradf:linear-gradient(135deg,#2F4156,#5F86A6 55%,#8FB6D8); /* decorative */
   --ring1:#2F4156; --ring2:#5F86A6; --ring3:#8FB6D8;       /* the progress ring's stops */
@@ -102,7 +107,8 @@ try{
    column, task tile, pearl brightest. Ink is near-white grey, NEVER #ffffff (the
    brightest value in the theme is #F6F6F7). Red appears only where something must
    stand out: today's marker (--today), completion (--done, the ring stops) and
-   the primary action (--grad). Everything decorative flattens: no background
+   the primary action (--grad), and the True north statements (--north, on the
+   panel's own --northbg backdrop). Everything decorative flattens: no background
    washes, no sheens, no gradients (flat two-stop stand-ins), no shadow depth. */
 :root[data-theme="mono"]{
   --bg:#070708;
@@ -124,6 +130,12 @@ try{
   --onpri:#F6F6F7;
   --oncanvas:#9B9BA5;
   --toastact:#151518; --toastact-rgb:21,21,24;
+  /* the statements are the red, at 19px/700 (WCAG large text, the 3:1 bar), on
+     the mono pearl, the brightest surface in the theme and well lighter than the
+     rail. Red on this backdrop measures 3.27:1: over the large-text bar the
+     statement face earns, but under 4.5, which is why the type size is part of
+     the design and not a flourish. Measured, not eyeballed. */
+  --north:#E8443C; --northbg:#313138;
   --grad:linear-gradient(135deg,#E8443C,#E8443C);
   --gradf:linear-gradient(135deg,#E9E9EC,#E9E9EC);
   --ring1:#E8443C; --ring2:#E8443C; --ring3:#E8443C;
@@ -187,7 +199,13 @@ select option{background:var(--pearl);color:var(--txt)}
 .navgrp{display:flex;flex-direction:column;gap:6px}
 .navbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;border-radius:var(--r2);font-size:13.5px;font-weight:500;color:var(--mut);border:1px solid transparent;transition:.16s}
 .navbtn:hover{background:rgba(var(--ink-rgb),.06);color:var(--txt)}
-.navbtn.on{background:var(--pearl);border-color:var(--line2);color:var(--navy);box-shadow:var(--shadow)}
+/* the active view carries the accent: an inset bar and a tinted icon in the
+   today colour, which is the palette's "you are here" role in both themes: the
+   teal now-marker in Cloud blue, the one red in Monochrome. No new colour and
+   no red imported into the blue palette. */
+.navbtn.on{background:var(--pearl);border-color:var(--line2);color:var(--navy);
+  box-shadow:inset 3px 0 0 var(--today),var(--shadow)}
+.navbtn.on .em{color:var(--today)}
 .navbtn .em{width:18px;flex:none;display:inline-flex;align-items:center;justify-content:center}
 .navbtn .em svg{width:17px;height:17px}
 .navbtn .cnt{margin-left:auto;font-size:11px;color:var(--mut);background:rgba(var(--ink-rgb),.08);padding:1px 7px;border-radius:99px}
@@ -216,8 +234,20 @@ select option{background:var(--pearl);color:var(--txt)}
    more padding, and the display face for the statement itself. No new colour,
    no gradient, no stripe, no icon; row hairlines and the tick are gone because
    a statement is read, not processed. */
-#fpanel{background:var(--pearl);border-color:var(--line2);padding:15px 15px 14px}
+#fpanel{background:var(--northbg);border-color:var(--line2);padding:15px 15px 14px}
 .frow{display:flex;align-items:flex-start;gap:8px;padding:8px 0}
+/* the held statements are the one highlighted thing in the sidebar: statement
+   ink (--north) at 19px/700. The size is load-bearing, not taste: 19px at 700
+   is WCAG large text, and mono's red on its light backdrop clears the 3:1
+   large-text bar (3.27) while falling short of the 4.5 normal-text bar, so
+   shrinking this face breaks accessibility, not just looks. Scoped to the
+   panel: the weekly list shares .ftxt and keeps its own size. Set-aside rows
+   keep their muted small face through the .frow.done override below. */
+#fpanel .frow:not(.done) .ftxt{font-size:19px;font-weight:700;line-height:1.35;color:var(--north)}
+/* block, not inline: at 19px a statement wraps in the rail, and a wrapped inline
+   span's box no longer covers its own centre, so the tap that should open the
+   rename landed on the div behind it. Block, the span owns its full lines. */
+#fpanel .ftxt span[data-action]{display:block}
 .ftxt{flex:1;min-width:0;word-break:break-word;font-family:var(--fd);
   font-size:15.5px;font-weight:600;letter-spacing:-.01em;line-height:1.45;color:var(--navy)}
 .frow .mini{margin-top:3px}
@@ -494,6 +524,25 @@ select option{background:var(--pearl);color:var(--txt)}
 .noterow .nsub{font-size:11px;color:var(--mut2)}
 @media (hover:hover){ .noterow:hover{background:rgba(var(--ink-rgb),.06)} .noterow.on:hover{background:var(--pearl)} }
 .noterow:active{transform:scale(.99)}
+/* folders: one level, no nesting. A folder is a quiet group heading in the list,
+   in the railcap voice; its notes indent under it. Each row carries a Move
+   control beside it (never inside the row button, which is the open action),
+   so a note reaches a folder in two taps with no drag anywhere. */
+.noteli{display:flex;align-items:stretch;gap:4px}
+.noteli .noterow{flex:1;min-width:0}
+.noteli.inf{padding-left:12px}
+.notemv{flex:none;align-self:center;padding:6px;border-radius:8px;color:var(--mut2);border:1px solid transparent;transition:.15s}
+@media (hover:hover){ .notemv:hover{color:var(--navy);border-color:var(--line)} }
+.notemv:active{transform:scale(.9)}
+.notemv svg{width:15px;height:15px;display:block}
+.fldhead{display:flex;align-items:center;gap:6px;padding:8px 4px 2px;margin-top:2px}
+.fldhead svg.fico{width:12px;height:12px;flex:none;color:var(--mut2)}
+.fldname{font-family:var(--fbx);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fldhead .fn{font-size:10.5px;color:var(--mut2);margin-left:auto}
+.fldhead .mini{flex:none}
+.fldempty{font-size:11px;color:var(--mut2);font-style:italic;padding:2px 4px 4px 16px}
+/* the folder chooser's options, on the modal surface */
+.mvlist{display:flex;flex-direction:column;gap:2px;margin:4px 0 2px}
 .noteed{flex:1;min-width:0;overflow-y:auto;padding:2px 6px 18px 0}
 /* the page sits directly beside the list, one continuous surface like board-and-rail,
    and ENDS with its content: the text column declares the reading measure as its
@@ -507,7 +556,7 @@ select option{background:var(--pearl);color:var(--txt)}
 #noteTitle{width:100%;min-width:0;border:none;background:transparent;box-shadow:none;border-radius:0;
   padding:0 0 6px;font-family:var(--fd);font-weight:600;font-size:19px;letter-spacing:-.02em;color:var(--navy)}
 #noteTitle:focus{border:none;box-shadow:none}
-.notemeta{display:flex;align-items:center;gap:6px;padding:0 0 7px}
+.notemeta{display:flex;align-items:center;gap:6px;padding:0 0 7px;flex-wrap:wrap}
 #noteMeta{font-size:11px;color:var(--mut2);margin-right:auto}
 .nact{font-size:11.5px;font-weight:500;color:var(--mut);padding:4px 9px;border-radius:7px;
   border:1px solid transparent;transition:.15s}
@@ -555,6 +604,42 @@ select option{background:var(--pearl);color:var(--txt)}
   background-size:100% 1.7em;background-position:0 .12em}
 #noteBody.pg-dot{background-image:radial-gradient(rgba(var(--ink-rgb),.17) 1px,transparent 1.4px);
   background-size:1.13em 1.13em;background-position:.3em .55em}
+/* ---------- the sticky note: one shared scratch block ----------
+   A margin note, not a panel. Three placements, each chosen so it can never
+   cover a control with no way to scroll clear:
+   - Board and Free Floating (wide): a floating corner over the canvas, bottom
+     right; #board reserves the sticky's width at the END of its sideways
+     scroll, so at max scroll the last column clears the corner, and any other
+     column scrolls clear the way content already moves under a margin note.
+   - Notes (wide): a right-aligned strip ABOVE the pane (order:-1 in #main's
+     column flex), in flow. An overlay was measured and rejected: the page
+     reaches the right edge, so top-right floating covers its toolbar, and
+     reserving a side margin instead leaves the page ~140px wide at 1024 once
+     the rail and the list have taken theirs. A strip of height is the cheap
+     dimension in Notes; width is not.
+   - Under 900px: in flow, full width, at the END of the view, where a floating
+     corner would cover content and fight the on-screen keyboard.
+   The textarea is STATIC markup, never rebuilt by a render, so its caret and
+   its native undo survive every foreign render for free, the #qi trick. */
+#main{position:relative}
+#sticky{position:absolute;right:22px;bottom:18px;width:232px;z-index:40;
+  background:var(--panel);border:1px solid var(--line2);border-radius:var(--r2);
+  box-shadow:var(--shadow);padding:8px 10px 9px;display:flex;flex-direction:column;gap:3px}
+.stickycap{font-family:var(--fbx);font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--mut2)}
+#stickyPad{width:100%;height:92px;resize:none;border:none;background:transparent;box-shadow:none;
+  border-radius:0;padding:0;font-size:12.5px;line-height:1.5;color:var(--txt);outline:none;overflow-y:auto}
+#stickyPad::placeholder{color:var(--mut2)}
+@media (min-width:901px){
+  #sticky[data-pos="top"]{position:static;order:-1;align-self:flex-end;width:232px;margin:0 0 10px}
+  /* the corner's clearance at the end of the board's sideways scroll */
+  #main.stickycorner #board{padding-right:264px}
+}
+@media (max-width:900px){
+  #sticky{position:static;width:auto;margin:10px 0 4px}
+  /* 16px keeps the browser from zooming the page when the field takes focus */
+  #stickyPad{height:84px;font-size:16px}
+}
+
 @media (max-width:900px){
   #notes{flex-direction:column;overflow:visible}
   .notelist{width:100%;max-height:38vh;flex:none}
@@ -875,7 +960,12 @@ select option{background:var(--pearl);color:var(--txt)}
   /* the rail controls are drawn small on a desktop; on a coarse pointer they grow for
      real, since a button cannot host the invisible ::before the tick boxes use */
   #railcollapse,#railshow{min-height:44px;min-width:44px}
-  .noterow{min-height:44px}
+  /* positioned, so its own box always beats the folder-head minis' downward
+     overlays above it: the row's taps belong to the row */
+  .noterow{min-height:44px;position:relative}
+  .notemv{min-height:44px;min-width:44px;position:relative}
+  .modal .popt{min-height:44px}
+  #stickyPad{min-height:44px}
   .nact,.ntb{min-height:44px;min-width:44px}
   #notePage{min-height:44px}
   .nbtn,.tbtn,.abtn,.mrow button{min-height:44px;min-width:44px}
@@ -953,6 +1043,14 @@ select option{background:var(--pearl);color:var(--txt)}
     <div id="weekMobile"></div>
     <div id="cal" style="display:none"></div>
     <div id="notes" style="display:none"></div>
+    <!-- the sticky note is static markup on purpose: a render never rebuilds it,
+         so its caret and its native undo survive every foreign render (see the
+         sticky CSS block). renderSticky only shows, places and, while the pad is
+         not focused, refreshes it. -->
+    <div id="sticky" style="display:none" data-pos="corner">
+      <div class="stickycap">Sticky note</div>
+      <textarea id="stickyPad" aria-label="Sticky note" placeholder="Anything to keep at hand. It follows you to every device."></textarea>
+    </div>
   </main>
 </div>
 
@@ -1003,8 +1101,21 @@ function fresh(){
     week:{list:[],hist:{}},
     /* notes: title and body. The body is ONE string on the dn axis: plain text, or
        a small sanitized HTML subset once formatting is used (see the rich engine by
-       renderNotes). pinned:true rides pos; pg ('ruled'|'dot') rides up with the title */
+       renderNotes). pinned:true rides pos; pg ('ruled'|'dot') rides up with the title.
+       A note's `folder` (a folder id, or absent for the loose list) is PLACEMENT,
+       so it rides pos beside pinned: it composes with a concurrent title or body
+       edit exactly as pinning does, and cannot revive a deleted note. */
     notes:[],
+    /* folders: one flat level of note groups, merged item by item like float tabs.
+       A folder OWNS no notes: notes point at it by id, so deleting it can never
+       delete them (rebuild drops dead references and the notes fall back loose). */
+    folders:[],
+    /* the sticky note: ONE shared block of text, not an id'd item. It merges as a
+       whole by its own `at` stamp, written at the keystroke, so the unstamped-
+       debounce window that once bit note bodies cannot exist for it. Same honest
+       limit a note body has: two devices editing it concurrently resolve by
+       later-at-wins, whole text, the loser silently gone. */
+    sticky:{text:'',at:0},
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
       habitsOpen:true,weekOpen:true,lastWeek:null,noteSel:null}
@@ -1051,9 +1162,16 @@ const arr=x=>Array.isArray(x)?x:[];
    flip on one device would take the whole body with it against an edit elsewhere.
    The known cost: a page flip and a title rename made concurrently on two devices
    resolve by later-up-wins-both, the same small-payload rule habits already accept. */
-const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days'],wtask:['title'],note:['title','pg']};
-const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[],wtask:['done'],note:['body']};
-const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord'],wtask:['ord'],note:['ord','pinned']};
+/* A folder is the plainest kind there is: its name on content, nothing on dn
+   (like a float tab), its list order on pos. A note's `folder` sits on the pos
+   axis beside `pinned` and `ord`: moving a note into or out of a folder is
+   saying where it sits, so it composes with a title edit (up) and a body edit
+   (dn) made elsewhere, two concurrent moves resolve by later-pos-wins whole
+   placement, and a move can never revive a deleted note, because tombstones
+   are compared against up and dn only. */
+const CONTENTF={float:['name'],task:['title'],sub:['title'],focus:['title'],habit:['name','days'],wtask:['title'],note:['title','pg'],folder:['name']};
+const DONEF={float:[],task:['done'],sub:['done'],focus:['done','doneAt'],habit:[],wtask:['done'],note:['body'],folder:[]};
+const POSF={float:['ord'],task:['loc','ord','from'],sub:['pid','ord'],focus:['ord'],habit:['ord'],wtask:['ord'],note:['ord','pinned','folder'],folder:['ord']};
 /* A habit's ticks do not live on the item at all: they sit in habits.marks as one
    timestamped cell per week and day, merged by union, so a Monday tick on one device
    and a Wednesday tick on another can never compete. The item's dn stamp still moves
@@ -1071,6 +1189,7 @@ function eachItem(s,fn){
   const hb=s.habits||{};
   arr(hb.list).forEach((x,i)=>{ if(x&&x.id) fn('habit',x,{ord:i,msig:marksSigFor(hb.marks,x.id)}) });
   arr(s.week&&s.week.list).forEach((x,i)=>{ if(x&&x.id) fn('wtask',x,{ord:i}) });
+  arr(s.folders).forEach((x,i)=>{ if(x&&x.id) fn('folder',x,{ord:i}) });
   arr(s.notes).forEach((x,i)=>{ if(x&&x.id) fn('note',x,{ord:i}) });
 }
 /* a habit's marks across every week, in stable key order, for its dn signature */
@@ -1091,6 +1210,7 @@ function eachTask(t,loc,ord,fn){
    parent and cannot outrank an edit made to that parent elsewhere. */
 function sigC(kind,o){
   if(kind==='float') return 'F|'+(o.name||'');
+  if(kind==='folder')return 'G|'+(o.name||'');
   if(kind==='habit') return 'H|'+(o.name||'')+'|'+arr(o.days).slice().sort((a,b)=>a-b).join(',');
   if(kind==='note')  return 'C|'+(o.title||'')+'|'+(o.pg||'');
   return 'C|'+(o.title||'');
@@ -1098,7 +1218,7 @@ function sigC(kind,o){
 /* whether it is ticked, on its own so a rename cannot outrank a tick.
    A note has no tick; its body rides this axis instead (see DONEF). */
 function sigD(kind,o,m){
-  if(kind==='float') return 'd|';
+  if(kind==='float'||kind==='folder') return 'd|';
   if(kind==='habit') return 'd|'+((m&&m.msig)||'');
   if(kind==='focus') return 'd|'+(o.done?1:0)+'|'+(o.doneAt||'');
   if(kind==='note')  return 'd|'+(o.body||'');
@@ -1107,10 +1227,11 @@ function sigD(kind,o,m){
 /* where the item sits, ignoring what it says */
 function sigP(kind,o,m){
   if(kind==='float') return 'f|'+m.ord;
+  if(kind==='folder')return 'g|'+m.ord;
   if(kind==='focus') return 'x|'+m.ord;
   if(kind==='habit') return 'h|'+m.ord;
   if(kind==='wtask') return 'w|'+m.ord;
-  if(kind==='note')  return 'n|'+m.ord+'|'+(o.pinned?1:0);
+  if(kind==='note')  return 'n|'+m.ord+'|'+(o.pinned?1:0)+'|'+(o.folder||'');
   if(kind==='sub')   return 's|'+m.pid+'|'+m.ord;
   return 't|'+locKey(m.loc)+'|'+m.ord+'|'+(o.from||'');
 }
@@ -1161,6 +1282,8 @@ function stampLegacy(s){
   if(!s.week||typeof s.week!=='object'||!Array.isArray(s.week.list)) s.week={list:[],hist:{}};
   if(!s.week.hist||typeof s.week.hist!=='object') s.week.hist={};
   if(!Array.isArray(s.notes)) s.notes=[];
+  if(!Array.isArray(s.folders)) s.folders=[];
+  if(!s.sticky||typeof s.sticky!=='object'||typeof s.sticky.text!=='string') s.sticky={text:'',at:0};
   eachItem(s,(k,o)=>{ if(!(+o.up>0)) o.up=LEGACY_UP;
     if(!(+o.dn>0)) o.dn=upOf(o); if(!(+o.pos>0)) o.pos=upOf(o) });
   if(!s.tomb||typeof s.tomb!=='object') s.tomb={};
@@ -1176,9 +1299,11 @@ function stampLegacy(s){
 
 /* ================= merge two planners, item by item ================= */
 function flatten(s){
-  const g={float:{},task:{},sub:{},focus:{},habit:{},wtask:{},note:{}};
+  const g={float:{},task:{},sub:{},focus:{},habit:{},wtask:{},note:{},folder:{}};
   eachItem(s,(k,o,m)=>{
     if(k==='float') g.float[o.id]={id:o.id,name:o.name||'',ord:m.ord,
+      up:upOf(o),dn:dnOf(o),pos:posOf(o)};
+    else if(k==='folder') g.folder[o.id]={id:o.id,name:o.name||'',ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='focus') g.focus[o.id]={id:o.id,title:o.title||'',done:!!o.done,
       doneAt:o.doneAt||null,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
@@ -1190,7 +1315,7 @@ function flatten(s){
     else if(k==='wtask') g.wtask[o.id]={id:o.id,title:o.title||'',done:!!o.done,ord:m.ord,
       up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else if(k==='note') g.note[o.id]={id:o.id,title:o.title||'',body:o.body||'',
-      pg:o.pg||'',pinned:!!o.pinned,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
+      pg:o.pg||'',pinned:!!o.pinned,folder:o.folder||'',ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
     else g.task[o.id]={id:o.id,title:o.title||'',done:!!o.done,from:o.from||null,
       loc:m.loc,ord:m.ord,up:upOf(o),dn:dnOf(o),pos:posOf(o)};
   });
@@ -1229,7 +1354,7 @@ function mergeTombs(x,y){
 }
 function stateSig(s){
   const g=flatten(s), out=[];
-  ['float','task','sub','focus','habit','wtask','note'].forEach(k=>Object.keys(g[k]).sort()
+  ['float','task','sub','focus','habit','wtask','note','folder'].forEach(k=>Object.keys(g[k]).sort()
     .forEach(id=>out.push(k+' '+JSON.stringify(g[k][id]))));
   /* habit ticks live outside the items, so hash them too or a tick would never push */
   const hm=(s&&s.habits&&s.habits.marks)||{};
@@ -1247,6 +1372,10 @@ function stateSig(s){
   Object.keys(tb).sort().forEach(id=>out.push('gone '+id+' '+tb[id]));
   const bn=(s&&s.bin)||{};
   Object.keys(bn).sort().forEach(id=>out.push('bin '+id+' '+JSON.stringify(bn[id])));
+  /* the sticky block is a known key, so the unknown-key sweep below never sees it;
+     hash it here or a sticky edit would never trigger a push */
+  const sk=(s&&s.sticky)||{};
+  out.push('sk '+JSON.stringify({t:typeof sk.text==='string'?sk.text:'',a:+sk.at||0}));
   /* unknown top level keys count too, or a change to one would never trigger a push */
   const known={}; MERGED_KEYS.forEach(k=>{known[k]=1});
   Object.keys(s||{}).filter(k=>!known[k]).sort()
@@ -1256,8 +1385,8 @@ function stateSig(s){
 function mergeStates(mine,theirs){
   const A=flatten(mine), B=flatten(theirs);
   const tomb=mergeTombs(mine.tomb,theirs.tomb);
-  const keep={float:{},task:{},sub:{},focus:{},habit:{},wtask:{},note:{}};
-  ['float','task','sub','focus','habit','wtask','note'].forEach(g=>{
+  const keep={float:{},task:{},sub:{},focus:{},habit:{},wtask:{},note:{},folder:{}};
+  ['float','task','sub','focus','habit','wtask','note','folder'].forEach(g=>{
     const ids={};
     Object.keys(A[g]).forEach(i=>{ids[i]=1}); Object.keys(B[g]).forEach(i=>{ids[i]=1});
     Object.keys(ids).forEach(id=>{
@@ -1272,7 +1401,7 @@ function mergeStates(mine,theirs){
   });
   const out=rebuild(keep,tomb,mine,theirs);
   const alive={};
-  ['float','task','sub','focus','habit','wtask','note'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
+  ['float','task','sub','focus','habit','wtask','note','folder'].forEach(g=>Object.keys(keep[g]).forEach(id=>{alive[id]=1}));
   out.bin=mergeBins(mine.bin,theirs.bin,tomb,alive);
   return out;
 }
@@ -1297,7 +1426,7 @@ function mergeBins(x,y,tomb,alive){
    carried through untouched by carryUnknown(), so a key added to state in future cannot be
    silently dropped the first time two devices merge. A test asserts this list still matches
    fresh(), so adding a key to the canonical shape forces a deliberate choice here. */
-const MERGED_KEYS=['ver','days','carry','focus','floats','habits','week','notes','settings','tomb','bin'];
+const MERGED_KEYS=['ver','days','carry','focus','floats','habits','week','notes','folders','sticky','settings','tomb','bin'];
 /* the weekly list's closed weeks: plain records, unioned by week then by id, the newer
    `at` winning a shared id. Two devices archiving the same finished item converge. */
 function mergeHist(x,y){
@@ -1401,10 +1530,23 @@ function rebuild(keep,tomb,mine,theirs){
       .map(x=>({id:x.id,title:x.title,done:x.done,up:x.up,dn:x.dn,pos:x.pos})),
     hist:mergeHist(mine.week&&mine.week.hist,theirs.week&&theirs.week.hist)
   };
+  out.folders=Object.keys(keep.folder).map(id=>keep.folder[id]).sort(byOrd)
+    .map(x=>({id:x.id,name:x.name,up:x.up,dn:x.dn,pos:x.pos}));
   out.notes=Object.keys(keep.note).map(id=>keep.note[id]).sort(byOrd)
     .map(x=>{const o={id:x.id,title:x.title,body:x.body,up:x.up,dn:x.dn,pos:x.pos};
       if(x.pinned) o.pinned=true; if(x.pg) o.pg=x.pg;
+      /* folder deleted elsewhere: keep the note, back in the loose list. Moving
+         a note INTO a folder stamps the note's pos, never the folder's up or dn,
+         so the move cannot revive the folder, same as a reorder cannot. */
+      if(x.folder&&keep.folder[x.folder]) o.folder=x.folder;
       return o});   /* absent, not false or '': exports stay clean */
+  /* the sticky block: whole-text, later stamp wins, ties break by content so both
+     devices land on the same answer. A missing side (an old planner) never wins. */
+  const skN=x=>(x&&typeof x==='object'&&typeof x.text==='string')?{text:x.text,at:+x.at||0}:null;
+  const skA=skN(mine.sticky), skB=skN(theirs.sticky);
+  out.sticky=!skA?(skB||out.sticky):!skB?skA
+    :(skA.at!==skB.at?(skA.at>skB.at?skA:skB)
+      :(JSON.stringify(skA)<=JSON.stringify(skB)?skA:skB));
   if(!out.floats.some(x=>x.id===out.settings.activeFloat)) out.settings.activeFloat=out.floats[0].id;
   return carryUnknown(out,mine,theirs);
 }
@@ -1425,6 +1567,9 @@ function load(){
       state.week={list:[],hist:{}};
     if(!state.week.hist||typeof state.week.hist!=='object') state.week.hist={};
     if(!Array.isArray(state.notes)) state.notes=[];
+    if(!Array.isArray(state.folders)) state.folders=[];
+    if(!state.sticky||typeof state.sticky!=='object'||typeof state.sticky.text!=='string')
+      state.sticky={text:'',at:0};
     /* migrate an old flat backlog into the first float tab */
     if(Array.isArray(p.backlog)&&p.backlog.length) state.floats[0].tasks.push(...p.backlog);
   }catch(e){ state=fresh() }
@@ -1617,6 +1762,7 @@ function emptyPlanner(s){
   const days=s.days||{};
   const noDays=Object.keys(days).every(d=>ZONES.every(z=>!((days[d]||{})[z]||[]).length));
   return noDays&&!(s.carry||[]).length&&!(s.focus||[]).length&&!(s.notes||[]).length&&
+    !(s.folders||[]).length&&!((s.sticky&&s.sticky.text)||'')&&
     (s.floats||[]).every(f=>!(f.tasks||[]).length);
 }
 function swapState(next){
@@ -1639,6 +1785,9 @@ function readCloud(p){
     out.week={list:[],hist:{}};
   if(!out.week.hist||typeof out.week.hist!=='object') out.week.hist={};
   if(!Array.isArray(out.notes)) out.notes=[];
+  if(!Array.isArray(out.folders)) out.folders=[];
+  if(!out.sticky||typeof out.sticky!=='object'||typeof out.sticky.text!=='string')
+    out.sticky={text:'',at:0};
   return stampLegacy(out);
 }
 /* put a state on screen without letting the change look like a local edit */
@@ -2051,6 +2200,9 @@ function binCapture(gone,alive,t){
       e.body.tasks=arr(e.body.tasks).filter(x=>x&&dead[x.id]);
       if(note[id]&&Array.isArray(note[id].moved)) e.moved=note[id].moved.slice();
     }
+    /* a folder never takes notes with it (they only point at it), but the ids it
+       held ride along so a Restore can gather them back, the way a tab's do */
+    if(k==='folder'&&note[id]&&Array.isArray(note[id].moved)) e.moved=note[id].moved.slice();
     state.bin[id]=e;
   });
 }
@@ -2095,6 +2247,16 @@ function restoreBin(id){
       if(f&&f.from.kind==='float'&&f.from.fid!==tab.id){ move(tid,{kind:'float',fid:tab.id}); back++ }
     });
     dest='Free Floating'+(back?', with '+back+(back===1?' task':' tasks')+' moved back into it':'');
+  }else if(e.k==='folder'){
+    const fl={id:b.id,name:b.name||'Restored folder'};
+    state.folders.push(fl);
+    /* gather back the notes it held, if they are still loose rather than refiled */
+    let back=0;
+    arr(e.moved).forEach(nid=>{
+      const n=state.notes.find(x=>x.id===nid);
+      if(n&&!n.folder){ n.folder=fl.id; back++ }
+    });
+    dest='Notes'+(back?', with '+back+(back===1?' note':' notes')+' moved back into it':'');
   }else if(e.k==='focus'){ state.focus.push(b); dest='True north' }
   else if(e.k==='habit'){ state.habits.list.push(b); dest='the Habits panel' }
   else if(e.k==='wtask'){ state.week.list.push(b); dest='the This week list' }
@@ -2128,6 +2290,7 @@ function binWhere(e){
   if(e.k==='habit') return 'the Habits panel';
   if(e.k==='wtask') return 'the This week list';
   if(e.k==='note') return 'Notes';
+  if(e.k==='folder') return 'Notes, as a folder';
   const l=e.loc||{kind:'carry'};
   if(l.kind==='day'&&l.date)
     return (ZL[l.zone]||ZL.must)+' on '+DOW[new Date(l.date+'T12:00:00').getDay()]+' '+l.date;
@@ -2148,6 +2311,7 @@ function binBody(){
   list.forEach(x=>{
     const e=x.e, name=e.k==='float'?(e.body.name||'a tab')
       :e.k==='habit'?(e.body.name||'a habit')
+      :e.k==='folder'?(e.body.name||'a folder')
       :e.k==='note'?(e.body.title||'a note'):(e.body.title||'');
     h+='<div class="binrow"><div class="bt"><b>'+esc(String(name).slice(0,64))+'</b>'+
       '<span>'+binMeta(e)+'</span></div>'+
@@ -2688,6 +2852,9 @@ function renderWeekly(){
    same body string. The search box keeps its own restore; the list is sorted at
    DISPLAY time, pinned first then by last edit, and browsing never churns a stamp. */
 const PIN='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5h5v4l1.5 2.5h-8L5.5 6.5z"/><path d="M8 9v4.5"/></svg>';
+/* the folder glyph, and the same folder with an arrow for the Move control */
+const FLD_I='<svg class="fico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h4l1.4 1.7H14v6.3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>';
+const MOVE_I='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h4l1.4 1.7H14v6.3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><path d="M5.8 9.9h4.4M8.4 8.1l1.8 1.8-1.8 1.8"/></svg>';
 /* the two step arrows, mirrored: an arrowhead and the arc it came round. Glyphs, so
    they are aria-hidden and the button carries the name. */
 const UNDO_I='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.6 3.8 2.8 6.6l2.8 2.8"/><path d="M2.8 6.6h6a3.4 3.4 0 0 1 0 6.8H6.4"/></svg>';
@@ -2937,18 +3104,52 @@ function noteMetaText(n,at){
     (+d.slice(8,10))+' '+MON[+d.slice(5,7)-1]+(d.slice(0,4)===t.slice(0,4)?'':' '+d.slice(0,4));
   return 'Edited '+when+' · '+ws;
 }
+/* the folder a note renders under: a reference to a folder that is gone (deleted
+   on another device, mid-merge) counts as loose, so a stale id can never lose a
+   note from the list */
+const noteFolderOf=n=>(n&&n.folder&&arr(state.folders).some(f=>f.id===n.folder))?n.folder:'';
+function noteRowHtml(n,inf){
+  /* the Move control renders only when it can act: a folder to move into, or a
+     folder to move out of. Never a dead button, the same guard the tab ends use. */
+  const mv=arr(state.folders).length||noteFolderOf(n);
+  return '<div class="noteli'+(inf?' inf':'')+'">'+
+    '<button class="noterow'+(n.id===state.settings.noteSel?' on':'')+
+    '" data-action="note-open" data-id="'+n.id+'">'+
+    '<span class="nt">'+(n.pinned?PIN:'')+'<span class="ntx">'+esc(noteLabel(n))+'</span></span>'+
+    '<span class="nsub">'+esc(notePrev(n))+'</span></button>'+
+    (mv?'<button class="notemv" data-action="note-movemenu" data-id="'+n.id+
+      '" title="Move to a folder" aria-label="Move to a folder">'+MOVE_I+'</button>':'')+
+    '</div>';
+}
 function noteRowsHtml(){
   const q=(ui.noteQ||'').trim().toLowerCase();
   /* search reads the TEXT of a body, not its markup: a phrase crossing a tag
      boundary still matches, and tag names can never produce phantom hits */
-  const vis=noteOrder(arr(state.notes)).filter(n=>!q||
-    ((n.title||'')+'\n'+noteText(n)).toLowerCase().indexOf(q)>-1);
-  if(!vis.length) return q?'<div class="empty">Nothing matches.</div>'
-    :'<div class="empty">No notes yet. Plain text, saved as you type.</div>';
-  return vis.map(n=>'<button class="noterow'+(n.id===state.settings.noteSel?' on':'')+
-    '" data-action="note-open" data-id="'+n.id+'">'+
-    '<span class="nt">'+(n.pinned?PIN:'')+'<span class="ntx">'+esc(noteLabel(n))+'</span></span>'+
-    '<span class="nsub">'+esc(notePrev(n))+'</span></button>').join('');
+  const match=n=>!q||((n.title||'')+'\n'+noteText(n)).toLowerCase().indexOf(q)>-1;
+  const list=noteOrder(arr(state.notes));
+  /* loose notes first, unheaded, exactly the flat list this always was; then each
+     folder as a heading with its notes indented under it. Order inside a group is
+     the same pinned-then-recency sort the flat list uses. */
+  const loose=list.filter(n=>!noteFolderOf(n)&&match(n));
+  let shown=loose.length;
+  let h=loose.map(n=>noteRowHtml(n,false)).join('');
+  arr(state.folders).forEach(f=>{
+    const inside=list.filter(n=>noteFolderOf(n)===f.id), vis=inside.filter(match);
+    if(q&&!vis.length) return;      /* searching: a folder with no hits stays out of the way */
+    shown+=vis.length;
+    h+='<div class="fldhead">'+FLD_I+'<span class="fldname">'+esc(f.name)+'</span>'+
+      '<span class="fn">'+inside.length+'</span>'+
+      '<button class="mini" data-action="folder-rename" data-fid="'+f.id+
+        '" title="Rename folder" aria-label="Rename folder">✎</button>'+
+      '<button class="mini" data-action="folder-del" data-fid="'+f.id+
+        '" title="Delete folder" aria-label="Delete folder">✕</button></div>';
+    h+=vis.length?vis.map(n=>noteRowHtml(n,true)).join('')
+      :'<div class="fldempty">Empty. Move a note in from its row or its page.</div>';
+  });
+  if(!shown&&q) return '<div class="empty">Nothing matches.</div>';
+  if(!shown&&!arr(state.folders).length)
+    return '<div class="empty">No notes yet. Plain text, saved as you type.</div>';
+  return h;
 }
 /* ---- the toolbar ----
    Always visible while a note is open, one quiet hairline strip: a contextual
@@ -3262,13 +3463,19 @@ function renderNotes(){
   let h='<div class="notelist">'+
     '<input id="noteSearch" type="search" placeholder="Search notes" aria-label="Search notes" autocomplete="off" value="'+esc(ui.noteQ||'')+'">'+
     '<button class="nbtn solid" data-action="note-new">+ New note</button>'+
-    '<div id="noteRows">'+noteRowsHtml()+'</div>';
+    '<div id="noteRows">'+noteRowsHtml()+'</div>'+
+    '<button class="zadd" data-action="folder-new">+ New folder</button>';
   h+='</div><div class="noteed">';
   if(cur){
     h+='<div class="notepage"><div class="notewrap">'+
       '<input id="noteTitle" value="'+esc(cur.title||'')+
       '" placeholder="Untitled" aria-label="Note title" autocomplete="off">'+
       '<div class="notemeta"><span id="noteMeta">'+esc(noteMetaText(cur))+'</span>'+
+      /* Move sits in the meta strip's quiet .nact voice, the second of the two
+         required routes (the list row is the first): same guard as the row, so
+         it never renders as a dead control */
+      (arr(state.folders).length||noteFolderOf(cur)
+        ?'<button class="nact" data-action="note-movemenu" data-id="'+cur.id+'">Move</button>':'')+
       '<button class="nact'+(cur.pinned?' on':'')+'" data-action="note-pin" data-id="'+cur.id+
       '" aria-pressed="'+(cur.pinned?'true':'false')+'">'+(cur.pinned?'Unpin':'Pin')+'</button>'+
       '<button class="nact" data-action="note-del" data-id="'+cur.id+'">Delete</button></div>'+
@@ -3338,11 +3545,39 @@ function renderCal(){
   $('#cal').innerHTML=h;
 }
 
+/* ================= render: the sticky note =================
+   Patch, never rebuild: the pad is static markup, so a render can only show it,
+   place it and, while nobody is typing in it, refresh its text. While the pad IS
+   focused the value is left alone, so a sync landing mid-sentence cannot yank
+   the caret; the focused device's own text wins the merge on its newer stamp. */
+function renderSticky(){
+  const st=$('#sticky'); if(!st) return;
+  const v=state.settings.view;
+  const show=v==='board'||v==='notes';   /* board covers Free Floating: same view */
+  st.style.display=show?'':'none';
+  st.dataset.pos=v==='notes'?'top':'corner';
+  $('#main').classList.toggle('stickycorner',show&&v!=='notes');
+  const pad=$('#stickyPad');
+  if(pad&&document.activeElement!==pad){
+    const txt=(state.sticky&&state.sticky.text)||'';
+    if(pad.value!==txt) pad.value=txt;
+  }
+}
+
 /* ================= master render ================= */
 function render(){
   const v=state.settings.view;
-  $$('#rail .navbtn[data-v]').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
-  $('#rail .navbtn[data-action="floattoggle"]').classList.toggle('on',state.settings.floatMode&&v==='board');
+  /* the active view carries the accent (the .on class draws it) and names itself
+     to assistive tech; in float mode the Free Floating entry is the active one */
+  $$('#rail .navbtn[data-v]').forEach(b=>{
+    const on=b.dataset.v===v;
+    b.classList.toggle('on',on);
+    if(on) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
+  });
+  const fb=$('#rail .navbtn[data-action="floattoggle"]');
+  const fon=state.settings.floatMode&&v==='board';
+  fb.classList.toggle('on',fon);
+  if(fon) fb.setAttribute('aria-current','page'); else fb.removeAttribute('aria-current');
   $('#ftlabel').textContent=state.settings.floatMode?'Back to dates':'Free Floating';
   $('#board').style.display=v==='board'?'flex':'none';
   $('#cal').style.display=v==='calendar'?'block':'none';
@@ -3350,7 +3585,7 @@ function render(){
   $('#quickadd').style.display=v==='board'?'flex':'none';
 
   renderQuick(); renderTray(); renderNav(); renderFocus(); renderMetrics(); paintBin(); grow();
-  renderHabits(); renderWeekly();
+  renderHabits(); renderWeekly(); renderSticky();
   if(v==='board') renderBoard(); else if(v==='calendar') renderCal(); else renderNotes();
 
   if(ui.adding){
@@ -3691,6 +3926,57 @@ document.addEventListener('click',e=>{
       break;
     }
 
+    /* folders: the chooser is the one move mechanism, reached from the list row
+       and from the open page alike. Nothing here is a drag. */
+    case 'note-movemenu': noteMoveModal(el.dataset.id); return;
+    case 'note-move-to':{
+      const n=state.notes.find(x=>x.id===el.dataset.id); if(!n) return;
+      const fid=el.dataset.fid||'';
+      const f=fid?state.folders.find(x=>x.id===fid):null;
+      if(f) n.folder=f.id; else delete n.folder;   /* absent, not '': exports stay clean */
+      $('#modalRoot').innerHTML='';
+      toast(f?'Moved to "'+String(f.name).slice(0,28)+'"':'Moved out of folders');
+      break;
+    }
+    case 'folder-new':{
+      const f={id:uid(),name:'New folder',up:Date.now()};
+      state.folders.push(f);
+      ui.noteQ='';   /* a fresh folder must be visible, whatever was being searched */
+      save(); render();
+      const node=[...document.querySelectorAll('[data-action="folder-rename"]')].pop();
+      if(node) node.click();
+      return;
+    }
+    case 'folder-rename':{
+      const head=el.closest('.fldhead').querySelector('.fldname');
+      head.contentEditable=true; head.dataset.kind='folderrename'; head.dataset.fid=el.dataset.fid;
+      head.focus(); document.execCommand&&document.execCommand('selectAll',false,null); return;
+    }
+    case 'folder-del':{
+      const f=arr(state.folders).find(x=>x.id===el.dataset.fid); if(!f) return;
+      const inside=state.notes.filter(n=>n.folder===f.id).length;
+      /* a folder holding notes asks first, exactly as a tab holding tasks does;
+         deleting it must move the notes out, never delete them */
+      if(inside) return confirmFolderDelete(f,inside);
+      const i=state.folders.indexOf(f); state.folders.splice(i,1);
+      toast('Folder deleted',()=>state.folders.splice(i,0,f));
+      break;
+    }
+    case 'folder-del-move':{
+      const f=arr(state.folders).find(x=>x.id===el.dataset.fid); if(!f) return;
+      const i=state.folders.indexOf(f);
+      const moved=state.notes.filter(n=>n.folder===f.id);
+      moved.forEach(n=>{ delete n.folder });         /* out to the loose list, never deleted */
+      ui.binNote=ui.binNote||{}; ui.binNote[f.id]={moved:moved.map(n=>n.id)};
+      state.folders.splice(i,1);
+      $('#modalRoot').innerHTML='';
+      toast('Folder deleted, '+moved.length+(moved.length===1?' note':' notes')+' kept in the loose list',()=>{
+        state.folders.splice(i,0,f);
+        moved.forEach(n=>{ if(!n.folder) n.folder=f.id });
+      });
+      break;
+    }
+
     case 'goto-day':{
       s.view='board'; s.floatMode=false;
       showDay(el.dataset.day); break;
@@ -3933,10 +4219,10 @@ document.addEventListener('keydown',e=>{
     if(d.enter==='synckey'){ e.preventDefault(); connectKey(el.value); return }
     if(el.id==='noteTitle'){ e.preventDefault();
       const b=$('#noteBody'); if(b) b.focus(); return }
-    if(['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
+    if(['rename','subrename','floatrename','folderrename','focusrename','habitrename','weekrename'].includes(d.kind)){ e.preventDefault(); el.blur(); return }
   }
   if(e.key==='Escape'){
-    if(['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
+    if(['rename','subrename','floatrename','folderrename','focusrename','habitrename','weekrename'].includes(d.kind)){ ui.cancelEdit=true; el.blur(); return }
     if($('#modalRoot').innerHTML){ $('#modalRoot').innerHTML=''; return }
     if(ui.adding){ closeAdd(false); render(); return }
     /* the keyboard's way out of an active True north, matching the outside press */
@@ -3946,7 +4232,7 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('blur',e=>{
   const el=e.target, d=el.dataset||{};
-  if(!['rename','subrename','floatrename','focusrename','habitrename','weekrename'].includes(d.kind)) return;
+  if(!['rename','subrename','floatrename','folderrename','focusrename','habitrename','weekrename'].includes(d.kind)) return;
   el.contentEditable=false;
   const txt=el.textContent.trim();
   if(ui.cancelEdit||!txt){ ui.cancelEdit=false; render(); return }
@@ -3955,6 +4241,7 @@ document.addEventListener('blur',e=>{
     const t=findTask(d.id).task, s=t.subtasks.find(x=>x.id===d.sid); if(s) s.title=txt;
   }
   if(d.kind==='floatrename'){ const f=float(d.fid); if(f) f.name=txt.replace(/^\s*/,'') }
+  if(d.kind==='folderrename'){ const f=arr(state.folders).find(x=>x.id===d.fid); if(f) f.name=txt }
   if(d.kind==='focusrename'){ const f=state.focus.find(x=>x.id===d.id); if(f) f.title=txt }
   if(d.kind==='habitrename'){ const h=state.habits.list.find(x=>x.id===d.id); if(h) h.name=txt }
   if(d.kind==='weekrename'){ const t=state.week.list.find(x=>x.id===d.id); if(t) t.title=txt }
@@ -4273,6 +4560,36 @@ window.addEventListener('scroll',e=>{
 },true);
 
 /* ---------- modals ---------- */
+/* the folder chooser: one implementation behind both Move routes (the list row
+   and the open page). A modal rather than a drag or a per-row select: it works
+   by tap on a phone (risk 12 is why drag was never an option), it reuses the
+   surface and option idioms the app already has, and it adds nothing to the
+   row or the meta strip beyond one quiet button each. */
+function noteMoveBody(n){
+  const cur=noteFolderOf(n);
+  return '<h3>Move this note</h3>'+
+    '<p>"<b>'+esc(noteLabel(n).slice(0,40))+'</b>" lives in one folder, or in the loose list.</p>'+
+    '<div class="mvlist">'+
+    '<button class="popt'+(cur===''?' on':'')+'" data-action="note-move-to" data-id="'+n.id+
+      '" data-fid="">No folder, the loose list</button>'+
+    arr(state.folders).map(f=>'<button class="popt'+(cur===f.id?' on':'')+
+      '" data-action="note-move-to" data-id="'+n.id+'" data-fid="'+f.id+'">'+esc(f.name)+'</button>').join('')+
+    '</div><div class="mrow"><button data-action="mclose" data-close="1">Cancel</button></div>';
+}
+function noteMoveModal(id){
+  const n=state.notes.find(x=>x.id===id); if(!n) return;
+  $('#modalRoot').innerHTML='<div class="mback" data-action="mclose"><div class="modal" id="noteMoveModal">'+
+    noteMoveBody(n)+'</div></div>';
+}
+function confirmFolderDelete(f,n){
+  $('#modalRoot').innerHTML='<div class="mback" data-action="mclose"><div class="modal">'+
+    '<h3>Delete "'+esc(f.name)+'"?</h3>'+
+    '<p>It still holds <b>'+n+'</b> '+(n===1?'note':'notes')+
+    '. Deleting the folder should not delete them.</p>'+
+    '<div class="mrow"><button data-action="mclose" data-close="1">Keep the folder</button>'+
+    '<button class="pri" data-action="folder-del-move" data-fid="'+f.id+'">Move notes out, then delete</button></div>'+
+    '</div></div>';
+}
 function confirmTabDelete(f){
   $('#modalRoot').innerHTML='<div class="mback" data-action="mclose"><div class="modal">'+
     '<h3>Delete "'+esc(f.name)+'"?</h3>'+
@@ -4335,6 +4652,14 @@ document.addEventListener('input',e=>{
       notePatchRow(n);
       noteStepState();             /* the first word makes Undo live, and a fresh edit kills Redo */
     }
+    save();
+  }
+  /* the sticky note: text and stamp move TOGETHER, at the keystroke, so the
+     unstamped-debounce window that once cost a note body its merge (Section 5 of
+     the review) cannot exist here: whenever the text is newer, so is its stamp.
+     No render, so the caret is never disturbed. */
+  if(e.target.id==='stickyPad'){
+    state.sticky={text:e.target.value,at:Date.now()};
     save();
   }
   /* the search box filters the list in place: no save (nothing persists), and no
