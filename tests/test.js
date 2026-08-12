@@ -4196,15 +4196,21 @@ console.log('— the rail: five panels on one surface, and the sizes unpaired �
   ok(stSize>=18.66&&stWeight>=700,
     'the statement still clears the 14pt bold large-text floor, which is what makes mono legal at 3.65');
 
-  /* ONE SURFACE: the four nav items take the True north backdrop */
-  ok(/\.navbtn\{[^}]*background:var\(--northbg\)/.test(css),
-    'the nav items take the True north backdrop, so the five rail panels share one surface');
+  /* WHITE MEANS ACTIVE: the backdrop marks the current view and nothing else.
+     A resting item stays on the rail, so it must declare no surface at all. */
+  ok(!/background/.test(navRule),'a resting nav item declares no surface: it sits on the rail');
+  ok(/\.navbtn\.on\{[^}]*background-color:var\(--northbg\)/.test(css),
+    'and only the active item takes the True north backdrop');
+  ok(!/\.navbtn\.on\{[^}]*background:var/.test(css),
+    'as background-color, not the shorthand, or it would reset the hover layer');
   ok(/--northbg:#F6F6F7/.test(rootBlock)&&/--northbg:#F6F6F7/.test(monoBlock),
     'and it is #F6F6F7 in both themes');
-  /* a near-white pill needs the island ink for exactly the reason #fpanel did */
-  ok(/\.navbtn\{[^}]*--mut:var\(--northmut\)/.test(css)&&/\.navbtn\{[^}]*--navy:var\(--northtxt\)/.test(css)&&
-     /\.navbtn\{[^}]*--ink-rgb:var\(--northink-rgb\)/.test(css),
-    'and the island ink with it, or a dark theme lends a white pill its near-white text');
+  /* the ACTIVE item is the near-white island now, so the island ink rides with it */
+  ok(/--mut:var\(--northmut\)/.test(onRule)&&/--navy:var\(--northtxt\)/.test(onRule)&&
+     /--ink-rgb:var\(--northink-rgb\)/.test(onRule),
+    'and the island ink goes with the backdrop, or mono lends a white pill its near-white text');
+  ok(!/--ink-rgb:var\(--northink-rgb\)/.test(navRule),
+    'while a resting item keeps the rail tint its hover and press were tuned with');
   /* hover must LAYER over the surface. As a background-color the translucent wash
      replaces the white and lets the rail through, which under mono is near-black. */
   ok(/\.navbtn:hover\{background-image:linear-gradient/.test(css),
@@ -4214,7 +4220,6 @@ console.log('— the rail: five panels on one surface, and the sizes unpaired �
 
   /* THE ACTIVE ITEM lost the surface that used to be half its signal, so the marks
      it keeps have to carry it alone. Each is checked, and none of them is new. */
-  ok(!/background:/.test(onRule),'the active item no longer has a surface of its own');
   ok(/border-color:var\(--northline\)/.test(onRule),'it keeps its rim');
   ok(/inset 3px 0 0 var\(--today\)/.test(onRule),'and the inset accent bar');
   ok(/font-weight:600/.test(onRule),
@@ -4228,20 +4233,54 @@ console.log('— the rail: five panels on one surface, and the sizes unpaired �
   const lum=h=>{h=h.replace('#','');return 0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16))};
   const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
   const BG='#F6F6F7';
-  /* the labels are 13.5px at weight 500, so normal text and a 4.5 bar, measured on
-     the surface they now sit on rather than the rail they used to sit on */
-  ok(ratio('#41627F',BG)>=4.5,'cloud blue: a resting nav label measures '+ratio('#41627F',BG).toFixed(2));
-  ok(ratio('#40404A',BG)>=4.5,'mono: a resting nav label measures '+ratio('#40404A',BG).toFixed(2));
+  /* the two label states now sit on DIFFERENT surfaces, so each is measured on its
+     own. Resting is 13.5px/500 on the rail, active is the same size on the
+     backdrop; both are normal text, so 4.5 is the bar for both. */
+  ok(ratio('#41627F','#CFE3F1')>=4.5,
+    'cloud blue: a resting nav label on the rail measures '+ratio('#41627F','#CFE3F1').toFixed(2));
+  ok(ratio('#ABABB3','#161619')>=4.5,
+    'mono: a resting nav label on the rail measures '+ratio('#ABABB3','#161619').toFixed(2));
   ok(ratio('#243A5E',BG)>=4.5,'cloud blue: the active nav label measures '+ratio('#243A5E',BG).toFixed(2));
   ok(ratio('#161619',BG)>=4.5,'mono: the active nav label measures '+ratio('#161619',BG).toFixed(2));
-  /* the bar and the icon are non-text marks, so 3:1 is their bar */
-  ok(ratio('#567C8D',BG)>=3,'cloud blue: the accent bar and icon read at '+ratio('#567C8D',BG).toFixed(2));
-  ok(ratio('#E8443C',BG)>=3,'mono: the accent bar and icon read at '+ratio('#E8443C',BG).toFixed(2));
-  /* and the ink step is a real step, not a hair, since it is now doing more work */
-  ok(ratio('#243A5E',BG)/ratio('#41627F',BG)>=1.5,
-    'cloud blue: active ink is a clear step above resting ('+(ratio('#243A5E',BG)/ratio('#41627F',BG)).toFixed(2)+'x)');
-  ok(ratio('#161619',BG)/ratio('#40404A',BG)>=1.5,
-    'mono: active ink is a clear step above resting ('+(ratio('#161619',BG)/ratio('#40404A',BG)).toFixed(2)+'x)');
+  /* the bar and the icon are non-text marks, so 3:1 is their bar. Cloud blue has
+     no red: the accent there is the today teal, quieter than mono's red, which is
+     why the surface change carries proportionally more of the signal in blue. */
+  ok(ratio('#567C8D',BG)>=3,'cloud blue: the teal accent bar and icon read at '+ratio('#567C8D',BG).toFixed(2));
+  ok(ratio('#E8443C',BG)>=3,'mono: the red accent bar and icon read at '+ratio('#E8443C',BG).toFixed(2));
+  /* the surface step itself: the active pill against the rail it lifts off */
+  ok(ratio(BG,'#CFE3F1')>1,'cloud blue: the active pill lifts off the powder rail ('+ratio(BG,'#CFE3F1').toFixed(2)+')');
+  ok(ratio(BG,'#161619')>=3,'mono: and off the near-black rail at '+ratio(BG,'#161619').toFixed(2));
+}
+
+console.log('— the rail: exactly one nav item is ever the current one —');
+{
+  /* REGRESSION, fixed 2026-08-12: float mode is a mode OF the board view, so `v`
+     stays 'board' while it runs. render() lit Board from the data-v loop and the
+     float toggle from its own line, so BOTH carried .on and, worse, both carried
+     aria-current="page", which tells a screen reader two things are the current
+     page. Once the mark became a white surface it was visible as two active
+     items at once. Board now yields the mark to the toggle while float is on. */
+  const marks=()=>({on:qa('#rail .navbtn.on').map(b=>b.textContent.trim()),
+    cur:qa('#rail .navbtn[aria-current="page"]').map(b=>b.textContent.trim())});
+  const only=(label,want)=>{
+    const m=marks();
+    ok(m.on.length===1,label+': exactly one item carries the mark ('+JSON.stringify(m.on)+')');
+    ok(m.cur.length===1,label+': and exactly one is named the current page ('+JSON.stringify(m.cur)+')');
+    ok(m.on[0]===m.cur[0]&&new RegExp(want).test(m.on[0]||''),
+      label+': and it is the right one ('+JSON.stringify(m.on)+')');
+  };
+  S().settings.floatMode=false;
+  S().settings.view='board'; A.save(); A.render(); await wait(25); only('board','Board');
+  S().settings.view='calendar'; A.render(); await wait(25); only('calendar','Calendar');
+  S().settings.view='notes'; A.render(); await wait(25); only('notes','Notes');
+  S().settings.view='board'; S().settings.floatMode=true; A.render(); await wait(25);
+  only('float mode','Back to dates');
+  ok(!q('#rail .navbtn[data-v="board"]').classList.contains('on'),
+    'float mode: Board yields the mark rather than sharing it');
+  ok(!q('#rail .navbtn[data-v="board"]').getAttribute('aria-current'),
+    'and drops aria-current with it, so only one element claims the page');
+  S().settings.floatMode=false; S().settings.view='board'; A.save(); A.render(); await wait(25);
+  only('back from float','Board');
 }
 
 console.log('— the docs match reality —');

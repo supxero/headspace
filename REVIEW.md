@@ -503,9 +503,57 @@ The statement goes back to nothing, because it never moved: it has been 19px/700
 
 Expected count moved 1276 to 1289. Both suites green, and the viewport pass is clean across all four profiles under both themes: no control under 44px on the three coarse ones, no horizontal overflow, and the rail legible at 390px behind Menu.
 
+**Superseded by Section 15**: the shared surface lasted one commit. The backdrop now marks the active item only, which also resolves 14.3's two-families-of-card observation, since the rail is dark again apart from the current item and True north.
+
+## 15. White means active, and the two-current-items bug (new, 2026-08-12)
+
+### 15.1 The bug, which was not a styling question
+
+A screenshot of the previous build showed Board and "Back to dates" both carrying the white backdrop and the accent at once. That was real. In `render()`:
+
+```
+$$('#rail .navbtn[data-v]').forEach(b=>{ const on=b.dataset.v===v; ... });   // lights Board
+const fon=state.settings.floatMode&&v==='board';                            // lights the toggle too
+```
+
+Float mode is a mode OF the board view, so `state.settings.view` stays `'board'` while it runs. Both branches therefore fired, and both set `aria-current="page"`. **The accessibility half is the worse half**: two elements telling a screen reader they are the current page is wrong regardless of how the rail is painted, and it had been shipping since the nav accent was added. Section 11.3 recorded it as deliberate ("Board remains lit behind the Free Floating entry"), and the test that existed used `.some()` on the marked set, so it asserted that the toggle was marked without ever asserting that nothing else was. Nothing was measuring the count, which is why calling it deliberate survived.
+
+The fix is one guard: while float mode is on, Board yields the mark to the toggle, because "Back to dates" is the entry that describes where you actually are. Both `.on` and `aria-current` now move together, and the count is asserted in all five states (board, calendar, notes, float mode, and back out of float mode) in the jsdom suite and again live in the viewport pass.
+
+### 15.2 White marks the active item only
+
+`.navbtn` declares no surface and sits on the rail; `.navbtn.on` takes `--northbg`. Since only the active item is a near-white island, the island ink set moves onto `.navbtn.on` with it, and the resting item keeps the rail's own roles, which restores its hover and press to exactly the tuning they were built with: the wash reads `--ink-rgb`, and under mono that is the near-white triplet, so a resting item **lightens** on hover against the near-black rail rather than darkening. The active item re-points the triplet, so its wash darkens the white. One rule, correct on both surfaces, and the press glow (an `::after` radial on the same triplet) follows for free.
+
+Two details that would have broken it. `background-color`, not the `background` shorthand, on `.navbtn.on`: the shorthand resets `background-image` and would have killed the hover layer on the active item. And the hover wash stays a layer rather than a background-color, because on the active item a translucent background-color would replace the white and let the rail through, which under mono means the current view going nearly black on hover.
+
+### 15.3 Does it read, in both themes
+
+Measured live on the rendered elements, composited:
+
+| | Cloud blue | Monochrome |
+|---|---|---|
+| active label on its backdrop | **10.56** | **16.72** |
+| resting label on the rail | **5.77** | **8.83** |
+| accent bar and icon on the backdrop | **4.17** (teal) | **3.65** (red) |
+| surface step, active pill against the rail | ~1.2 | **18.64** |
+| face, resting to active | 13.5px/500 to 13.5px/600 | same |
+
+(The composited walk resolves the resting backdrop to the page colour, since the rail paints a gradient rather than a background-color; against the rail's declared powder the resting figure is 4.85 blue and 7.92 mono. Every reading clears 4.5 either way.)
+
+**Monochrome** is unmistakable: one white pill in a near-black rail is an 18.64 surface step, and the red bar and icon sit on top of that. It also fixes what 14.3 flagged, since the rail is dark again except for the current item and True north.
+
+**Cloud blue needed its own answer**, because it has no red and because white against powder is only about a 1.2 step. What marks it there is the teal `--today` accent bar and icon at 4.17:1, the `--northline` rim, the `--shadow` lift the pill gets and a resting item does not, and the label going from `--mut` at 500 to navy at 600, which is a 5.77 to 10.56 jump. All four already existed in the palette; nothing was introduced. Checked by looking at a rendered rail as well as by measuring, since "unmistakable at a glance" is not a number.
+
+### 15.4 What the audits gained
+
+- `tests/test.js`: a new section asserting exactly one `.on` and exactly one `aria-current="page"`, and that they are the same element, across board, calendar, notes, float mode and the return from float mode, plus explicit checks that Board drops both while float runs. The rail section now pins that a resting item declares no surface, that only `.on` carries the backdrop, that it uses `background-color` rather than the shorthand, that the island ink rides with the backdrop, and that a resting item does NOT re-point `--ink-rgb`.
+- `tests/viewports.js`: the `distinct()` probe was inverted, from "the two share a surface" to "the surfaces differ and the resting one is bare", and now composites up the tree to measure each label on the ground it actually sits on. Mono additionally asserts a 3:1 surface step. A loop drives all four states and asserts the marked count live at every profile.
+
+Expected count moved 1289 to 1308. Both suites green, and the viewport pass is clean across all four profiles under both themes: no control under 44px on the coarse profiles and no horizontal overflow.
+
 ### 11.3 The active nav accent (Change 3)
 
-`.navbtn.on` draws a 3px inset bar and tints its icon with `var(--today)`, and `render()` sets `aria-current="page"` alongside the class. The choice for Cloud blue: **the today teal (`#567C8D`), because "you are here" is the role that colour already plays** (today's column ring, the TODAY badge, the strip, the calendar cell); no red exists in the blue palette and none was imported. Under Monochrome `--today` IS the red, so the accent is red there with no new declaration, which is why the jsdom red whitelist needed no entry for this change; the live sweep's element whitelist gained the `.navbtn.on` subtree (Section 0). Float mode keeps the pre-existing `.on` semantics (Board remains lit behind the Free Floating entry), deliberately unchanged. Contrast of the accent against the active row's pearl: 4.09 sky, 3.27 mono, both over the 3:1 non-text bar.
+`.navbtn.on` draws a 3px inset bar and tints its icon with `var(--today)`, and `render()` sets `aria-current="page"` alongside the class. The choice for Cloud blue: **the today teal (`#567C8D`), because "you are here" is the role that colour already plays** (today's column ring, the TODAY badge, the strip, the calendar cell); no red exists in the blue palette and none was imported. Under Monochrome `--today` IS the red, so the accent is red there with no new declaration, which is why the jsdom red whitelist needed no entry for this change; the live sweep's element whitelist gained the `.navbtn.on` subtree (Section 0). Float mode keeps the pre-existing `.on` semantics (Board remains lit behind the Free Floating entry), deliberately unchanged. **This was wrong and is fixed in Section 15**: it left two items carrying `.on` and, more seriously, two carrying `aria-current="page"`, which tells assistive tech that two things are the current page. Calling it deliberate did not make it correct; it only meant nothing tested it. Contrast of the accent against the active row's pearl: 4.09 sky, 3.27 mono, both over the 3:1 non-text bar.
 
 ### 11.4 True north's statement voice (Change 4)
 
@@ -554,7 +602,7 @@ Expected count moved 1239 to 1267. The viewport pass is clean across all four pr
 
 ## Housekeeping notes
 
-- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, the one-rail-surface commit to 1289, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
+- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, the one-rail-surface commit to 1289, the white-means-active commit to 1308, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
 - `IOS-CHECKLIST.md` predates the theme and does not yet exercise it on a device; the two items worth a minute when someone next holds a phone: the status-bar/browser chrome colour following a switch (the meta), and Silkscreen's legibility at the smallest labels on a real OLED.
 - `SETUP.md`/`START-HERE.md` predate sync, the tray changes, the bin, and the Notes view, and have not been re-verified; SETUP.md's one line naming the focus panel was updated to True north during the rename, the rest untouched. The in-app Help also does not mention Notes yet; adding a line there is copy work awaiting the owner's wording.
 - `IOS-CHECKLIST.md` (retitled inside to "Manual device checklist") is the manual companion to Section 7, rewritten 2026-08-10 for the app as it stands: thirteen risk-ordered items with concrete steps and pass/fail descriptions, now covering the rich-notes update-pickup stakes (a stale build shows markup as text), rich-text sync between two physical devices, the Notes editor under Safari's keyboard/autocorrect/caret, the 44px overlays under a real finger on iPhone AND an Android tablet, True north's uncollapsible-with-content rule on a small screen, and the touch tab-reorder gap verified inert. Budget stated in the file: one ~45 minute sitting plus a second-device item and an overnight item.

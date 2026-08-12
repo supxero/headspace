@@ -222,25 +222,37 @@ select option{background:var(--pearl);color:var(--txt)}
    The labels are 13.5px again: they were briefly 19px to match the statement,
    and that pairing is gone. */
 .navbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;
-  border-radius:var(--r2);font-size:13.5px;font-weight:500;border:1px solid transparent;transition:.16s;
-  background:var(--northbg);
-  --txt:var(--northtxt);--navy:var(--northtxt);--mut:var(--northmut);--ink-rgb:var(--northink-rgb);
-  color:var(--mut)}
-/* hover paints the wash as a LAYER over the surface instead of replacing it. As a
-   background-color it would have swapped the pill's white for a translucent film
-   and let the rail show through, which under mono means the item going nearly
-   black on hover. The layered-wash idiom is the one --traybg already uses. */
+  border-radius:var(--r2);font-size:13.5px;font-weight:500;color:var(--mut);
+  border:1px solid transparent;transition:.16s}
+/* hover paints the wash as a LAYER, not as a background-color. On a resting item
+   the two would look the same, but the ACTIVE item has a surface of its own now,
+   and a background-color wash would replace that white with a translucent film
+   and let the rail show through: under mono the current view would go nearly
+   black on hover. Layering is correct for both. The idiom is --traybg's.
+   A resting item does not re-point --ink-rgb, so its wash is still the rail tint
+   these states were originally tuned with: navy over powder in Cloud blue, and
+   the near-white triplet over near-black in Monochrome, where it lightens rather
+   than darkens. The press glow (an ::after radial on the same triplet) is tuned
+   the same way and needed no change. The active item re-points the triplet below,
+   so on white both the wash and the glow darken instead. */
 .navbtn:hover{background-image:linear-gradient(rgba(var(--ink-rgb),.06),rgba(var(--ink-rgb),.06));color:var(--txt)}
-/* THE ACTIVE ITEM no longer has a surface of its own to stand on, so the marks it
-   keeps have to carry it alone. Four of them do, and none is new: the inset bar
-   and the tinted icon in the today colour (teal in Cloud blue, the one red in
-   Monochrome, 4.17 and 3.65 on this backdrop, both over the 3:1 non-text bar),
-   the rim, the ink stepping from the muted tier to the strong one (5.93 to 10.56
-   blue, 9.48 to 16.72 mono), and the label taking the heavier weight. The weight
-   is not a new device: it is how .pday.today and .cell.today .n already say "this
-   is the current one". No new colour, border style or effect was added. */
-.navbtn.on{border-color:var(--northline);color:var(--navy);font-weight:600;
-  box-shadow:inset 3px 0 0 var(--today),var(--shadow)}
+/* WHITE MEANS ACTIVE: the current view is the only item that leaves the rail's
+   surface, and it takes the True north backdrop plus the ink set that backdrop
+   requires, because a dark theme cannot lend a near-white pill its near-white
+   text (mono's resting label measures 2.11 on it, its strong ink 1.09).
+   background-color rather than the background shorthand, or it would reset the
+   hover layer above.
+   The surface is not alone. It keeps the marks it already had, none of them new:
+   the inset bar and tinted icon in the today colour, the rim, the ink stepping
+   from the muted tier to the strong one, and the heavier label, which is how
+   .pday.today and .cell.today .n already say "this is the current one".
+   CLOUD BLUE has no red, so there the bar and icon are the today teal (#567C8D,
+   4.17:1 on the backdrop, over the 3:1 non-text bar) and the ink goes navy at
+   600. Teal on white is quieter than red on white, which is exactly why the
+   backdrop change matters more in that theme than in Monochrome. */
+.navbtn.on{background-color:var(--northbg);border-color:var(--northline);color:var(--navy);font-weight:600;
+  box-shadow:inset 3px 0 0 var(--today),var(--shadow);
+  --txt:var(--northtxt);--navy:var(--northtxt);--mut:var(--northmut);--ink-rgb:var(--northink-rgb)}
 .navbtn.on .em{color:var(--today)}
 .navbtn .em{width:18px;flex:none;display:inline-flex;align-items:center;justify-content:center}
 .navbtn .em svg{width:17px;height:17px}
@@ -3658,13 +3670,21 @@ function render(){
   const v=state.settings.view;
   /* the active view carries the accent (the .on class draws it) and names itself
      to assistive tech; in float mode the Free Floating entry is the active one */
+  /* EXACTLY ONE nav item carries the mark, in every view including float mode.
+     Float mode is a mode OF the board view, so `v` is still 'board' while it is
+     on: the old code lit Board from the data-v loop and the toggle from its own
+     line, leaving two items with .on and, worse, two with aria-current="page",
+     which says two things are the current page. Section 11.3 recorded that as
+     deliberate; it was not defensible once the mark became a surface as well as
+     a bar. While float mode is on the toggle is what describes where you are
+     ("Back to dates"), so Board yields the mark to it. */
+  const fon=state.settings.floatMode&&v==='board';
   $$('#rail .navbtn[data-v]').forEach(b=>{
-    const on=b.dataset.v===v;
+    const on=b.dataset.v===v&&!(fon&&b.dataset.v==='board');
     b.classList.toggle('on',on);
     if(on) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
   });
   const fb=$('#rail .navbtn[data-action="floattoggle"]');
-  const fon=state.settings.floatMode&&v==='board';
   fb.classList.toggle('on',fon);
   if(fon) fb.setAttribute('aria-current','page'); else fb.removeAttribute('aria-current');
   $('#ftlabel').textContent=state.settings.floatMode?'Back to dates':'Free Floating';

@@ -2582,25 +2582,36 @@ async function runProfile(browser, base, prof) {
       const parse = s => { const m = String(s).match(/rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/); return m ? [+m[1], +m[2], +m[3]] : null; };
       const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
       const ratio = (x, y) => { const p = lum(x), q = lum(y); return (Math.max(p, q) + .05) / (Math.min(p, q) + .05); };
-      const bg = parse(a.backgroundColor), ink = parse(a.color), inkOff = parse(b.color);
-      return { sameSurface: a.backgroundColor === b.backgroundColor,
+      /* the resting item is transparent, so walk up for the surface it really
+         sits on, which is the rail. Each label is measured on its own ground. */
+      const bgOf = el => {
+        for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+          const c = parse(getComputedStyle(n).backgroundColor);
+          const m = String(getComputedStyle(n).backgroundColor).match(/rgba\([^)]*,\s*0\s*\)/);
+          if (c && !m) return c;
+        }
+        return null;
+      };
+      const bg = bgOf(on), bgRest = bgOf(off), ink = parse(a.color), inkOff = parse(b.color);
+      return { surfaceDiffers: a.backgroundColor !== b.backgroundColor,
+        restingIsBare: /rgba\([^)]*,\s*0\s*\)/.test(b.backgroundColor),
+        surfaceStep: bg && bgRest ? +ratio(bg, bgRest).toFixed(2) : null,
         bar: a.boxShadow !== b.boxShadow && /inset/.test(a.boxShadow),
         rim: a.borderTopColor !== b.borderTopColor,
         weight: +a.fontWeight > +b.fontWeight,
-        inkStep: bg && ink && inkOff ? +(ratio(ink, bg) / ratio(inkOff, bg)).toFixed(2) : null,
         activeInk: bg && ink ? +ratio(ink, bg).toFixed(2) : null,
-        restingInk: bg && inkOff ? +ratio(inkOff, bg).toFixed(2) : null };
+        restingInk: bgRest && inkOff ? +ratio(inkOff, bgRest).toFixed(2) : null };
     });
     const sky = await read();
     check('nav: Board is marked current on the board view', sky.on && sky.cur === 'page', JSON.stringify(sky));
     check('nav: the accent bar paints the today teal in cloud blue', /86, 124, 141/.test(sky.shadow), sky.shadow);
     check('nav: and the icon takes the same accent', /86, 124, 141/.test(sky.icon), sky.icon);
     const dSky = await distinct();
-    check('nav: cloud blue, active and resting really do share one surface',
-      dSky && dSky.sameSurface, JSON.stringify(dSky));
-    check('nav: cloud blue, the active item is still told apart by bar, rim, weight and ink',
-      dSky && dSky.bar && dSky.rim && dSky.weight && dSky.inkStep >= 1.5, JSON.stringify(dSky));
-    check('nav: cloud blue, both inks clear the normal-text bar on that surface',
+    check('nav: cloud blue, white marks the active item and the resting ones stay on the rail',
+      dSky && dSky.surfaceDiffers && dSky.restingIsBare, JSON.stringify(dSky));
+    check('nav: cloud blue, and the surface is backed by bar, rim and weight, since teal is no red',
+      dSky && dSky.bar && dSky.rim && dSky.weight, JSON.stringify(dSky));
+    check('nav: cloud blue, both label states clear the normal-text bar on their own ground',
       dSky && dSky.activeInk >= 4.5 && dSky.restingInk >= 4.5, JSON.stringify(dSky));
     await A(() => document.documentElement.setAttribute('data-theme', 'mono'));
     /* .navbtn transitions box-shadow over .22s, so give the flip time to land:
@@ -2610,21 +2621,32 @@ async function runProfile(browser, base, prof) {
     check('nav: under mono the same bar is the red', /232, 68, 60/.test(mono.shadow), mono.shadow);
     check('nav: and the icon follows it', /232, 68, 60/.test(mono.icon), mono.icon);
     const dMono = await distinct();
-    check('nav: mono, active and resting really do share one surface',
-      dMono && dMono.sameSurface, JSON.stringify(dMono));
-    check('nav: mono, the active item is still told apart by bar, rim, weight and ink',
-      dMono && dMono.bar && dMono.rim && dMono.weight && dMono.inkStep >= 1.5, JSON.stringify(dMono));
-    check('nav: mono, both inks clear the normal-text bar on that surface',
+    check('nav: mono, white marks the active item and the resting ones stay on the rail',
+      dMono && dMono.surfaceDiffers && dMono.restingIsBare, JSON.stringify(dMono));
+    check('nav: mono, the surface step off the near-black rail is unmistakable',
+      dMono && dMono.surfaceStep >= 3, JSON.stringify(dMono));
+    check('nav: mono, both label states clear the normal-text bar on their own ground',
       dMono && dMono.activeInk >= 4.5 && dMono.restingInk >= 4.5, JSON.stringify(dMono));
-    /* a near-white pill in a near-black rail: the rail must still be the thing
-       behind it, or the sidebar has become a white block with gaps in it */
-    const island = await A(() => {
-      const b = document.querySelector('#rail .navbtn'), rail = document.querySelector('#rail');
-      return { pill: getComputedStyle(b).backgroundColor, rail: getComputedStyle(rail).backgroundColor,
-        gap: getComputedStyle(document.querySelector('#rail .navgrp')).gap };
-    });
-    check('nav: mono, the pills sit on the rail rather than replacing it',
-      island.pill !== island.rail && parseFloat(island.gap) > 0, JSON.stringify(island));
+    await A(() => document.documentElement.removeAttribute('data-theme'));
+    await sleep(400);
+    /* EXACTLY ONE current item, in every view including float mode. Float used to
+       light Board AND the toggle, giving two elements aria-current="page". */
+    const readMarks = () => A(() => ({
+      on: [...document.querySelectorAll('#rail .navbtn.on')].map(b => b.textContent.trim()),
+      cur: [...document.querySelectorAll('#rail .navbtn[aria-current="page"]')].map(b => b.textContent.trim()) }));
+    for (const [label, go] of [
+      ['board', () => { window.A.state.settings.floatMode = false; window.A.state.settings.view = 'board'; }],
+      ['calendar', () => { window.A.state.settings.view = 'calendar'; }],
+      ['notes', () => { window.A.state.settings.view = 'notes'; }],
+      ['float mode', () => { window.A.state.settings.view = 'board'; window.A.state.settings.floatMode = true; }]]) {
+      await A(go); await A(() => { window.A.save(); window.A.render(); }); await sleep(160);
+      const m = await readMarks();
+      check('nav: ' + label + ', exactly one item is marked current',
+        m.on.length === 1 && m.cur.length === 1 && m.on[0] === m.cur[0], label + ' ' + JSON.stringify(m));
+    }
+    await A(() => { window.A.state.settings.floatMode = false; window.A.state.settings.view = 'board';
+      window.A.save(); window.A.render(); });
+    await sleep(200);
     await A(() => document.documentElement.removeAttribute('data-theme'));
     await sleep(500);
     /* the mark follows the view, one at a time */
