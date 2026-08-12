@@ -2453,7 +2453,48 @@ async function runProfile(browser, base, prof) {
     if (!narrow) {
       check('sticky: floats in the bottom right corner on wide layouts',
         b.pos === 'absolute' && b.right >= 0 && b.right < 60 && b.bottom >= 0 && b.bottom < 60, JSON.stringify(b));
-      check('sticky: stays a margin note, never a second panel', b.w <= 260, 'w=' + b.w);
+      /* "a margin note, not a second panel" is a SHARE of the board, not a pixel
+         count. The corner was doubled (435px at 1280, 348px at 1024, capped by
+         min(464px,34vw) so a flat 464 cannot swallow the 684px board at 1024),
+         so the old w<=260 bar measured the wrong thing. What would make it a
+         panel is dominating the board, which is what this measures instead. */
+      const share = await A(() => {
+        const s = document.getElementById('sticky').getBoundingClientRect();
+        const bd = document.querySelector('#board');
+        return { pct: +(s.width / bd.clientWidth).toFixed(3), w: Math.round(s.width), board: bd.clientWidth };
+      });
+      check('sticky: stays a margin note, never a second panel', share.pct <= 0.55, JSON.stringify(share));
+      /* THE CASE THAT FAILED THE FIRST RUN OF THIS PASS: at the end of the
+         board's sideways scroll the last column must clear the corner. That is
+         what #board's padding-right reservation buys, and the reservation has to
+         track the corner's width or the column slides back under it. */
+      const clear = await A(() => {
+        const bd = document.querySelector('#board');
+        const before = bd.scrollLeft;
+        bd.scrollLeft = bd.scrollWidth;
+        const s = document.getElementById('sticky').getBoundingClientRect();
+        const cols = [...document.querySelectorAll('#board .col')];
+        const last = cols.length ? cols[cols.length - 1].getBoundingClientRect() : null;
+        const r = { gap: last ? Math.round(s.left - last.right) : null, cols: cols.length,
+          scrolls: bd.scrollWidth > bd.clientWidth + 1 };
+        bd.scrollLeft = before;
+        return r;
+      });
+      check('sticky: the last column clears the corner at max sideways scroll',
+        clear.gap === null || clear.gap >= 0, JSON.stringify(clear));
+      /* risk 16's residual, pinned as the invariant that actually closes it: the
+         reservation is part of the board's scroll width, so if it is at least the
+         corner's width plus its offset then a board too short to scroll must end
+         its columns BEFORE the corner's left edge, and the buried-tail geometry
+         cannot be built at all. Checked as a rule, not as one lucky layout. */
+      const reserve = await A(() => {
+        const bd = document.querySelector('#board');
+        const s = document.getElementById('sticky').getBoundingClientRect();
+        return { pad: Math.round(parseFloat(getComputedStyle(bd).paddingRight)),
+          corner: Math.round(s.width), offset: Math.round(window.innerWidth - s.right) };
+      });
+      check('sticky: the board reserves the corner width plus its offset, which is what closes risk 16',
+        reserve.pad >= reserve.corner + reserve.offset, JSON.stringify(reserve));
     } else {
       check('sticky: joins the flow full width on narrow layouts, never a floating corner',
         b.pos === 'static' && b.w > 300, JSON.stringify(b));
@@ -2491,6 +2532,24 @@ async function runProfile(browser, base, prof) {
         return s.left < pr.right && s.right > pr.left && s.top < pr.bottom && s.bottom > pr.top;
       });
       check('sticky: and never covers the page or its toolbar', !overlap);
+      /* the strip spent its whole increase on WIDTH because height in Notes comes
+         out of the pane, and at 1024 that pane was already exactly full: 589px of
+         content in 589px of room, so even a small height rise starts a scroll on
+         a short note. This is the guard on that, and it is why the Notes pad kept
+         its 92px while the corner's went to 184px. */
+      const pane = await A(() => {
+        const ed = document.querySelector('.noteed');
+        if (!ed) return null;
+        return { ch: ed.clientHeight, sh: ed.scrollHeight, scrolls: ed.scrollHeight > ed.clientHeight + 1 };
+      });
+      check('sticky: a short note still fits its pane, so the strip cost the editor nothing',
+        !pane || !pane.scrolls, JSON.stringify(pane));
+      const axis = await A(() => {
+        const s = document.getElementById('sticky').getBoundingClientRect();
+        return { w: Math.round(s.width), h: Math.round(s.height) };
+      });
+      check('sticky: in Notes it grew on the free axis, wider than it is tall',
+        axis.w > axis.h, JSON.stringify(axis));
     }
     const everywhere = await page.$eval('#stickyPad', el => el.value);
     check('sticky: one block in every placement, not three', /plus more$/.test(everywhere), everywhere);

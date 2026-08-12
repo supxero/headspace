@@ -3996,6 +3996,48 @@ console.log('— sticky note: one shared scratch block —');
   S().settings.view='board'; A.render(); await wait(20);
   ok(q('#stickyPad')===pad,'a render never rebuilds the pad, so a caret can never be lost to one');
 
+  /* SIZE: the pad was doubled, spent on a different axis at each of the three
+     placements because the cheap dimension differs at each. Pinned here so a
+     later tidy cannot quietly flatten them back to one number. */
+  {
+    const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+    const wide=(css.match(/@media \(min-width:901px\)\{([\s\S]*?)\n\}/)||[])[1]||'';
+    /* there are five max-width:900px blocks in the sheet; take the one that
+       actually carries the pad, not whichever comes first */
+    const narrowB=([...css.matchAll(/@media \(max-width:900px\)\{([\s\S]*?)\n\}/g)]
+      .map(m=>m[1]).find(b=>/#stickyPad/.test(b)))||'';
+    /* the corner doubles only above 1200px. Below that the board has no room:
+       at 1024 a day column's add control has its centre at x=738 and a 264px
+       corner already reaches it, which the viewport pass caught as real misses. */
+    const big=(css.match(/@media \(min-width:1200px\)\{([\s\S]*?)\n\}/)||[])[1]||'';
+    ok(/#sticky\{[^}]*width:232px/.test(css),
+      'the corner keeps 232px as its base, which is what 901 to 1199px gets');
+    ok(/#sticky\{width:464px\}/.test(big),'and doubles to 464px only where the board has the room');
+    ok(/#main\.stickycorner #board\{padding-right:496px\}/.test(big),
+      'with the reservation moving to match, or the last column slides back under it');
+    /* the corner's HEIGHT is the number that could not move. At 1024 a day
+       column's "+ add" row sits 159px above the board's bottom and the corner
+       already stands 147px into that: measured, a 138px pad buries that control
+       at any corner wider than 260px. So the corner bought its size on width. */
+    ok(/#stickyPad\{[^}]*height:92px/.test(css),
+      'the wide pad keeps its 92px height, which is what keeps the column add row hit-testable at 1024');
+    ok(!/#sticky\[data-pos="top"\] #stickyPad/.test(css),
+      'and both wide placements share that one height, so there is no second number to drift');
+    /* the reservation is the thing that keeps the last column clear AND, because
+       it counts inside the board's scroll width, is what stops a non-scrolling
+       board from ever putting a column under the corner. It must track the
+       corner's own width, so it repeats the same expression. */
+    const res=(wide.match(/#main\.stickycorner #board\{padding-right:([^}]*)\}/)||[])[1]||'';
+    ok(/264px/.test(res),'the base reservation is the base corner width plus its 32px offset');
+    /* Notes: width only. #noteBody is a fixed 240px and gives nothing back, so a
+       taller strip comes out of the pane, and at 1024 that pane is already full. */
+    ok(/#sticky\[data-pos="top"\]\{[^}]*width:464px/.test(wide),
+      'the Notes strip takes the doubled width, which is the axis that costs the editor nothing');
+    /* narrow: width is already full, so height is the only axis left */
+    ok(/#stickyPad\{height:168px/.test(narrowB),'the narrow pad doubles 84 to 168, the only axis it has left');
+    ok(/font-size:16px/.test(narrowB),'and keeps the 16px that stops the browser zooming on focus');
+  }
+
   const sig0=A.stateSig(S());
   pad.value='changed text'; fire(pad,'input'); await wait(10); A.save(); await wait(10);
   ok(A.stateSig(S())!==sig0,'a sticky edit changes the signature, so sync pushes it');

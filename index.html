@@ -658,24 +658,61 @@ select option{background:var(--pearl);color:var(--txt)}
    - Under 900px: in flow, full width, at the END of the view, where a floating
      corner would cover content and fight the on-screen keyboard.
    The textarea is STATIC markup, never rebuilt by a render, so its caret and
-   its native undo survive every foreign render for free, the #qi trick. */
+   its native undo survive every foreign render for free, the #qi trick.
+   SIZE: the pad was doubled, and the double is spent on a DIFFERENT axis at each
+   of the three placements, because at each one a different axis is the free one.
+   All three end at roughly twice the writing area; none of them is the same pair
+   of numbers, and one number applied to all three was wrong at two of them.
+   - the corner grows WIDE, and only above 1200px. It is an overlay, so every
+     pixel it gains is a pixel of board it covers at rest, and at 1024 there is
+     nothing to give on either axis: a column's "+ add" row sits 159px above the
+     board's bottom while the corner already stands 147px into that (12px of
+     headroom), and its centre sits at x=738 while a 264px corner already reaches
+     x=738. Both walls were measured, not guessed. So 901 to 1199px keeps the
+     corner exactly as it was, and 1200px and up doubles the width.
+   - Notes grows WIDE for a different reason: #noteBody is a fixed 240px and gives
+     nothing back, so strip height comes out of .noteed, and at 1024 that pane is
+     already exactly full (589px of content in 589px of room). Any height there
+     starts a scroll on a short note. 464x92 is twice 232x92 on its own.
+   - the narrow flow is the one place height is the free axis: the width is
+     already the full column, so the pad simply doubles, 84 to 168. */
 #main{position:relative}
+/* the corner keeps its 232px here and doubles only in the band below, where the
+   board has the room. This is the base, so it is also what 901 to 1199px gets. */
 #sticky{position:absolute;right:22px;bottom:18px;width:232px;z-index:40;
   background:var(--panel);border:1px solid var(--line2);border-radius:var(--r2);
   box-shadow:var(--shadow);padding:8px 10px 9px;display:flex;flex-direction:column;gap:3px}
 .stickycap{font-family:var(--fbx);font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--mut2)}
+/* the pad height is the one number shared by both wide placements, and it is the
+   number that cannot move: see the corner and Notes notes above. Only the narrow
+   flow, which has no width left to spend, overrides it. */
 #stickyPad{width:100%;height:92px;resize:none;border:none;background:transparent;box-shadow:none;
   border-radius:0;padding:0;font-size:12.5px;line-height:1.5;color:var(--txt);outline:none;overflow-y:auto}
 #stickyPad::placeholder{color:var(--mut2)}
 @media (min-width:901px){
-  #sticky[data-pos="top"]{position:static;order:-1;align-self:flex-end;width:232px;margin:0 0 10px}
-  /* the corner's clearance at the end of the board's sideways scroll */
+  #sticky[data-pos="top"]{position:static;order:-1;align-self:flex-end;width:464px;margin:0 0 10px}
+  /* the corner's clearance at the end of the board's sideways scroll: it tracks
+     the corner's own width, or the last column slides back under it */
   #main.stickycorner #board{padding-right:264px}
+}
+/* THE CORNER DOUBLES ONLY WHERE THE BOARD HAS THE ROOM. Measured, and the wall is
+   hard: at 1024 the board is 684px wide and the second day column's "+ add" sits
+   with its centre at x=738, so a corner wider than about 264px covers that centre
+   and the control stops being hit-testable at rest. The viewport pass caught it
+   as 48 to 72 misses on tablet-1024 in the ordinary boot-tray and enter-chain
+   states, and no width or height between the old size and the doubled one clears
+   it there: the 1024 board has no room to give on either axis. Above 1200px it
+   does, and the pass is clean at 464px. So the corner is 232px from 901 to 1199
+   and 464px above that, and the reservation moves with it. The alternative was a
+   corner that buries a control on a common tablet, which is not a size choice. */
+@media (min-width:1200px){
+  #sticky{width:464px}
+  #main.stickycorner #board{padding-right:496px}
 }
 @media (max-width:900px){
   #sticky{position:static;width:auto;margin:10px 0 4px}
   /* 16px keeps the browser from zooming the page when the field takes focus */
-  #stickyPad{height:84px;font-size:16px}
+  #stickyPad{height:168px;font-size:16px}
 }
 
 @media (max-width:900px){
