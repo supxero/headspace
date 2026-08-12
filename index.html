@@ -1340,7 +1340,18 @@ function save(){
   clearTimeout(saveT);
   saveT=setTimeout(commit,400);
 }
+/* Commit whatever the debounce is still holding, now, at this moment. Every actor
+   that is about to READ, RE-STAMP or REPLACE the whole tree must call this first.
+   Until a keystroke is committed its item still carries the PREVIOUS commit's
+   stamps, so a merge would weigh a body typed a second ago against the cloud's copy
+   as though the two had happened at the same instant, and resolve that tie by
+   comparing the two strings: about half the time the older cloud copy sorts first
+   and the typing is silently discarded. The Notes editor makes the window wide,
+   since it calls save() on every keystroke and typing that never pauses defers the
+   commit for as long as it runs (Section 4). */
+function flushSave(){ if(saveT!=null) commit() }
 function commit(when){
+  clearTimeout(saveT); saveT=null;
   stampChanges(when);
   const str=JSON.stringify(state);
   prevSnap=JSON.parse(str);
@@ -1482,6 +1493,7 @@ async function putState(manual){
 async function pushNow(manual){
   if(!sync.key) return manual?(toast('Add a sync key first'),false):false;
   clearTimeout(sync.pushT);
+  flushSave();                 /* send the sentence being typed, stamped as typed */
   syncSet('busy');
   return putState(manual);
 }
@@ -1544,6 +1556,7 @@ function applyCloud(row,announce){
     if(announce) toast('The cloud copy could not be read, so nothing was changed');
     return false;
   }
+  flushSave();                 /* so the Undo backup holds what was being typed */
   const before=JSON.stringify(state);
   lsSet(SBACK_LS,before);
   const keep=state.settings;
@@ -1593,6 +1606,9 @@ async function syncCycle(opts){
       toast('Sync: this device and the cloud both hold a planner. Open Sync to choose.');
       return false;
     }
+    /* AFTER the round trip, not before it: the read is awaited, so anything typed
+       while the cloud copy was in flight would otherwise reach the merge unstamped */
+    flushSave();
     const before=stateSig(state);
     const merged=mergeStates(state,theirs);
     const after=stateSig(merged);
@@ -1861,7 +1877,7 @@ function rollIfNewDay(opts){
   const dayDue=state.settings.lastRoll!==today();
   const weekDue=state.settings.lastWeek!==hweek();
   if(!dayDue&&!weekDue) return 0;
-  if(saveT){ clearTimeout(saveT); saveT=null; commit() }   /* pending edits keep their own moment */
+  flushSave();                        /* pending edits keep their own moment */
   const midnight=new Date(today()+'T00:00:00').getTime();
   const n=dayDue?rollover():0;
   if(weekDue) weekSweep();
@@ -2634,6 +2650,9 @@ function noteScrubbed(src){
   });
   return out;
 }
+/* the elements that stand for a line. One list, read by the serializer AND by the
+   caret, so what counts as a line break is the same fact in both directions. */
+const NOTE_BLK={DIV:1,LI:1,UL:1,OL:1};
 /* nothing but structure means nothing worth markup: collapse to the very same plain
    string the plain-text era stored, so an unformatted note merges, exports and
    diffs byte-identically to before */
@@ -2641,15 +2660,24 @@ function notePlainish(root){
   return ![...root.querySelectorAll('*')].some(el=>
     !(el.tagName==='DIV'||el.tagName==='BR')||el.className);
 }
+/* One line per block, however deeply the engine nested them, and the same rule the
+   caret counts by: a block opens a line unless the line it would open is already
+   empty. Reading only the root's own children and joining them ate every break
+   inside a nested block, and Chrome writes those (`<div>one<div>two</div></div>`
+   is an ordinary shape after an Enter), so two lines silently became one on the
+   very next keystroke. */
 function noteAsPlain(root){
-  [...root.querySelectorAll('br')].forEach(b=>b.replaceWith(document.createTextNode('\n')));
-  const lines=[];
-  root.childNodes.forEach(n=>{
-    let t=n.textContent||'';
-    if(t==='\n') t='';           /* a line holding only its own break is an empty line */
-    lines.push(t);
-  });
-  return lines.join('\n').replace(/\n+$/,'');
+  let out='', fresh=true;
+  (function walk(n){
+    n.childNodes.forEach(c=>{
+      if(c.nodeType===3){ if(c.data){ out+=c.data; fresh=false } return }
+      if(c.nodeType!==1) return;
+      if(c.tagName==='BR'){ out+='\n'; fresh=true; return }
+      if(NOTE_BLK[c.tagName]&&!fresh){ out+='\n'; fresh=true }
+      walk(c);
+    });
+  })(root);
+  return out.replace(/\n+$/,'');
 }
 function noteSerialize(ed){
   const d=document.createElement('div'); d.innerHTML=ed.innerHTML;
@@ -2685,23 +2713,45 @@ const noteWords=n=>{const b=noteText(n).trim(); return b?b.split(/\s+/).length:0
 
 /* ---- caret as an absolute text offset ----
    A caret inside formatted content is (node, offset) into a DOM that a foreign
-   render throws away. Both ends of the selection are flattened to counts of text
-   characters from the start of the editable root; the rebuilt DOM renders the same
-   body string, so walking the fresh text nodes finds the same places again. */
-function notePoint(root,node,off){
-  let acc=0;
-  (function upto(n){
-    if(n===node){
-      if(n.nodeType===3) acc+=off;
-      else for(let i=0;i<off&&i<n.childNodes.length;i++) acc+=(n.childNodes[i].textContent||'').length;
-      return true;
+   render throws away. Both ends of the selection are flattened to an offset from
+   the start of the editable root; the rebuilt DOM renders the same body string, so
+   walking the fresh text nodes finds the same places again.
+   A LINE BREAK COSTS ONE CHARACTER, exactly as noteText flattens a body. Counting
+   only text characters made the start of a line and the end of the line before it
+   the SAME number, and the restore always resolved that number to the earlier of
+   the two, so every foreign render that arrived with the caret at a line start
+   dropped it a line up: the next keystroke, and anything typed after it, landed on
+   the wrong line. The 25s sync poll is a foreign render, so this fired on its own. */
+/* one walk, two answers: the ordered text runs with their offsets, and, when a DOM
+   point is given, that point's offset. Both directions read the same numbering or
+   a caret cannot survive the round trip. */
+function noteWalk(root,node,off){
+  const runs=[]; let acc=0, fresh=true, pos=null;
+  (function walk(n){
+    const kids=n.childNodes;
+    for(let i=0;i<kids.length;i++){
+      if(pos===null&&n===node&&i===off) pos=acc;
+      const c=kids[i];
+      if(c.nodeType===3){
+        if(pos===null&&c===node) pos=acc+Math.max(0,Math.min(off,c.length));
+        runs.push({n:c,at:acc,len:c.length});
+        acc+=c.length; if(c.length) fresh=false;
+        continue;
+      }
+      if(c.nodeType!==1) continue;
+      if(c.tagName==='BR'){
+        runs.push({el:n,i:i,at:acc,len:0});   /* the empty line a lone break holds open */
+        acc+=1; fresh=true; continue;
+      }
+      /* a block opens a line, unless the line it would open is already empty */
+      if(NOTE_BLK[c.tagName]&&!fresh){ acc+=1; fresh=true }
+      walk(c);
     }
-    if(n.nodeType===3){ acc+=n.length; return false }
-    for(let i=0;i<n.childNodes.length;i++) if(upto(n.childNodes[i])) return true;
-    return false;
+    if(pos===null&&n===node&&off>=kids.length) pos=acc;
   })(root);
-  return acc;
+  return {runs:runs,pos:pos===null?acc:pos,len:acc};
 }
+const notePoint=(root,node,off)=>noteWalk(root,node,off).pos;
 function noteCaretGet(root){
   try{
     const sel=window.getSelection();
@@ -2715,17 +2765,20 @@ function noteCaretGet(root){
 function noteCaretSet(root,s,e){
   try{
     const sel=window.getSelection(); if(!sel) return;
+    const runs=noteWalk(root).runs;
     const pt=t=>{
-      let acc=0,res=null;
-      (function walk(n){
-        if(res) return;
-        if(n.nodeType===3){
-          if(acc+n.length>=t){ res={n:n,o:t-acc}; return }
-          acc+=n.length; return;
-        }
-        for(let i=0;i<n.childNodes.length;i++){ walk(n.childNodes[i]); if(res) return }
-      })(root);
-      return res||{n:root,o:root.childNodes.length};
+      t=Math.max(0,t||0);
+      for(let i=0;i<runs.length;i++){
+        const r=runs[i];
+        if(t<r.at) break;
+        if(t<=r.at+r.len) return r.n?{n:r.n,o:t-r.at}:{n:r.el,o:r.i};
+      }
+      /* past the end: the end of the last run, never the root's child list. A body
+         that shrank under the caret (a merge, an Undo) used to park it between the
+         blocks, where the next character is typed outside every line. */
+      const last=runs[runs.length-1];
+      if(last) return last.n?{n:last.n,o:last.len}:{n:last.el,o:last.i};
+      return {n:root,o:root.childNodes.length};
     };
     const a=pt(Math.max(0,s||0)), b=pt(Math.max(0,e||0));
     const r=document.createRange();

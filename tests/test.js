@@ -2494,6 +2494,230 @@ console.log('— Notes: a foreign render never steals the caret —');
   click('.navbtn[data-v="board"]'); await wait(25);
 }
 
+console.log('— Notes: the caret counts line breaks —');
+{
+  /* The reported "characters in the wrong place". The caret is flattened to an
+     absolute offset, and line breaks used to cost nothing, so the start of a line
+     and the end of the line before it were the SAME number and the restore always
+     chose the earlier one. Every foreign render (the 25s sync poll is one) with the
+     caret at a line start dropped it a line up, and the next keystroke went there. */
+  S().notes=[{id:'nl',title:'Lines',body:'one\ntwo\nthree',up:1,dn:1,pos:1}];
+  S().settings.view='notes'; S().settings.noteSel='nl';
+  A.render(); await wait(25);
+  const put=(node,off)=>{ const r=doc.createRange(); r.setStart(node,off); r.collapse(true);
+    const s=w.getSelection(); s.removeAllRanges(); s.addRange(r) };
+  const here=()=>{ const r=w.getSelection().getRangeAt(0);
+    return {t:r.startContainer.textContent,o:r.startOffset,c:r.startContainer} };
+  /* typing at wherever the caret came back to, the way the engine would */
+  const press=ch=>{ const r=w.getSelection().getRangeAt(0), n=r.startContainer;
+    if(n.nodeType===3) n.data=n.data.slice(0,r.startOffset)+ch+n.data.slice(r.startOffset);
+    else n.appendChild(doc.createTextNode(ch));
+    fire(q('#noteBody'),'input') };
+
+  let ed=q('#noteBody'); ed.focus();
+  ok(ed.childNodes.length===3,'three lines render as three blocks');
+  put(ed.childNodes[2].firstChild,0);          /* the start of line three */
+  A.render(); await wait(20);
+  ok(q('#noteBody')!==ed,'the render really did rebuild the field');
+  ok(here().t==='three'&&here().o===0,'a caret at the start of a line comes back there');
+  press('X'); await wait(10);
+  ok(S().notes[0].body==='one\ntwo\nXthree',
+    'so the next keystroke lands on that line, not the end of the one before ('+
+    JSON.stringify(S().notes[0].body)+')');
+
+  S().notes[0].body='one\ntwo\nthree'; A.render(); await wait(20);
+  ed=q('#noteBody'); ed.focus();
+  put(ed.childNodes[1].firstChild,3);          /* the END of line two */
+  A.render(); await wait(20);
+  ok(here().t==='two'&&here().o===3,'and the end of the line before it is a different place');
+
+  /* an empty line has no text node of its own; the break holds it open */
+  S().notes[0].body='one\n\nthree'; A.render(); await wait(20);
+  ed=q('#noteBody'); ed.focus();
+  put(ed.childNodes[1],0);                     /* the blank middle line */
+  A.render(); await wait(20);
+  { const h=here(), ed2=q('#noteBody');
+    ok(h.c===ed2.childNodes[1]&&h.o===0,'a caret on a blank line stays on the blank line'); }
+  /* and the line BELOW the blank one: the break itself has to cost a character, or
+     the two share a number and the caret falls back onto the blank line */
+  ed=q('#noteBody'); ed.focus();
+  put(ed.childNodes[2].firstChild,0);
+  A.render(); await wait(20);
+  ok(here().t==='three'&&here().o===0,'the line below a blank one is a place of its own');
+  /* the same, with the break inside a single block rather than between two */
+  S().notes[0].body='<div>a<br>b</div>'; A.render(); await wait(20);
+  ed=q('#noteBody'); ed.focus();
+  put(ed.firstChild.lastChild,0);
+  A.render(); await wait(20);
+  ok(here().t==='b'&&here().o===0,'a break inside one block counts the same way');
+
+  /* a body that shrank under the caret: park it inside the last line, never between
+     the blocks, where the next character is typed outside every line */
+  S().notes[0].body='one\ntwo\nthree'; A.render(); await wait(20);
+  ed=q('#noteBody'); ed.focus();
+  put(ed.childNodes[2].firstChild,5);
+  S().notes[0].body='one';
+  A.render(); await wait(20);
+  { const h=here(), ed3=q('#noteBody');
+    ok(h.c!==ed3&&h.c.nodeType===3&&h.t==='one'&&h.o===3,
+      'a caret past the end of a shrunken body clamps into the last line'); }
+  press('!'); await wait(10);
+  ok(S().notes[0].body==='one!','and typing there stays on that line, not on a new one');
+
+  /* the offsets still walk through inline formatting, the case already relied on */
+  S().notes[0].body='<div>plain <b>bold</b> tail</div><div>second</div>';
+  A.render(); await wait(20);
+  ed=q('#noteBody'); ed.focus();
+  put(ed.querySelector('b').firstChild,2);
+  A.render(); await wait(20);
+  ok(here().t==='bold'&&here().o===2,'a caret inside a bold run still returns to the same character');
+  put(q('#noteBody').childNodes[1].firstChild,0);
+  A.render(); await wait(20);
+  ok(here().t==='second'&&here().o===0,'and a line start below formatted content is exact too');
+}
+
+console.log('— Notes: a nested block is still a line —');
+{
+  /* Chrome writes nested blocks (an Enter inside a wrapped line gives
+     <div>one<div>two</div></div>). The serializer read only the root's own children
+     and joined their text, so every break inside a nested block was eaten and two
+     lines silently became one on the next keystroke. */
+  S().notes=[{id:'ns',title:'Shapes',body:'seed',up:1,dn:1,pos:1}];
+  S().settings.noteSel='ns'; A.render(); await wait(20);
+  const ed=q('#noteBody');
+  const round=h=>{ ed.innerHTML=h; fire(ed,'input'); return S().notes[0].body };
+  ok(round('<div>one</div><div>two</div>')==='one\ntwo','two blocks are two lines');
+  ok(round('<div><div>one</div><div>two</div></div>')==='one\ntwo',
+    'a wrapper around them changes nothing');
+  ok(round('<div>one<div>two</div></div>')==='one\ntwo',
+    "Chrome's nested-Enter shape keeps its break");
+  ok(round('<div>one<br>two</div>')==='one\ntwo','a break inside one block is still a line');
+  ok(round('<div>one</div><div><br></div><div>two</div>')==='one\n\ntwo','a blank line survives');
+  ok(round('<div>one</div>')==='one','and a single line is still a single line');
+  ok(round('<div><div>a</div><div><b>b</b></div></div>')==='<div><div>a</div><div><b>b</b></div></div>',
+    'formatting keeps the rich path, nesting and all');
+  S().settings.view='board'; A.render(); await wait(20);
+}
+
+console.log('— Notes: a keystroke is never merged away —');
+{
+  /* The reported revert. A note's body rides the dn stamp, and dn only moves at
+     commit; the editor calls save() on every keystroke and every call resets the
+     400ms debounce, so a typing burst leaves the body newer than its stamp. A sync
+     cycle landing in that window weighed the unstamped local body against the
+     cloud's copy of the SAME dn, and the tie broke by comparing the two strings:
+     appending an ordinary character sorts AFTER the shorter old one, so the cloud
+     copy won, was adopted, re-rendered and written to localStorage, and the typing
+     was gone. syncCycle now flushes the debounce before it merges. */
+  const cloud={row:null};
+  const net=async(url,opts)=>{
+    opts=opts||{};
+    if((opts.method||'GET').toUpperCase()==='GET')
+      return {ok:true,status:200,text:async()=>'',
+        json:async()=>cloud.row?[{data:cloud.row.data,updated_at:cloud.row.updated_at}]:[]};
+    const b=JSON.parse(opts.body)[0];
+    cloud.row={data:JSON.parse(JSON.stringify(b.data)),updated_at:b.updated_at};
+    return {ok:true,status:200,text:async()=>'',json:async()=>[]};
+  };
+  const d=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+    beforeParse(win){ win.fetch=net;
+      win.localStorage.setItem('agora_dayplanner_synckey','hs-race') }});
+  await wait(300);
+  const win=d.window, dc=win.document, AA=win.A;
+  const ed=()=>dc.querySelector('#noteBody');
+  const body=()=>AA.state.notes[0].body;
+  const cbody=()=>cloud.row.data.notes[0].body;
+  /* type the way the engine does: mutate the text node, then raise input */
+  const line=()=>{ const e=ed();
+    if(!e.firstChild||e.firstChild.nodeName!=='DIV') e.innerHTML='<div></div>';
+    const l=e.firstChild;
+    if(!l.firstChild||l.firstChild.nodeType!==3){
+      while(l.firstChild) l.removeChild(l.firstChild);
+      l.appendChild(dc.createTextNode('')); }
+    return l.firstChild };
+  const typed=txt=>{ const t=line(); t.data+=txt;
+    ed().dispatchEvent(new win.Event('input',{bubbles:true})) };
+  const rubbed=n=>{ const t=line(); t.data=t.data.slice(0,-n);
+    ed().dispatchEvent(new win.Event('input',{bubbles:true})) };
+
+  dc.querySelector('.navbtn[data-v="notes"]').click(); await wait(25);
+  dc.querySelector('[data-action="note-new"]').click(); await wait(30);
+  typed('hello');
+  AA.save();                                   /* the pause that flushes the debounce */
+  await AA.syncCycle({}); await wait(40);
+  const dn0=AA.state.notes[0].dn;
+  ok(cbody()==='hello','the cloud holds the committed body');
+
+  typed('x');                                  /* and now type on, never pausing */
+  ok(body()==='hellox'&&AA.state.notes[0].dn===dn0,
+    'a keystroke reaches state at once, but its stamp waits for the commit');
+  const before=ed();
+  await AA.syncCycle({}); await wait(60);
+  ok(body()==='hellox','a sync cycle mid-typing keeps the keystroke');
+  ok(ed().textContent==='hellox','the screen agrees with it');
+  ok(AA.state.notes[0].dn>dn0,'the merge saw it stamped, not as old as the cloud copy');
+  ok(cbody()==='hellox','and the cloud was told');
+  ok(ed()===before,'nothing arrived from elsewhere, so the editor was never rebuilt');
+
+  /* the mirror: text that sorts BEFORE the cloud copy (a deletion) survived the old
+     tie-break by luck. Pin both directions or half the bug can come back unnoticed. */
+  rubbed(2);
+  await AA.syncCycle({}); await wait(60);
+  ok(body()==='hell'&&cbody()==='hell','a deletion mid-typing survives the same way');
+
+  /* and the merge still does its job: a genuinely newer body from the other device */
+  cloud.row.data.notes[0].body='written on the phone';
+  cloud.row.data.notes[0].dn=Date.now()+5000;
+  cloud.row.updated_at=new Date(Date.now()+5000).toISOString();
+  await AA.syncCycle({}); await wait(60);
+  ok(body()==='written on the phone','a genuinely newer body from elsewhere still lands');
+
+  /* a burst of type-and-delete with a cycle after every single keystroke */
+  cloud.row.data.notes[0].dn=Date.now()-1000;   /* drop the fixture's future stamp */
+  ed().innerHTML='<div>base</div>';
+  ed().dispatchEvent(new win.Event('input',{bubbles:true}));
+  AA.save(); await AA.syncCycle({}); await wait(40);
+  let drift=0;
+  for(const op of ['a','b','c','<','d','<','<','e','f','<']){
+    if(op==='<') rubbed(1); else typed(op);
+    await AA.syncCycle({}); await wait(15);
+    if(body()!==ed().textContent||cbody()!==body()) drift++;
+  }
+  ok(drift===0,'through a burst of typing and deleting, with a sync cycle after every '+
+    'keystroke, state, screen and cloud never disagree ('+drift+' disagreements)');
+  ok(body()==='baseae','and the burst ends with exactly what was typed ('+body()+')');
+  win.close();
+}
+
+console.log('— Notes: a stale editor cannot write over a live one —');
+{
+  /* The other half of the reported revert: a render landing between the DOM mutation
+     and the serialization, writing an older body back over a newer one. It cannot
+     reach state, and the reason is worth pinning: the input listener is delegated on
+     document, and a rebuilt view leaves the old editor detached, so its events never
+     bubble anywhere. Anything that moves that listener onto the element itself
+     re-opens this. */
+  S().notes=[{id:'nx',title:'Alpha',body:'alpha body',up:1,dn:1,pos:1},
+             {id:'ny',title:'Beta',body:'beta body',up:2,dn:2,pos:2}];
+  S().settings.view='notes'; S().settings.noteSel='nx';
+  A.render(); await wait(25);
+  const old=q('#noteBody');
+  old.firstChild.firstChild.data='alpha body edited';   /* the engine has just typed */
+  A.render(); await wait(20);                            /* a foreign render lands first */
+  ok(q('#noteBody')!==old,'the view was rebuilt under the pending keystroke');
+  old.dispatchEvent(new w.Event('input',{bubbles:true}));
+  await wait(10);
+  ok(S().notes[0].body==='alpha body','the detached editor cannot write to state');
+  ok(S().notes[0].body===q('#noteBody').textContent,'state and screen still agree');
+  /* and with the selection moved on, it cannot write into the note now open either */
+  click('.noterow[data-id="ny"]'); await wait(25);
+  old.dispatchEvent(new w.Event('input',{bubbles:true}));
+  await wait(10);
+  ok(S().notes.find(n=>n.id==='ny').body==='beta body',
+    'nor leak one note into another when the selection has moved');
+  S().settings.view='board'; A.render(); await wait(20);
+}
+
 console.log('— placement: rail on desktop, board bottom on a phone —');
 {
   const phone=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,

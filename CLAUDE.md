@@ -30,7 +30,7 @@ From the project root:
   ```
   cd tests && npm install   # first time only, installs jsdom
   cd ..                     # run from the project root: test.js reads ./index.html
-  node tests/test.js        # expect: RESULT: 837 passed, 0 failed
+  node tests/test.js        # expect: RESULT: 871 passed, 0 failed
                             # the suite checks this number itself and tells you when to bump it
   ```
 - Optional visual/browser suite (needs Python + Playwright; skip if not set up):
