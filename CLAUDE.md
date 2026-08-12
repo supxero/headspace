@@ -18,6 +18,8 @@ This is a single-file day-planner web app. Read this before making changes.
 - No em dashes in any copy.
 - The two priority tiers are labelled "Prio 0" and "Prio 1" (not Must/Should); the third is "Extra".
 - Data is stored per-device in `localStorage` under the key `agora_dayplanner_v1`. Never rename that key or you orphan users' saved tasks.
+- The Notes editor claims four keys while the caret is inside `#noteBody`, at the TOP of the app-wide `keydown` handler, before the Enter/Escape branches: Ctrl/Cmd+Z, Ctrl+Y, Ctrl/Cmd+Shift+Z (its own undo history, `ui.noteHist`, because the browser's native stack does not survive a re-render here) and, conditionally, the space bar (the `- ` list rules). A new global shortcut on any of those will be swallowed in the editor. Undo never syncs and never enters `state`.
+- Spellcheck is left ON in the editor. Only `#syncKeyIn` opts out, because a sync key is a random string. Do not disable it anywhere else: the red underline is the browser's and cannot be cleared per word from a page, so switching it off is hiding the problem, not solving it. A test counts the opt-outs.
 
 ## After ANY change to index.html
 1. Run the tests (see below). They must stay green.
@@ -30,7 +32,7 @@ From the project root:
   ```
   cd tests && npm install   # first time only, installs jsdom
   cd ..                     # run from the project root: test.js reads ./index.html
-  node tests/test.js        # expect: RESULT: 871 passed, 0 failed
+  node tests/test.js        # expect: RESULT: 961 passed, 0 failed
                             # the suite checks this number itself and tells you when to bump it
   ```
 - Optional visual/browser suite (needs Python + Playwright; skip if not set up):

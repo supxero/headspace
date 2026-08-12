@@ -612,21 +612,118 @@ q('#main').click(); await wait(40);
 ok(!q('.addin'),'tapping outside closes the field');
 ok(mustNow().join()==='buy milk','text typed before tapping outside is kept, not lost');
 
+console.log('— Enter chains the next task —');
+/* Enter commits and leaves a fresh field open in the SAME zone, so a list is typed
+   straight down. The only ways out are an empty Enter, Escape, or a tap outside. */
+const enter=el=>el.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
 click('.zadd[data-k="'+zk+'"]'); await wait(30);
 type(q('.addin'),'call the bank');
-q('.addin').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await wait(40);
-ok(!q('.addin'),'Enter closes the field');
+enter(q('.addin')); await wait(40);
+ok(!!q('.addin[data-k="'+zk+'"]'),'Enter leaves a field open, ready for the next one');
+ok(q('.addin[data-k="'+zk+'"]').value==='','the reopened field is empty');
+ok(doc.activeElement===q('.addin[data-k="'+zk+'"]'),'and the caret is already in it');
 ok(mustNow().join()==='buy milk,call the bank','Enter commits the task');
+{
+  /* several in a row, never touching the mouse: the shape the change is for */
+  ['post the form','water the plants','ring the vet'].forEach(t=>{
+    type(q('.addin'),t); enter(q('.addin'));
+  });
+  await wait(40);
+  ok(mustNow().join()==='buy milk,call the bank,post the form,water the plants,ring the vet',
+    'four tasks typed one after another, each committed by Enter ('+mustNow().join()+')');
+  ok(!!q('.addin[data-k="'+zk+'"]')&&q('.addin[data-k="'+zk+'"]').value==='',
+    'the field is still open and empty after the run');
+  ok(qa('.addin').length===1,'exactly one add field is open, never a second');
+}
+/* an empty Enter is the way out: it closes rather than opening another */
+enter(q('.addin')); await wait(40);
+ok(!q('.addin'),'Enter on an empty field closes it instead of opening another');
+ok(mustNow().length===5,'and commits nothing');
 
+/* the chain stays inside the zone it started in */
+const zk2='day:'+T()+':should';
+click('.zadd[data-k="'+zk2+'"]'); await wait(30);
+type(q('.addin'),'draft the note'); enter(q('.addin')); await wait(40);
+ok(!!q('.addin[data-k="'+zk2+'"]'),'the reopened field belongs to the same zone');
+ok((S().days[T()]||{should:[]}).should.map(t=>t.title).join()==='draft the note',
+  'and the task landed in that zone, not the one before it');
+ok(mustNow().length===5,'Prio 0 is untouched by a Prio 1 chain');
+q('#main').click(); await wait(40);
+
+/* Free Floating: the same key, the same chaining, keyed on the tab */
+{
+  S().settings.floatMode=true; S().settings.view='board'; A.render(); await wait(30);
+  const fid=S().floats[0].id, fk='float:'+fid, before=S().floats[0].tasks.length;
+  click('.zadd[data-k="'+fk+'"]'); await wait(30);
+  type(q('.addin'),'stamps'); enter(q('.addin')); await wait(40);
+  ok(!!q('.addin[data-k="'+fk+'"]'),'Free Floating reopens the field on the same tab');
+  type(q('.addin'),'envelopes'); enter(q('.addin')); await wait(40);
+  ok(S().floats[0].tasks.length===before+2,'two tasks chained into the tab');
+  ok(S().floats[0].tasks.slice(-2).map(t=>t.title).join()==='stamps,envelopes',
+    'in the order they were typed');
+  enter(q('.addin')); await wait(40);
+  ok(!q('.addin'),'and an empty Enter closes it there too');
+  S().settings.floatMode=false; A.render(); await wait(30);
+}
+
+/* the on-screen keyboard shape: a reopening field must not invite the old trap back.
+   The chain never blurs (that is what drops the keyboard) and never re-renders on a
+   height-only resize, so the field survives the keyboard opening and closing. */
+{
+  S().days={}; A.render(); await wait(30);
+  click('.zadd[data-k="'+zk+'"]'); await wait(30);
+  type(q('.addin'),'first'); enter(q('.addin')); await wait(40);
+  const reopened=q('.addin[data-k="'+zk+'"]');
+  ok(!!reopened&&doc.activeElement===reopened,'the chained field holds focus');
+  type(reopened,'half typed'); kbd(); await wait(220);
+  ok(q('.addin[data-k="'+zk+'"]')===reopened,'a keyboard resize does not tear out the chained field');
+  ok(reopened.value==='half typed','and what was typed into it survives');
+  enter(reopened); await wait(40);
+  ok(mustNow().join()==='first,half typed','the second task committed from the chained field');
+  q('#main').click(); await wait(40);
+  ok(!q('.addin'),'tapping outside still closes the chain');
+}
+
+console.log('— inline add: cancel and Escape —');
+S().days={}; A.render(); await wait(30);
 click('.zadd[data-k="'+zk+'"]'); await wait(30);
 type(q('.addin'),'scratch that');
 click('[data-action="add-cancel"]'); await wait(40);
 ok(!q('.addin'),'the cancel control closes the field');
-ok(mustNow().length===2,'cancel discards without adding');
+ok(mustNow().length===0,'cancel discards without adding');
 
 click('.zadd[data-k="'+zk+'"]'); await wait(30);
+type(q('.addin'),'never mind');
 q('.addin').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await wait(40);
 ok(!q('.addin'),'Escape still closes the field');
+ok(mustNow().length===0,'and Escape still commits nothing');
+
+/* the Add button is unchanged: a tap on it commits and closes, because the finger is
+   already on the button and the next tap can reopen the row */
+click('.zadd[data-k="'+zk+'"]'); await wait(30);
+type(q('.addin'),'by button');
+click('[data-action="add-commit"]'); await wait(40);
+ok(!q('.addin'),'the Add button still commits and closes');
+ok(mustNow().join()==='by button','and the task is added');
+
+/* the quick-add box at the top was left alone: it never closes, so there is nothing
+   to reopen. It empties in place and keeps focus, which already gives the same
+   type-several-in-a-row run. */
+{
+  S().days={}; A.render(); await wait(30);
+  const qi=q('#qi');
+  q('#qd').value='day:'+T()+':must';
+  qi.focus(); qi.value='one from the top';
+  qi.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await wait(40);
+  ok(q('#qi')===qi,'quick add: the box is never torn out');
+  ok(qi.value==='','quick add: Enter empties it in place');
+  ok(doc.activeElement===qi,'quick add: and focus stays, so the next line can be typed straight away');
+  qi.value='two from the top';
+  qi.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await wait(40);
+  ok(mustNow().join()==='one from the top,two from the top',
+    'quick add: two in a row without touching the mouse');
+  q('#toast').innerHTML='';
+}
 
 console.log('— menu reach on phones —');
 {
@@ -2715,6 +2812,300 @@ console.log('— Notes: a stale editor cannot write over a live one —');
   await wait(10);
   ok(S().notes.find(n=>n.id==='ny').body==='beta body',
     'nor leak one note into another when the selection has moved');
+  S().settings.view='board'; A.render(); await wait(20);
+}
+
+console.log('— Notes: undo and redo —');
+{
+  /* Why a hand-rolled stack rather than the browser's: measured in real Chrome and
+     re-measured by tests/viewports.js. renderNotes rebuilds #noteBody, and a fresh
+     element starts with an EMPTY native stack, so every foreign render wiped undo and
+     the 25s sync poll is a foreign render; and the input handler's live patch of the
+     row label and the meta line, a textContent write outside the editable, collapses
+     Chrome's typing coalescing to one character per press. Both are disqualifying. */
+  const put=(node,off)=>{ const r=doc.createRange(); r.setStart(node,off); r.collapse(true);
+    const s=w.getSelection(); s.removeAllRanges(); s.addRange(r) };
+  /* the first text node under a node: a plain body renders as <div>text</div>, so the
+     caret belongs in the text, never in the block that holds it */
+  const tx=n=>{ while(n&&n.nodeType!==3) n=n.firstChild; return n };
+  const atEnd=ed=>{ const t=tx(ed); put(t,t.length) };
+  /* type into the editor the way the engine would, then raise the input the app hears */
+  const typeIn=(ed,txt)=>{
+    txt.split('').forEach(ch=>{
+      const r=w.getSelection().getRangeAt(0), n=r.startContainer, o=r.startOffset;
+      if(n.nodeType===3){ n.data=n.data.slice(0,o)+ch+n.data.slice(o); put(n,o+1) }
+      else { const t=doc.createTextNode(ch); n.appendChild(t); put(t,1) }
+      fire(ed,'input');
+    });
+  };
+  const undo=()=>q('#noteBody').dispatchEvent(new w.KeyboardEvent('keydown',
+    {key:'z',ctrlKey:true,bubbles:true}));
+  const key=o=>q('#noteBody').dispatchEvent(new w.KeyboardEvent('keydown',
+    Object.assign({key:'z',bubbles:true},o)));
+  const bodyOf=id=>S().notes.find(n=>n.id===id).body;
+  /* one note, one editor, caret at the end: every scenario below starts clean rather
+     than inheriting the last one's history */
+  const openNote=async(id,body)=>{
+    S().notes=[{id:id,title:id,body:body,up:1,dn:1,pos:1}];
+    S().settings.view='notes'; S().settings.noteSel=id;
+    A.render(); await wait(25);
+    const ed=q('#noteBody'); ed.focus();
+    if(tx(ed)) atEnd(ed); else { const t=doc.createTextNode(''); ed.appendChild(t); put(t,0) }
+    return ed;
+  };
+
+  { /* a step is a WORD, not a character: the whole reason for the hand-rolled stack */
+    const ed=await openNote('u1','seed');
+    typeIn(ed,' one two'); await wait(10);
+    ok(bodyOf('u1')==='seed one two','the typing landed ('+bodyOf('u1')+')');
+    undo(); await wait(10);
+    ok(bodyOf('u1')==='seed one','one step back drops a whole word, not a character');
+    ok(q('#noteBody').textContent==='seed one','and the editor shows it');
+    undo(); await wait(10);
+    ok(bodyOf('u1')==='seed','a second step goes back another word');
+    undo(); await wait(10);
+    ok(bodyOf('u1')==='seed','and the bottom of the history holds, no crash');
+    ok(!!q('#noteBody'),'the editor is still standing at the bottom');
+  }
+
+  { /* redo, in all the spellings the two platforms use */
+    const ed=await openNote('u2','seed');
+    typeIn(ed,' one two'); await wait(10);
+    key({ctrlKey:true,key:'Z'}); await wait(10);
+    ok(bodyOf('u2')==='seed one',
+      'the letter is matched either case, so Shift\'s capital still reaches undo');
+    undo(); await wait(10);
+    ok(bodyOf('u2')==='seed','wound all the way back');
+    key({ctrlKey:true,key:'y'}); await wait(10);
+    ok(bodyOf('u2')==='seed one','Ctrl+Y redoes one step');
+    key({ctrlKey:true,shiftKey:true}); await wait(10);
+    ok(bodyOf('u2')==='seed one two','Ctrl+Shift+Z redoes the next');
+    key({ctrlKey:true,shiftKey:true}); await wait(10);
+    ok(bodyOf('u2')==='seed one two','and stops at the newest state, it does not wrap');
+    undo(); undo(); await wait(10);
+    ok(bodyOf('u2')==='seed','Ctrl+Z winds back again');
+    key({metaKey:true,shiftKey:true}); await wait(10);
+    ok(bodyOf('u2')==='seed one','Cmd+Shift+Z redoes on a Mac');
+    key({metaKey:true}); await wait(10);
+    ok(bodyOf('u2')==='seed','and Cmd+Z undoes');
+  }
+
+  { /* a fresh edit clears the redo branch, the way every editor does */
+    const ed=await openNote('u5','seed');
+    typeIn(ed,' one two'); await wait(10);
+    undo(); await wait(10);
+    ok(bodyOf('u5')==='seed one','one step back, with a redo waiting');
+    atEnd(q('#noteBody')); typeIn(q('#noteBody'),'!'); await wait(10);
+    ok(bodyOf('u5')==='seed one!','a new edit lands on the current state');
+    key({ctrlKey:true,key:'y'}); await wait(10);
+    ok(bodyOf('u5')==='seed one!','redo is gone once a new edit is made');
+  }
+
+  { /* the caret comes back with the text it belongs to */
+    const ed=await openNote('u6','alpha');
+    typeIn(ed,' beta'); await wait(10);
+    typeIn(q('#noteBody'),' gamma'); await wait(10);
+    ok(bodyOf('u6')==='alpha beta gamma','two words typed');
+    undo(); await wait(10);
+    ok(bodyOf('u6')==='alpha beta','one step back');
+    const r=w.getSelection().getRangeAt(0);
+    ok(q('#noteBody').contains(r.startContainer),'undo leaves the caret inside the editor');
+    ok(r.startOffset===10,'at the character the step was taken from ('+r.startOffset+')');
+  }
+
+  { /* the boundary: switching notes starts a fresh history, it never undoes backwards
+       into the note before it */
+    S().notes=[{id:'b1',title:'First',body:'first body',up:1,dn:1,pos:2},
+               {id:'b2',title:'Second',body:'second body',up:1,dn:1,pos:1}];
+    S().settings.view='notes'; S().settings.noteSel='b1';
+    A.render(); await wait(25);
+    let ed=q('#noteBody'); ed.focus(); atEnd(ed);
+    typeIn(ed,' edited one'); await wait(10);
+    ok(bodyOf('b1')==='first body edited one','the first note took its edit');
+    click('.noterow[data-id="b2"]'); await wait(25);
+    ed=q('#noteBody'); ed.focus(); atEnd(ed);
+    typeIn(ed,' edited two'); await wait(10);
+    ok(bodyOf('b2')==='second body edited two','the second note took its own');
+    for(let i=0;i<10;i++){ undo(); await wait(5) }
+    await wait(10);
+    ok(bodyOf('b2')==='second body','undo walks back to where the second note started');
+    ok(bodyOf('b1')==='first body edited one','and never reaches into the note before it');
+    ok(q('#noteBody').textContent==='second body','the editor still shows the note that is open');
+    /* and back: the first note's own history did not survive the trip either */
+    click('.noterow[data-id="b1"]'); await wait(25);
+    undo(); await wait(10);
+    ok(bodyOf('b1')==='first body edited one',
+      'returning to a note does not offer steps back into an older visit');
+  }
+
+  { /* THE SYNC RULE. A merge writes a body without passing the tracker, so the
+       history is stale by definition. Undo must refuse rather than resurrect this
+       device's pre-merge text over text that just arrived from the other one. */
+    const ed=await openNote('m1','seed');
+    typeIn(ed,' local words here'); await wait(10);
+    ok(bodyOf('m1')==='seed local words here','local typing before the merge');
+    S().notes.find(n=>n.id==='m1').body='body from the other device';   /* the merge lands */
+    A.render(); await wait(25);                                          /* the foreign render */
+    ok(q('#noteBody').textContent==='body from the other device','the foreign body is on screen');
+    undo(); await wait(10);
+    ok(bodyOf('m1')==='body from the other device',
+      'an undo after a foreign body refuses rather than overwriting it ('+bodyOf('m1')+')');
+    ok(q('#noteBody').textContent==='body from the other device','and the screen still agrees');
+    /* the history re-seeds on what arrived, so editing carries straight on */
+    atEnd(q('#noteBody')); typeIn(q('#noteBody'),' mine'); await wait(10);
+    ok(bodyOf('m1')==='body from the other device mine','typing resumes on the merged text');
+    undo(); await wait(10);
+    ok(bodyOf('m1')==='body from the other device',
+      'and the next undo works again, back to the merged text');
+  }
+
+  { /* a foreign render that does NOT change the body must not cost a step: the 25s
+       poll usually agrees with what is on screen and fires all day */
+    const ed=await openNote('m2','seed');
+    typeIn(ed,' kept words'); await wait(10);
+    A.render(); await wait(25);
+    undo(); await wait(10);
+    ok(bodyOf('m2')==='seed kept','a foreign render that agrees keeps the history usable');
+    undo(); await wait(10);
+    ok(bodyOf('m2')==='seed','and the step before it as well');
+  }
+
+  { /* the bound: the stack is capped, the oldest steps fall off, it never grows free */
+    const ed=await openNote('u3','');
+    for(let i=0;i<90;i++) typeIn(ed,'w'+i+' ');
+    await wait(10);
+    const deep=w.A.ui.noteHist.past.length;
+    ok(deep<=60,'the history is bounded at 60 steps ('+deep+')');
+    ok(deep>=55,'and it really did fill up ('+deep+')');
+    const words=bodyOf('u3').trim().split(/\s+/).length;
+    for(let i=0;i<200;i++){ undo(); await wait(0) }
+    await wait(10);
+    const left=bodyOf('u3').trim().split(/\s+/).length;
+    ok(left<words,'undoing past the bound stops cleanly ('+left+' of '+words+' words left)');
+    ok(left>0,'and it stops at the oldest step it still holds, not at nothing');
+    ok(!!q('#noteBody'),'the editor is still standing');
+  }
+
+  { /* undo is the editor's key only: the title must not lose the body */
+    const ed=await openNote('u4','first second');
+    typeIn(ed,' third'); await wait(10);
+    q('#noteTitle').dispatchEvent(new w.KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true}));
+    await wait(10);
+    ok(bodyOf('u4')==='first second third','Ctrl+Z in the title does not undo the body');
+    q('#noteSearch').dispatchEvent(new w.KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true}));
+    await wait(10);
+    ok(bodyOf('u4')==='first second third','nor does Ctrl+Z in the search box');
+  }
+  S().settings.view='board'; A.render(); await wait(20);
+}
+
+console.log('— Notes: a dash and a space become a bullet —');
+{
+  const put=(node,off)=>{ const r=doc.createRange(); r.setStart(node,off); r.collapse(true);
+    const s=w.getSelection(); s.removeAllRanges(); s.addRange(r) };
+  const space=()=>q('#noteBody').dispatchEvent(
+    new w.KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true}));
+  const bodyOf=id=>S().notes.find(n=>n.id===id).body;
+
+  S().notes=[{id:'d1',title:'Dash',body:'',up:1,dn:1,pos:1}];
+  S().settings.view='notes'; S().settings.noteSel='d1';
+  A.render(); await wait(25);
+  let ed=q('#noteBody'); ed.focus();
+
+  /* a lone dash opening a line, then a space */
+  ed.innerHTML='<div>-</div>'; fire(ed,'input'); await wait(10);
+  put(ed.firstChild.firstChild,1);
+  space(); await wait(10);
+  ok(bodyOf('d1')==='<ul class="dash"><li><br></li></ul>',
+    'a dash and a space open a list item ('+bodyOf('d1')+')');
+  ok(!!q('#noteBody ul.dash>li'),'and the shape on screen is the app\'s own dash list');
+  ok(!q('#noteBody ul:not(.dash)'),'never a second list type');
+  { const r=w.getSelection().getRangeAt(0);
+    ok(q('#noteBody li').contains(r.startContainer)||r.startContainer===q('#noteBody li'),
+      'the caret sits inside the new bullet'); }
+
+  /* the same space, twice more, walks back out and leaves the literal dash */
+  space(); await wait(10);   /* the first space simply lands in the empty bullet */
+  ok(/^<ul class="dash">/.test(bodyOf('d1')),'one space alone stays in the list');
+  { const li=q('#noteBody li');
+    li.textContent=' ';       /* the engine's first space, which jsdom does not insert */
+    put(li.firstChild,1); }
+  space(); await wait(10);
+  ok(bodyOf('d1')==='- ','a second space leaves the list and leaves a literal dash ('+
+    JSON.stringify(bodyOf('d1'))+')');
+  ok(!q('#noteBody ul'),'the list is gone entirely when its last item leaves');
+
+  /* the round trip is lossless: what is left behind is exactly what was typed to get
+     in, so the same two keys open the list again */
+  ok(q('#noteBody').textContent==='- ','the line left behind reads as the typed dash');
+  ed=q('#noteBody');
+  ed.innerHTML='<div>-</div>'; fire(ed,'input'); await wait(10);
+  put(ed.firstChild.firstChild,1);
+  space(); await wait(10);
+  ok(bodyOf('d1')==='<ul class="dash"><li><br></li></ul>',
+    'and the very same dash opens the list again ('+bodyOf('d1')+')');
+
+  /* mid-list: the bullet leaving takes only itself, the items above and below stay */
+  ed.innerHTML='<ul class="dash"><li>one</li><li> </li><li>three</li></ul>';
+  fire(ed,'input'); await wait(10);
+  { const li=q('#noteBody li:nth-child(2)'); put(li.firstChild,1); }
+  space(); await wait(10);
+  ok(bodyOf('d1')==='<ul class="dash"><li>one</li></ul><div>- </div><ul class="dash"><li>three</li></ul>',
+    'an empty bullet in the middle steps out between its neighbours ('+bodyOf('d1')+')');
+
+  /* the trigger is narrow on purpose: a dash that is not alone on the line is text */
+  ed.innerHTML='<div>a - b</div>'; fire(ed,'input'); await wait(10);
+  put(ed.firstChild.firstChild,3);
+  ok(space()===true,'a dash inside a line does not claim the space');
+  await wait(10);
+  ok(bodyOf('d1')==='a - b','and the line is left as ordinary text');
+  ed.innerHTML='<div>first</div><div>-</div>'; fire(ed,'input'); await wait(10);
+  put(ed.children[1].firstChild,1);
+  space(); await wait(10);
+  ok(bodyOf('d1')==='<div>first</div><ul class="dash"><li><br></li></ul>',
+    'a dash opening the SECOND line converts that line only ('+bodyOf('d1')+')');
+
+  /* already inside a list, "- " is just text: no nested list, no new stored shape */
+  ed.innerHTML='<ul class="dash"><li>-</li></ul>'; fire(ed,'input'); await wait(10);
+  put(q('#noteBody li').firstChild,1);
+  ok(space()===true,'a dash inside a bullet does not convert again');
+  await wait(10);
+  ok(bodyOf('d1')==='<ul class="dash"><li>-</li></ul>','the list is left exactly as it was');
+
+  /* the conversion is one undo step, so it is as easy to leave as to reach */
+  ed.innerHTML='<div>-</div>'; fire(ed,'input'); await wait(10);
+  put(ed.firstChild.firstChild,1);
+  space(); await wait(10);
+  ok(/^<ul class="dash">/.test(bodyOf('d1')),'converted, ready to undo');
+  q('#noteBody').dispatchEvent(new w.KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true}));
+  await wait(10);
+  ok(bodyOf('d1')==='-','one undo takes the conversion back to the dash ('+
+    JSON.stringify(bodyOf('d1'))+')');
+  S().settings.view='board'; A.render(); await wait(20);
+}
+
+console.log('— Notes: the spellcheck underline is the browser\'s, not ours —');
+{
+  /* Change 4 asked for the red squiggle to clear when a word is finished with a
+     space. It cannot be done, and nothing here pretends otherwise: the mark is drawn
+     by the browser's own spellchecker in a layer no page can read or repaint. What
+     the app CAN do is leave the checker switched on and get out of its way, and that
+     is what these pin: spellcheck is never disabled behind the user's back. */
+  S().notes=[{id:'s1',title:'Spell',body:'teh quick brown',up:1,dn:1,pos:1}];
+  S().settings.view='notes'; S().settings.noteSel='s1';
+  A.render(); await wait(25);
+  const ed=q('#noteBody');
+  ok(ed.getAttribute('spellcheck')===null,
+    'the editor carries no spellcheck attribute, so it inherits the browser default: on');
+  /* the ONE element that legitimately opts out is the sync key box, where the value is
+     a random string and every one of them would be flagged. Anything else opting out
+     would be the disable-it-and-say-nothing workaround this change refused to ship. */
+  const offs=(html.match(/spellcheck\s*=\s*["']false["']/g)||[]).length;
+  ok(offs===1,'exactly one element in the file opts out of spellcheck ('+offs+')');
+  ok(/id="syncKeyIn"[^>]*spellcheck="false"/.test(html),'and it is the sync key box, not the editor');
+  ok(!/\.spellcheck\s*=\s*false/.test(html),'no script switches spellcheck off at runtime');
+  ok(!/spellcheck/.test(html.slice(html.indexOf('id="noteBody"'),html.indexOf('id="noteBody"')+400)),
+    'the note editor markup never mentions it at all');
   S().settings.view='board'; A.render(); await wait(20);
 }
 

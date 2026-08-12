@@ -490,6 +490,141 @@ async function runProfile(browser, base, prof) {
     check('inline add: cancel closes the row', closed);
   });
 
+  /* ---- C2. Enter chains the next task, with the on-screen keyboard up ----
+     The shape that produced the original mobile trap: a field being torn out and
+     rebuilt while the soft keyboard is open. On the coarse profiles the keyboard is
+     modelled the way the notes flow models it, by shrinking the viewport HEIGHT only,
+     which is exactly what a real keyboard does to the layout viewport. */
+  await flow('enter-chain', async () => {
+    const zk = 'day:' + today + ':must';
+    const titles = () => page.evaluate(t => window.A.state.days[t].must.map(x => x.title), today);
+    const openField = () => A(() => {
+      const i = document.querySelector('.addin');
+      return i ? { k: i.dataset.k, value: i.value, focused: document.activeElement === i,
+                   count: document.querySelectorAll('.addin').length } : null;
+    });
+
+    if (coarse) {
+      await page.setViewport({ width: prof.width, height: Math.round(prof.height * 0.55),
+        hasTouch: true, isMobile: true });
+      await sleep(300);
+    }
+    await act({ css: '[data-action="add-open"][data-k="' + zk + '"]' });
+    await page.keyboard.type('Chain one');
+    await page.keyboard.press('Enter');
+    await sleep(300);
+    let f = await openField();
+    check('enter chain: a fresh field is open after Enter', !!f, JSON.stringify(f));
+    check('enter chain: it belongs to the same zone', f && f.k === zk, f && f.k);
+    check('enter chain: it is empty', f && f.value === '', f && JSON.stringify(f.value));
+    check('enter chain: and already holds the caret', f && f.focused, JSON.stringify(f));
+    check('enter chain: exactly one field is open', f && f.count === 1, f && f.count);
+
+    /* three more straight down, never touching the pointer: this is the whole change */
+    for (const t of ['Chain two', 'Chain three', 'Chain four']) {
+      await page.keyboard.type(t);
+      await page.keyboard.press('Enter');
+      await sleep(200);
+    }
+    const got = await titles();
+    const want = ['Chain one', 'Chain two', 'Chain three', 'Chain four'];
+    check('enter chain: four tasks typed one after another, in order',
+      want.every((t, i) => got[got.length - 4 + i] === t), got.slice(-4).join(' | '));
+
+    /* the keyboard is still up and the page has not gone sideways */
+    const state = await A(() => ({
+      over: (document.scrollingElement || document.documentElement).scrollWidth > window.innerWidth,
+      focused: document.activeElement && document.activeElement.className,
+      reach: (() => { const i = document.querySelector('.addin'); if (!i) return null;
+        const r = i.getBoundingClientRect();
+        return r.top >= 0 && r.bottom <= window.innerHeight + 4; })(),
+    }));
+    check('enter chain: no sideways overflow while chaining', !state.over);
+    check('enter chain: focus is still on an add field', /addin/.test(state.focused || ''), state.focused);
+    if (coarse)
+      check('enter chain: the open field stays reachable with the keyboard up', state.reach !== false,
+        'reach=' + state.reach);
+    await audit('enter-chain');
+
+    /* the way out: Enter on an empty field closes rather than opening another */
+    await page.keyboard.press('Enter');
+    await sleep(300);
+    const after = await openField();
+    check('enter chain: an empty Enter closes the field', after === null, JSON.stringify(after));
+    const n = (await titles()).length;
+    check('enter chain: and commits nothing', (await titles()).length === n, 'n=' + n);
+
+    /* Escape still closes without committing */
+    await act({ css: '[data-action="add-open"][data-k="' + zk + '"]' });
+    await page.keyboard.type('Never committed');
+    await page.keyboard.press('Escape');
+    await sleep(300);
+    const esc = await A(() => ({ open: !!document.querySelector('.addin') }));
+    check('enter chain: Escape still closes the field', !esc.open);
+    check('enter chain: Escape commits nothing',
+      !(await titles()).includes('Never committed'), (await titles()).join(' | '));
+
+    /* the keyboard closing again must not tear anything out: height-only resize */
+    if (coarse) {
+      await act({ css: '[data-action="add-open"][data-k="' + zk + '"]' });
+      await page.keyboard.type('Survives the keyboard');
+      await page.setViewport({ width: prof.width, height: prof.height, hasTouch: true, isMobile: true });
+      await sleep(400);
+      const kept = await A(() => { const i = document.querySelector('.addin');
+        return i ? i.value : null; });
+      check('enter chain: half typed text survives the keyboard closing', kept === 'Survives the keyboard', kept);
+      await page.keyboard.press('Escape');
+      await sleep(200);
+    }
+    /* Free Floating: same key, same chaining, keyed on the tab rather than the zone.
+       Wrapped so the board mode is always handed back, whatever happens in here: a
+       flow left in the wrong mode would fail every flow after it for the wrong reason. */
+    await act({ css: '.navbtn[data-action="floattoggle"]' });
+    await page.waitForSelector('#board .col.backlog');
+    const fk = await A(() => 'float:' + window.A.state.floats[0].id);
+    try {
+      await act({ css: '[data-action="add-open"][data-k="' + fk + '"]' });
+      await page.keyboard.type('Float chain one');
+      await page.keyboard.press('Enter');
+      await sleep(300);
+      await page.keyboard.type('Float chain two');
+      await page.keyboard.press('Enter');
+      await sleep(300);
+      const ff = await page.evaluate(k => {
+        const f = window.A.state.floats.find(x => 'float:' + x.id === k);
+        const i = document.querySelector('.addin');
+        return { last: f ? f.tasks.slice(-2).map(t => t.title) : [], openK: i && i.dataset.k };
+      }, fk);
+      check('enter chain: Free Floating chains into the same tab',
+        ff.last.join(' | ') === 'Float chain one | Float chain two', ff.last.join(' | '));
+      check('enter chain: and reopens on that tab', ff.openK === fk, String(ff.openK));
+      await page.keyboard.press('Escape');
+      await sleep(200);
+    } finally {
+      await act({ css: '.navbtn[data-action="floattoggle"]' });
+      await page.waitForSelector('#board .col');
+    }
+
+    /* the quick-add box was deliberately left alone: it never closes, so there is
+       nothing to reopen. It empties in place and keeps focus, which already gives the
+       same type-several-in-a-row run. */
+    await page.select('#qd', 'day:' + today + ':should');
+    await act('#qi');
+    await page.keyboard.type('Top box one');
+    await page.keyboard.press('Enter');
+    await sleep(300);
+    const qa1 = await A(() => ({ value: document.getElementById('qi').value,
+      focused: document.activeElement && document.activeElement.id }));
+    check('quick add: Enter empties the box in place', qa1.value === '', JSON.stringify(qa1.value));
+    check('quick add: and keeps the caret in it', qa1.focused === 'qi', qa1.focused);
+    await page.keyboard.type('Top box two');
+    await page.keyboard.press('Enter');
+    await sleep(300);
+    const qa2 = await page.evaluate(t => window.A.state.days[t].should.map(x => x.title), today);
+    check('quick add: two in a row without reaching for the pointer',
+      qa2.includes('Top box one') && qa2.includes('Top box two'), qa2.join(' | '));
+  });
+
   /* ---- D. the action bar, every control ---- */
   await flow('action-bar', async () => {
     /* select only if not already the open card: the sel action is a toggle */
@@ -1438,6 +1573,240 @@ async function runProfile(browser, base, prof) {
     check('theme: the meta returns to cloud blue', s2.meta === '#CFE3F1', s2.meta);
     await act({ css: '#themeModal [data-action="mclose"]' });
     if (narrow) await act('#railtoggle');
+  });
+
+  /* ---- K2. the editor's own keys: undo, redo, and the dash rules ----
+     Everything here is driven through real Chrome with real key events, because that
+     is the only place the questions can honestly be answered: the browser owns the
+     editing engine, the native undo stack and the spellchecker. */
+  await flow('notes-editing', async () => {
+    const seat = body => page.evaluate(b => {
+      window.A.state.notes = [{ id: 'vpe', title: 'Editing', body: b, up: 1, dn: 1, pos: 1 }];
+      window.A.state.settings.view = 'notes';
+      window.A.state.settings.noteSel = 'vpe';
+      window.A.render();
+    }, body);
+    const body = () => A(() => (window.A.state.notes.find(n => n.id === 'vpe') || {}).body);
+    const caretEnd = () => A(() => {
+      const ed = document.getElementById('noteBody'); ed.focus();
+      const w = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+      let n, last = null;
+      while ((n = w.nextNode())) last = n;
+      const r = document.createRange();
+      if (last) r.setStart(last, last.length); else r.setStart(ed, ed.childNodes.length);
+      r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      return true;
+    });
+    const chord = async (key, opts) => {
+      opts = opts || {};
+      const mods = [opts.meta ? 'Meta' : 'Control'].concat(opts.shift ? ['Shift'] : []);
+      for (const m of mods) await page.keyboard.down(m);
+      await page.keyboard.press(key);
+      for (const m of mods.slice().reverse()) await page.keyboard.up(m);
+      await sleep(220);
+    };
+
+    /* ---- 0. the two browser facts that decided the design ----
+       Measured on a scratch contenteditable outside the app, so the claim in REVIEW.md
+       is a repeatable measurement rather than folklore. Fact one: Chrome coalesces a
+       typed run into ONE native undo step. Fact two: a textContent write on an element
+       outside the editable, which is exactly what the Notes input handler does to keep
+       the row label and the meta line live, collapses that to one character per press.
+       Together with the rebuilt-editor problem below, that is why the app carries its
+       own history. The scratch element is removed before anything else runs. */
+    const nativeFacts = await (async () => {
+      const mk = () => A(() => {
+        const o = document.getElementById('__vpscratch'); if (o) o.remove();
+        const d = document.createElement('div');
+        d.id = '__vpscratch'; d.contentEditable = 'true';
+        d.style.cssText = 'position:fixed;top:0;left:0;width:260px;height:44px;z-index:99999;opacity:0.01';
+        document.body.appendChild(d); d.focus();
+      });
+      await mk();
+      await page.keyboard.type('alpha bravo charlie', { delay: 15 });
+      await sleep(250);
+      await chord('KeyZ');
+      const plain = await A(() => document.getElementById('__vpscratch').textContent);
+      await mk();
+      await A(() => {
+        const m = document.createElement('span'); m.id = '__vpmirror';
+        document.body.appendChild(m);
+        window.__vph = () => { document.getElementById('__vpmirror').textContent = String(Date.now()); };
+        document.getElementById('__vpscratch').addEventListener('input', window.__vph);
+      });
+      await page.keyboard.type('alpha bravo charlie', { delay: 15 });
+      await sleep(250);
+      await chord('KeyZ');
+      const patched = await A(() => document.getElementById('__vpscratch').textContent);
+      await A(() => { ['__vpscratch', '__vpmirror'].forEach(i => {
+        const e = document.getElementById(i); if (e) e.remove(); }); delete window.__vph; });
+      return { plain, patched };
+    })();
+    check('native undo: a bare editable undoes the whole typed run in one step',
+      nativeFacts.plain === '', JSON.stringify(nativeFacts.plain));
+    check('native undo: a live textContent patch outside it collapses that to one character',
+      nativeFacts.patched === 'alpha bravo charli', JSON.stringify(nativeFacts.patched));
+
+    /* ---- 1. the third fact: a foreign render takes the native stack with it ----
+       Recorded as checks so the finding stays true rather than becoming folklore. */
+    await seat('native probe'); await sleep(300);
+    await caretEnd();
+    await page.keyboard.type(' alpha bravo charlie');
+    await sleep(400);
+    const beforeRender = await body();
+    check('undo probe: typing landed', /alpha bravo charlie/.test(beforeRender), beforeRender);
+    await A(() => window.A.render()); await sleep(300);
+    const rebuilt = await A(() => document.activeElement && document.activeElement.id);
+    check('undo probe: a foreign render rebuilds the editor and keeps focus',
+      rebuilt === 'noteBody', rebuilt);
+    /* with OUR stack, a step back still works after that render. The native stack was
+       gone at this point, which is the whole reason the app carries its own. */
+    await chord('KeyZ');
+    const afterRenderUndo = await body();
+    check('undo: a step back still works after a foreign render',
+      afterRenderUndo === 'native probe alpha bravo', afterRenderUndo);
+    check('undo: and it is a WORD, not the single character the native stack gave',
+      afterRenderUndo !== 'native probe alpha bravo charli', afterRenderUndo);
+
+    /* ---- 2. undo and redo, the four chords ---- */
+    await seat('seed'); await sleep(300);
+    await caretEnd();
+    await page.keyboard.type(' one two');
+    await sleep(400);
+    check('undo: two words typed', (await body()) === 'seed one two', await body());
+    await chord('KeyZ');
+    check('undo: Ctrl+Z drops the last word', (await body()) === 'seed one', await body());
+    await chord('KeyZ');
+    check('undo: and the one before it', (await body()) === 'seed', await body());
+    await chord('KeyZ');
+    check('undo: the bottom of the history holds', (await body()) === 'seed', await body());
+    await chord('KeyY');
+    check('redo: Ctrl+Y steps forward', (await body()) === 'seed one', await body());
+    await chord('KeyZ', { shift: true });
+    check('redo: Ctrl+Shift+Z steps forward too', (await body()) === 'seed one two', await body());
+    await chord('KeyZ', { meta: true });
+    check('undo: Cmd+Z on a Mac', (await body()) === 'seed one', await body());
+    await chord('KeyZ', { meta: true, shift: true });
+    check('redo: Cmd+Shift+Z on a Mac', (await body()) === 'seed one two', await body());
+    /* the editor and the state agree after all that, and the caret is still inside */
+    const agree = await A(() => {
+      const ed = document.getElementById('noteBody');
+      const s = getSelection();
+      return { text: ed.textContent,
+               inside: s.rangeCount ? ed.contains(s.getRangeAt(0).startContainer) : false };
+    });
+    check('undo: the editor shows what state holds', agree.text === (await body()), agree.text);
+    check('undo: and the caret is back inside the editor', agree.inside);
+
+    /* ---- 3. undo across a foreign body: the sync rule ---- */
+    await seat('shared line'); await sleep(300);
+    await caretEnd();
+    await page.keyboard.type(' typed here');
+    await sleep(400);
+    await A(() => { window.A.state.notes.find(n => n.id === 'vpe').body = 'arrived from the other device';
+      window.A.render(); });
+    await sleep(300);
+    await chord('KeyZ');
+    const merged = await body();
+    check('undo: an undo after a foreign body refuses rather than overwriting it',
+      merged === 'arrived from the other device', merged);
+    const onScreen = await A(() => document.getElementById('noteBody').textContent);
+    check('undo: and the screen still shows the foreign text', onScreen === merged, onScreen);
+    await caretEnd();
+    await page.keyboard.type(' mine');
+    await sleep(400);
+    await chord('KeyZ');
+    const resumed = await body();
+    check('undo: the history re-seeds, so the next step back works again',
+      resumed === 'arrived from the other device', resumed);
+
+    /* ---- 4. "- " opens a dash bullet, two spaces walk back out ---- */
+    await seat(''); await sleep(300);
+    await A(() => document.getElementById('noteBody').focus());
+    await page.keyboard.type('- ');
+    await sleep(350);
+    const opened = await body();
+    check('dash: a dash and a space open the list', /^<ul class="dash"><li>/.test(opened), opened);
+    check('dash: it is the app\'s own dash list, not a second list type',
+      !/<ul>(?!<\/)/.test(opened) && !/<ol>/.test(opened), opened);
+    const mark = await A(() => { const u = document.querySelector('#noteBody ul');
+      return u ? getComputedStyle(u).listStyleType : 'missing'; });
+    check('dash: and it really draws a dash, the mark that was typed', /-/.test(mark), mark);
+    await page.keyboard.type('milk');
+    await sleep(300);
+    check('dash: typing continues inside the bullet', /<li>milk<\/li>/.test(await body()), await body());
+    /* Enter for the next bullet, then two spaces on the empty one to leave */
+    await page.keyboard.press('Enter');
+    await sleep(250);
+    await page.keyboard.type('  ');
+    await sleep(350);
+    const closed = await body();
+    check('dash: two spaces on an empty bullet leave the list',
+      /<li>milk<\/li><\/ul>/.test(closed) && /- /.test(closed), closed);
+    check('dash: and leave a literal dash behind, not an empty line',
+      /(^|>)- (<|$)/.test(closed) || /- $/.test(closed), closed);
+    const outside = await A(() => {
+      const ed = document.getElementById('noteBody');
+      const s = getSelection();
+      if (!s.rangeCount) return { inList: null };
+      let n = s.getRangeAt(0).startContainer;
+      while (n && n !== ed) { if (n.tagName === 'LI') return { inList: true }; n = n.parentNode; }
+      return { inList: false };
+    });
+    check('dash: the caret really left the list', outside.inList === false, JSON.stringify(outside));
+    await page.keyboard.type('plain again');
+    await sleep(300);
+    check('dash: and typing carries on as ordinary text',
+      /- plain again/.test(await body()), await body());
+
+    /* the conversion is ONE undo step, as easy to leave as to reach */
+    await seat(''); await sleep(300);
+    await A(() => document.getElementById('noteBody').focus());
+    await page.keyboard.type('- ');
+    await sleep(350);
+    check('dash: converted, ready to undo', /<ul class="dash">/.test(await body()), await body());
+    await chord('KeyZ');
+    const undone = await body();
+    check('dash: one undo takes the conversion back to the dash', undone === '-', JSON.stringify(undone));
+
+    /* the trigger is narrow: a dash mid-line is just text */
+    await seat('a - b'); await sleep(300);
+    await A(() => { const ed = document.getElementById('noteBody'); ed.focus();
+      const w = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT); const t = w.nextNode();
+      const r = document.createRange(); r.setStart(t, 3); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
+    await page.keyboard.type(' ');
+    await sleep(300);
+    check('dash: a dash inside a line does not become a list', !/<ul/.test(await body()), await body());
+
+    await audit('notes-editing');
+
+    /* ---- 5. the spellcheck underline: what is actually controllable ----
+       Change 4 asked for the red squiggle to clear when a word is finished with a
+       space. It cannot be done. The mark is painted by the browser's own spellchecker
+       in a layer the page cannot read, address or repaint: there is no DOM API for it,
+       and the CSS Highlight registry, which IS reachable, holds only highlights the
+       page itself created. The page's one lever is the spellcheck attribute, which
+       turns the whole checker off for an element. These pin that the app did NOT
+       quietly pull that lever. */
+    const spell = await A(() => {
+      const ed = document.getElementById('noteBody');
+      const names = (typeof CSS !== 'undefined' && CSS.highlights)
+        ? [...CSS.highlights.keys()] : null;
+      return { attr: ed.getAttribute('spellcheck'), prop: ed.spellcheck,
+               highlightRegistry: names, offCount:
+                 [...document.querySelectorAll('[spellcheck="false"]')].map(e => e.id || e.tagName) };
+    });
+    check('spellcheck: the editor never opts out', spell.attr === null, String(spell.attr));
+    check('spellcheck: so the browser keeps checking, live', spell.prop === true, String(spell.prop));
+    check('spellcheck: the browser exposes no spell marks to the page',
+      spell.highlightRegistry === null || spell.highlightRegistry.length === 0,
+      JSON.stringify(spell.highlightRegistry));
+    check('spellcheck: nothing on this view opts out either',
+      spell.offCount.length === 0, JSON.stringify(spell.offCount));
+
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
   });
 
   /* ---- L. final state ---- */

@@ -889,7 +889,8 @@ const CHEV=open=>'<svg class="chev'+(open?' open':'')+'" viewBox="0 0 16 16" fil
 /* ui.peek: which EMPTY panels the user has opened to add something. Not persisted:
    an empty panel starts collapsed on every load, and the flag is dropped the moment
    the panel holds an item, so emptying it later starts collapsed again. */
-let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:'',peek:{},noteQ:''};
+let state=null, ui={sel:null,adding:null,addText:'',drag:null,cancelEdit:false,renderKey:'',peek:{},noteQ:'',
+                    noteHist:null};
 
 function fresh(){
   return {
@@ -2871,6 +2872,165 @@ function noteCmd(cmd,ed){
     if(cr) noteCaretSet(ed,cr.s,cr.e);
   }
 }
+/* ---- undo and redo over the body string ----
+   Measured before it was designed, in real Chrome (tests/viewports.js repeats both
+   measurements). The native stack is NOT workable here, for two separate reasons:
+
+   1. LIFETIME. renderNotes rebuilds #noteBody, and a fresh element starts with an
+      empty native stack. Every foreign render therefore wipes undo silently, and the
+      25s sync poll is a foreign render, so the history evaporated on its own roughly
+      twice a minute with nobody touching anything.
+   2. GRANULARITY. The input handler patches the list row's label, its snippet and the
+      meta line on every keystroke. A textContent write on an element OUTSIDE the
+      editable collapses Chrome's typing coalescing to ONE CHARACTER per press, which
+      an isolated control proved: the same typing in a bare contenteditable undoes as
+      one run, and undoes a character at a time the moment that write is added.
+
+   So the history is ours: snapshots of the body string with the caret, per note,
+   bounded at NOTE_UNDO_MAX steps. Sixty, because a step is a word (see noteHistBreak)
+   and sixty words is a comfortably longer reach back than a writing session asks for,
+   while a note is one string, so sixty of them is a few tens of KB at most, held only
+   for the open note and dropped the moment another one opens. */
+const NOTE_UNDO_MAX=60;
+const NOTE_UNDO_GAP=700;        /* ms of stillness that ends a run */
+function noteHistReset(n){
+  ui.noteHist={id:n?n.id:null, past:[], future:[], at:0,
+    cur:{body:n?(n.body||''):'', s:0, e:0}};
+  return ui.noteHist;
+}
+/* Where one step ends and the next begins. A run of ordinary characters is ONE step,
+   ended by the space or break that finishes the word; a run of backspaces is one step
+   too; a pause ends any run; and anything that is not a single-character edit at a
+   single point (a paste, a toolbar command, a list conversion, a merge) is structural
+   and always its own step. */
+function noteHistBreak(prev,next,now,at){
+  if(now-at>NOTE_UNDO_GAP) return true;
+  if(next.length===prev.length+1){
+    let i=0; while(i<prev.length&&prev[i]===next[i]) i++;
+    if(prev.slice(i)!==next.slice(i+1)) return true;   /* not a point insert */
+    return /\s/.test(next[i]);                         /* the word is finished */
+  }
+  if(next.length===prev.length-1){
+    let i=0; while(i<next.length&&prev[i]===next[i]) i++;
+    return next.slice(i)!==prev.slice(i+1);            /* not a point delete */
+  }
+  return true;
+}
+/* Every path that writes a body calls this: the input handler and the toolbar. */
+function noteHistTrack(ed,n){
+  let h=ui.noteHist;
+  if(!h||h.id!==n.id) h=noteHistReset(n);
+  const body=n.body||'', c=ed?noteCaretGet(ed):null;
+  if(body===h.cur.body){ if(c){ h.cur.s=c.s; h.cur.e=c.e } return }
+  const now=Date.now();
+  if(noteHistBreak(h.cur.body,body,now,h.at)){
+    h.past.push(h.cur);
+    if(h.past.length>NOTE_UNDO_MAX) h.past.shift();
+  }
+  h.future.length=0;              /* a new edit is always the newest word */
+  h.cur={body:body,s:c?c.s:0,e:c?c.e:0};
+  h.at=now;
+}
+/* One step back, or forward. Repaints the editor in place and restores the caret; no
+   render(), so nothing outside the page moves and no other caret is disturbed. */
+function noteUndo(ed,redo){
+  const n=state.notes.find(x=>x.id===state.settings.noteSel);
+  const h=ui.noteHist;
+  if(!n||!ed||!h||h.id!==n.id) return false;
+  /* THE SYNC RULE. The history describes one note at one body. If the body under it
+     is no longer the one the history last saw, something wrote it without passing
+     through the tracker, and a merge landing a foreign body is exactly that. Undo
+     then refuses and re-seeds on what actually arrived, so a step back can never
+     resurrect this device's pre-merge text over text that just came from the other
+     device. Losing a few steps of reach is the cheap side of that trade. */
+  if(h.cur.body!==(n.body||'')){ noteHistReset(n); return false }
+  const from=redo?h.future:h.past, to=redo?h.past:h.future;
+  if(!from.length) return false;
+  to.push(h.cur);
+  const snap=from.pop();
+  h.cur=snap; h.at=0;             /* the next keystroke starts its own step */
+  n.body=snap.body;
+  ed.innerHTML=noteBodyHtml(snap.body);
+  noteCaretSet(ed,snap.s,snap.e);
+  notePatchRow(n);
+  save(); noteToolState();
+  return true;
+}
+/* the in-place patches that keep the list row and the meta line honest while someone
+   is typing. One copy, read by the input handler and by undo alike. */
+function notePatchRow(n){
+  const sn=$('.noterow.on .nsub'); if(sn) sn.textContent=notePrev(n);
+  if(!(n.title||'').trim()){ const row=$('.noterow.on .ntx'); if(row) row.textContent=noteLabel(n) }
+  const m=$('#noteMeta'); if(m) m.textContent=noteMetaText(n,Date.now());
+}
+
+/* ---- "- " opens a list, a second space on an empty bullet closes it again ----
+   Which list? The app's OWN dash list, ul.dash, the very shape the dash toolbar
+   button already writes. The mark the user typed is the mark they get: converting a
+   typed dash into a round bullet swaps their punctuation for someone else's, and the
+   way back out then reads as a substitution rather than an undo. No new list type,
+   no new stored shape, and the sanitizer already carries ul.dash through untouched.
+   Both rules are plain DOM work on the sanctioned subset, never execCommand, so they
+   behave the same whatever editing engine is underneath. */
+function noteDashOpen(ed){
+  const cr=noteCaretGet(ed);
+  if(!cr||cr.s!==cr.e||cr.s<1) return false;
+  if(noteAncestor(ed,el=>el.tagName==='UL'||el.tagName==='OL')) return false;
+  const flat=noteAsPlain(ed), ls=flat.lastIndexOf('\n',cr.s-1)+1;
+  if(flat.slice(ls,cr.s)!=='-') return false;      /* only a lone dash opening a line */
+  noteCaretSet(ed,cr.s-1,cr.s);
+  const sel=window.getSelection();
+  if(!sel||!sel.rangeCount) return false;
+  sel.getRangeAt(0).deleteContents();              /* the dash itself goes */
+  let line=sel.getRangeAt(0).startContainer;
+  if(line===ed) return false;
+  while(line&&line.parentNode!==ed) line=line.parentNode;
+  if(!line) return false;
+  const ul=document.createElement('ul'); ul.className='dash';
+  const li=document.createElement('li'); ul.appendChild(li);
+  /* whatever else stood on that line becomes the item's text */
+  if(line.nodeType===1){ while(line.firstChild) li.appendChild(line.firstChild) }
+  else li.appendChild(line.cloneNode(true));
+  /* deleting the dash can leave the empty text node behind rather than removing it,
+     so emptiness is judged by content, and an empty item needs its break to stand up */
+  [...li.childNodes].forEach(x=>{ if(x.nodeType===3&&!x.data) x.remove() });
+  if(!li.firstChild) li.appendChild(document.createElement('br'));
+  ed.replaceChild(ul,line);
+  noteCaretInto(li);
+  return true;
+}
+function noteDashClose(ed){
+  const li=noteAncestor(ed,el=>el.tagName==='LI');
+  if(!li) return false;
+  /* the bullet is empty and one space has already landed in it: this is the second */
+  if(!/^[ \u00a0]$/.test(li.textContent||'')) return false;
+  const ul=li.parentNode;
+  if(!ul||(ul.tagName!=='UL'&&ul.tagName!=='OL')||!ul.parentNode) return false;
+  const kids=[...ul.children], below=kids.slice(kids.indexOf(li)+1);
+  const line=document.createElement('div');
+  line.appendChild(document.createTextNode('- '));   /* the literal dash, as typed */
+  ul.parentNode.insertBefore(line,ul.nextSibling);
+  if(below.length){                                  /* items under it keep their list */
+    const rest=document.createElement(ul.tagName.toLowerCase());
+    if(ul.className) rest.className=ul.className;
+    below.forEach(x=>rest.appendChild(x));
+    line.parentNode.insertBefore(rest,line.nextSibling);
+  }
+  li.remove();
+  if(!ul.children.length) ul.remove();
+  noteCaretInto(line,2);
+  return true;
+}
+/* caret to a text offset inside one element, without going through the whole-body
+   numbering: these two know exactly which node they just built */
+function noteCaretInto(el,off){
+  try{
+    const sel=window.getSelection(); if(!sel) return;
+    const t=el.firstChild, r=document.createRange();
+    if(t&&t.nodeType===3) r.setStart(t,Math.min(off||0,t.length)); else r.setStart(el,0);
+    r.collapse(true); sel.removeAllRanges(); sel.addRange(r);
+  }catch(err){}
+}
 function noteToolState(){
   const bar=$('#noteTools'), ed=$('#noteBody');
   if(!bar||!ed) return;
@@ -2921,6 +3081,12 @@ function renderNotes(){
   const ss=keep&&keep!=='noteBody'?ae.selectionStart:0, se=keep&&keep!=='noteBody'?ae.selectionEnd:0;
   const cr=keep==='noteBody'?noteCaretGet(ae):null;
   const cur=list.find(n=>n.id===sel);
+  /* the one rule that keeps undo inside its own note AND out of the merge's way.
+     Every render passes here: a different note, or the same note carrying a body the
+     history never saw (a sync merge, a bin restore, an import), starts a fresh
+     history rather than offering steps back into text that is no longer on screen. */
+  { const h=ui.noteHist;
+    if(!h||h.id!==(cur?cur.id:null)||h.cur.body!==((cur&&cur.body)||'')) noteHistReset(cur); }
   let h='<div class="notelist">'+
     '<input id="noteSearch" type="search" placeholder="Search notes" aria-label="Search notes" autocomplete="off" value="'+esc(ui.noteQ||'')+'">'+
     '<button class="nbtn solid" data-action="note-new">+ New note</button>'+
@@ -3042,6 +3208,29 @@ function closeAdd(commit){
   if(commit&&txt&&txt.trim()) addFromText(txt,ui.adding);
   if(inp) inp.blur();          /* lets the phone keyboard drop away */
   ui.adding=null; ui.addText='';
+}
+
+/* Enter commits and leaves a fresh empty field open in the SAME zone or tab, so a
+   list can be typed straight down without reaching for the mouse. An empty commit is
+   the way out: Enter on nothing closes the field instead of opening another, and
+   Escape still closes without committing.
+
+   Deliberately NOT closeAdd() on the chaining path. closeAdd blurs the input, and a
+   blur is what drops the on-screen keyboard; blurring and then focusing the next
+   field would make the keyboard fall and rise between every task. Here the old input
+   is simply replaced by the render and render() moves focus to its successor inside
+   the same turn, so the phone sees focus travel between two fields and never leaves
+   the text-entry state. Nothing here touches the click handler's deferred
+   save-and-render, which is where the original mobile trap lived: this path is
+   keyboard-only, calls save() and render() directly, and the half-typed text still
+   lives in ui.addText, so a keyboard-driven resize cannot eat it either. */
+function addChain(k){
+  const inp=$('.addin[data-k="'+k+'"]');
+  const txt=(inp?inp.value:ui.addText)||'';
+  if(!txt.trim()){ closeAdd(false); save(); render(); return }
+  addFromText(txt,k);
+  ui.adding=k; ui.addText='';   /* same destination, empty, still open and focused */
+  save(); render();
 }
 
 document.addEventListener('click',e=>{
@@ -3244,8 +3433,8 @@ document.addEventListener('click',e=>{
       if(!n||!ed) return;
       noteCmd(el.dataset.cmd,ed);
       n.body=noteSerialize(ed);
-      const sn=$('.noterow.on .nsub'); if(sn) sn.textContent=notePrev(n);
-      const m=$('#noteMeta'); if(m) m.textContent=noteMetaText(n,Date.now());
+      noteHistTrack(ed,n);   /* a command is structural, so always its own undo step */
+      notePatchRow(n);
       save(); noteToolState();
       return;
     }
@@ -3453,10 +3642,34 @@ document.addEventListener('change',e=>{
 /* ---------- keyboard ---------- */
 document.addEventListener('keydown',e=>{
   const el=e.target, d=el.dataset||{};
+
+  /* ---- the Notes editor's own keys, before anything else claims them ---- */
+  if(el.id==='noteBody'){
+    /* undo and redo are ours, not the browser's: preventDefault, or Chrome would
+       ALSO run its native step and the two stacks would fight. Ctrl+Z / Ctrl+Y on
+       Windows and Linux, Cmd+Z / Cmd+Shift+Z on a Mac, Ctrl+Shift+Z for the many
+       people who type it out of habit. */
+    if((e.ctrlKey||e.metaKey)&&!e.altKey&&/^[zyZY]$/.test(e.key)){
+      e.preventDefault();
+      noteUndo(el,e.key==='y'||e.key==='Y'||e.shiftKey);
+      return;
+    }
+    /* the two dash rules. Both rewrite the sanctioned shapes by hand and then raise
+       ONE input event, so the body, the save and the undo history all see the whole
+       conversion as a single edit rather than as a stray space. */
+    if(e.key===' '&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
+      if(noteDashClose(el)||noteDashOpen(el)){
+        e.preventDefault();
+        el.dispatchEvent(new Event('input',{bubbles:true}));
+        return;
+      }
+    }
+  }
+
   if(e.key==='Enter'&&!e.shiftKey){
     if(el.id==='qi'&&el.value.trim()){ e.preventDefault(); $('#qb').click(); return }
-    if(d.enter==='add'){ e.preventDefault();
-      const b=document.querySelector('[data-action="add-commit"][data-k="'+d.k+'"]'); if(b)b.click(); return }
+    /* commit and reopen, rather than commit and close: see addChain */
+    if(d.enter==='add'){ e.preventDefault(); addChain(d.k); return }
     if(d.enter==='sub'){ e.preventDefault();
       const b=document.querySelector('[data-action="sadd"][data-id="'+d.tid+'"]'); if(b)b.click(); return }
     if(d.enter==='caladd'){ e.preventDefault();
@@ -3863,14 +4076,12 @@ document.addEventListener('input',e=>{
     if(e.target.id==='noteTitle'){
       n.title=e.target.value;
       const row=$('.noterow.on .ntx'); if(row) row.textContent=noteLabel(n);
+      const m=$('#noteMeta'); if(m) m.textContent=noteMetaText(n,Date.now());
     }else{
       n.body=noteSerialize(e.target);
-      const sn=$('.noterow.on .nsub'); if(sn) sn.textContent=notePrev(n);
-      if(!(n.title||'').trim()){   /* untitled: the label is the first line, keep it live */
-        const row=$('.noterow.on .ntx'); if(row) row.textContent=noteLabel(n);
-      }
+      noteHistTrack(e.target,n);   /* one snapshot per word, see noteHistBreak */
+      notePatchRow(n);
     }
-    const m=$('#noteMeta'); if(m) m.textContent=noteMetaText(n,Date.now());
     save();
   }
   /* the search box filters the list in place: no save (nothing persists), and no
