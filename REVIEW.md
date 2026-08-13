@@ -678,9 +678,48 @@ So the editor loses 87px at 1280, which is what the doubled pad costs, and **gai
 
 Expected count moved 1308 to 1315. Both suites green: `node tests/test.js` at 1315, and the viewport pass **clean across all four profiles under both themes**, with no horizontal overflow and no control under 44px on the three coarse profiles.
 
+## 17. Notes drops the tray, and the sticky takes the top right (new, 2026-08-13)
+
+Two presentation changes to the Notes view, in the same sitting as Section 16 and partly undoing it. Behaviour, sync and the merge axes are untouched by both.
+
+### 17.1 The carry-over tray is not drawn in Notes
+
+`renderTray` returns early on `state.settings.view==='notes'` and empties the slot. **Skipped, not hidden**, for two reasons. The first is that the slot contract already handles the rest: `#tray:not(:empty)` collapses an emptied slot to nothing, which is exactly what `renderNav` relies on for `#boardnav` and `#strip` off the board, so no display rule and no second mechanism is needed. The second is what a hidden tray leaves behind: three or four triage controls per carried item, built, in the DOM, in a view that must not offer triage. Skipping costs nothing either way, since `renderTray` runs on every render regardless.
+
+Nothing about the roll changed. `rollover()` still runs on its own schedule, carry still fills at the day boundary (and the Monday 00:00 local one the weekly list hangs on), `state.carry` is never read for the decision and never written by it, and every carried item is on screen again the moment the board is. The viewport pass fills carry while Notes is open and asserts, under both themes, that nothing is drawn, that the pane does not move a pixel, that no `carry-*` control exists in the DOM, and that `carry` and `settings.lastRoll` come back byte-identical. Board, Free Floating and the calendar all still draw it; the calendar is asserted so a later tidy does not generalise the opt-out beyond the view that asked for it.
+
+What moved up in Notes is everything: with carry non-empty the whole content column starts one tray plus its 12px margin higher, and the pane keeps that height rather than the tray taking it.
+
+### 17.2 The sticky strip goes back to the top right
+
+Section 16 moved the Notes strip from the head of `#main`'s column to its foot, which left the placement uniformly bottom-right across Board, Free Floating and Notes. The top right was asked for, so the fix went into that same rule: `order:-1` came back to `#sticky[data-pos="top"]` inside the 901px band, rather than a second Notes-only selector going on top of a foot placement and the two arguing by source order. `data-pos="foot"` is gone from the sheet, and a test asserts its absence.
+
+**Measured after the move**, Notes, no carry:
+
+| profile | strip | pane | short-note page | pane scrolls | dead band left of the strip |
+|---|---|---|---|---|---|
+| desktop-1280 | 14 to 235, right edge 1264 | 245 to 800, 556 tall | 411 | no | 476 x 221 |
+| desktop-1440 | 14 to 235, right edge 1424 | 245 to 900, 656 tall | 411 | no | 636 x 221 |
+| tablet-1024 | 14 to 143, right edge 1008 | 153 to 768, 616 tall | 439 | no | 220 x 129 |
+| tablet-820 | end of the flow, 1025 to 1230 | 126 to 1015 | 644 | no | none, single column |
+| phone-390 | end of the flow, 929 to 1133 | 136 to 919 | 538 | no | none, single column |
+
+The pane is 6px **taller** than it was at the foot, which is the strip's bottom margin going from 16px to 10px; the height cost of the strip itself is identical at either end of the same column flex, which is why the 184px pad at 1200px and up survives the move unchanged. The dead band is the honest cost and it is the one Section 16 bought: a right-aligned strip in flow takes a row of its own, and the canvas beside it draws nothing.
+
+**The clearance, which is the whole reason this is in flow.** The editor's own controls live in the corner the sticky was asked to occupy. At 1280 the page runs to x=1258 inside a content area ending at 1264, with Unpin at 1113-1166, Delete at 1172-1227 and the toolbar spanning 641-1227, all in the top right. So an overlay covers all three, and reserving the width instead leaves the page 168px at 1280 and nothing at all at 1024, where the whole pane is 398px. In flow the overlap cannot be built, and the pass measures it anyway, by name, against `.ntools`, Unpin and Delete at every profile under both themes: after the move the toolbar sits at y=332 and the meta row at y=301 against a strip ending at 235.
+
+**Where there is not enough room**, under 900px, the strip stays at the END of the flow. A single column has no right hand side to sit at, and 205px of scratch pad hoisted above the list would bury the list and stand in the way of the on-screen keyboard. That is why `order:-1` lives inside the 901px band and not on the base rule, and a test asserts the narrow block never names it.
+
+### 17.3 What the audits gained
+
+- `tests/test.js`: a new section for the tray as a board panel (drawn on board, on Free Floating and on the calendar; slot empty in Notes; no `carry-*` control in the DOM; carry and `lastRoll` unchanged across the round trip; both items back to triage on return), the Notes placement assertions flipped to `top` with the `order:-1` now required rather than forbidden, the absence of any `data-pos="foot"` rule, and the order pinned to the wide band with the narrow block asserted free of it. Expected count 1315 to 1326.
+- `tests/viewports.js`: a `bothThemes` helper that takes any measurement twice, once per theme, since a theme is custom property values and must not move geometry; the Notes sticky check rewritten to top-right-in-flow with an explicit non-intersection test against the toolbar, Unpin and Delete by name; the narrow branch asserting the end-of-flow fallback and `order: 0`; and `notes-band` rewritten into the three-part flow above, with the tray's presence, position and non-intersection with the sticky moved to the two views that still draw it.
+
+Both suites green: `node tests/test.js` at 1326, and the viewport pass clean across all four profiles under both themes.
+
 ## Housekeeping notes
 
-- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, the one-rail-surface commit to 1289, the white-means-active commit to 1308, the Notes-band commit to 1315, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
+- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, the one-rail-surface commit to 1289, the white-means-active commit to 1308, the Notes-band commit to 1315, the Notes-tray-and-top-right commit to 1326, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
 - `IOS-CHECKLIST.md` predates the theme and does not yet exercise it on a device; the two items worth a minute when someone next holds a phone: the status-bar/browser chrome colour following a switch (the meta), and Silkscreen's legibility at the smallest labels on a real OLED.
 - `SETUP.md`/`START-HERE.md` predate sync, the tray changes, the bin, and the Notes view, and have not been re-verified; SETUP.md's one line naming the focus panel was updated to True north during the rename, the rest untouched. The in-app Help also does not mention Notes yet; adding a line there is copy work awaiting the owner's wording.
 - `IOS-CHECKLIST.md` (retitled inside to "Manual device checklist") is the manual companion to Section 7, rewritten 2026-08-10 for the app as it stands: thirteen risk-ordered items with concrete steps and pass/fail descriptions, now covering the rich-notes update-pickup stakes (a stale build shows markup as text), rich-text sync between two physical devices, the Notes editor under Safari's keyboard/autocorrect/caret, the 44px overlays under a real finger on iPhone AND an Android tablet, True north's uncollapsible-with-content rule on a small screen, and the touch tab-reorder gap verified inert. Budget stated in the file: one ~45 minute sitting plus a second-device item and an overnight item.

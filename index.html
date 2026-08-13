@@ -376,7 +376,9 @@ select option{background:var(--pearl);color:var(--txt)}
 #qb{padding:11px 18px;border-radius:var(--r2);background:var(--grad);color:var(--onpri);font-weight:700;font-size:14px;letter-spacing:-.01em;transition:.15s;box-shadow:var(--shadow)}
 #qb:active{transform:scale(.97)}
 
-/* carry tray */
+/* carry tray. The slot is emptied in Notes, never hidden while full (renderTray says
+   why), so this is the whole of what keeps its band from staying open there: no
+   children, no margin, no height. Same contract as #boardnav and #strip. */
 #tray:not(:empty){margin-bottom:12px}
 /* The brightest surface on the board, so it reads as the one panel asking to be dealt
    with first: a pearl sheen over the same cloud blue the day columns use, a pearl rim
@@ -681,19 +683,30 @@ select option{background:var(--pearl);color:var(--txt)}
      right; #board reserves the sticky's width at the END of its sideways
      scroll, so at max scroll the last column clears the corner, and any other
      column scrolls clear the way content already moves under a margin note.
-   - Notes (wide): a right-aligned strip BELOW the pane, in flow, at the FOOT of
-     #main's column. It used to sit above the pane on order:-1, and that was the
-     whole of the dead band over the note list: a 464px strip in a 940px row left
-     476x138 of bare canvas above the list, and the list and the editor started
-     149px down instead of at the top of the content area. #main does not scroll
-     on a wide layout, so a foot strip is on screen exactly as much as a top one
-     was, and it costs the same height; what it stops costing is a band the eye
-     reads as empty. An OVERLAY is still rejected here, for the reason it always
-     was: the page reaches the right edge, so a floating panel covers its toolbar,
-     and reserving a side margin instead leaves the page ~140px wide at 1024.
+   - Notes (wide): a right-aligned strip at the TOP of #main's column, in flow, on
+     order:-1, with the note list and the editor below it. It sat at the FOOT from
+     2026-08-13 until this pass, and the foot rule is where this was fixed: the top
+     right was asked for, so the order:-1 came back to the one rule that had lost
+     it, rather than a second Notes-only selector going on top of a foot placement.
+     The cost is stated plainly rather than discovered later. The strip takes a row
+     of its own, so the canvas to its left draws nothing: 476x221 at 1280, 220x129
+     at 1024. That band is exactly what the foot placement bought and what the top
+     placement spends again. The HEIGHT is the same either way, above the pane or
+     below it, because it is the same block of the same column flex, so the pane
+     loses nothing to the move.
+     An OVERLAY is still refused, now with this pass's numbers rather than from
+     memory: at 1280 the page runs to x=1258 inside a content area ending at 1264,
+     with Unpin at 1113-1166, Delete at 1172-1227 and the toolbar spanning
+     641-1227. All three live in that corner, so anything floated there covers all
+     three, and reserving the width instead leaves the page 168px wide at 1280 and
+     nothing at all at 1024, where the whole pane is 398px. In flow, an overlap is
+     not a risk to be tuned down: it cannot be built.
    - Under 900px: in flow, full width, at the END of the view, where a floating
-     corner would cover content and fight the on-screen keyboard. Same foot, so
-     the narrow rule and the Notes rule finally agree about where this thing goes.
+     corner would cover content and fight the on-screen keyboard. This is also the
+     answer to "top right" at a width that has no room for one: a single column has
+     no right hand side, and 205px of scratch pad hoisted above the list would bury
+     the list and stand in the way of the keyboard. So order:-1 stays inside the
+     901px band and the narrow layout keeps the pad at the end of the flow.
    The textarea is STATIC markup, never rebuilt by a render, so its caret and
    its native undo survive every foreign render for free, the #qi trick.
    SIZE: the pad's HEIGHT doubles, 92 to 184, in ONE placement and ONE band: the
@@ -708,10 +721,11 @@ select option{background:var(--pearl);color:var(--txt)}
      ordinary boot-tray state, ten hit-test misses, on the widest profile there is.
      This is risk 16 stated as a number rather than as a worry, and nothing between
      92 and 184 buys anything either: 120px clears that control by one pixel.
-   - NOTES IS WALLED AT 1024 BUT NOT AT 1280, and the foot move did not change
-     which. Above the pane or below it, the strip is the same block of the same
-     column flex, so .noteed pays its height either way; the move bought placement,
-     not room, and all it won back was the 11px `#boardnav` was holding. At 1024
+   - NOTES IS WALLED AT 1024 BUT NOT AT 1280, and neither the move to the foot nor
+     the move back to the top changed which. Above the pane or below it, the strip
+     is the same block of the same column flex, so .noteed pays its height either
+     way; a move buys placement, not room. What Notes did win back is the carry
+     tray, which is no longer drawn in this view at all. At 1024
      the doubled pad measured 571px of content into 502px of pane, a scroll on a
      short note. At 1280 the pane pays the 92px and a short note still fits.
    - the narrow flow keeps its 168. Height is uncovered there but it is not free
@@ -735,9 +749,13 @@ select option{background:var(--pearl);color:var(--txt)}
   border-radius:0;padding:0;font-size:12.5px;line-height:1.5;color:var(--txt);outline:none;overflow-y:auto}
 #stickyPad::placeholder{color:var(--mut2)}
 @media (min-width:901px){
-  /* natural order, so it lands after #notes: the FOOT of the column, not the head.
-     No `order` at all is the point; order:-1 was the dead band. */
-  #sticky[data-pos="foot"]{position:static;align-self:flex-end;width:464px;margin:0 0 16px}
+  /* order:-1, deliberately: the strip is the FIRST block of the content column, so
+     it stands at the TOP right of the content area with the list and the editor
+     below it. In flow, never floated, which is what makes covering the editor's
+     own controls impossible rather than merely unlikely. The 10px is the gap down
+     to the pane. This is the rule the 2026-08-13 pass changed; changed back here,
+     rather than overridden from somewhere else. */
+  #sticky[data-pos="top"]{position:static;order:-1;align-self:flex-end;width:464px;margin:0 0 10px}
   /* the corner's clearance at the end of the board's sideways scroll: it tracks
      the corner's own width, or the last column slides back under it */
   #main.stickycorner #board{padding-right:264px}
@@ -760,8 +778,10 @@ select option{background:var(--pearl);color:var(--txt)}
      on THIS profile, at (794,625) in the ordinary boot-tray state, so the wall the
      1024 board put up in Section 13 stands at 1280 too the moment a tray is up.
      Notes has no board under it, so the only question there is the pane, and the
-     pane at 1280 can pay 92px where the 1024 pane cannot. */
-  #sticky[data-pos="foot"] #stickyPad{height:184px}
+     pane at 1280 can pay 92px where the 1024 pane cannot. Unchanged by the move
+     back to the top: the strip costs the pane the same height at either end of
+     the column. */
+  #sticky[data-pos="top"] #stickyPad{height:184px}
 }
 @media (max-width:900px){
   #sticky{position:static;width:auto;margin:10px 0 4px}
@@ -2633,9 +2653,20 @@ function renderQuick(){
   if(cur&&[...d.options].some(o=>o.value===cur)) d.value=cur;
 }
 
-/* ================= render: tray ================= */
+/* ================= render: tray =================
+   NOT DRAWN IN NOTES, and that is a presentation decision only. The roll itself is
+   untouched: rollover() still runs on its own schedule, carry still fills at the
+   Monday 00:00 local boundary like any other day boundary, nothing is dropped,
+   marked or re-dated, and every carried item is on screen again the moment the view
+   goes back to the board. state.carry is never read for the decision, only the view.
+   SKIPPED, not hidden. The slot is emptied, which is exactly what renderNav already
+   does to #boardnav and #strip outside the board, so the `:not(:empty)` spacing
+   contract collapses the band to nothing with no second mechanism. Hiding a drawn
+   tray instead would keep three or four triage controls per carried item built and
+   in the DOM in a view that must not offer them, and would need its own display
+   rule on top of the contract to stop the slot holding a band open. */
 function renderTray(){
-  if(!state.carry.length){$('#tray').innerHTML='';return}
+  if(state.settings.view==='notes'||!state.carry.length){$('#tray').innerHTML='';return}
   $('#tray').innerHTML='<div class="tray"><div class="trayhead">'+
     '<b>Carry-over</b><span class="why">'+state.carry.length+' unfinished from before. Triage, or move them all.</span>'+
     '<span class="acts"><button class="tbtn" data-action="carry-all" data-to="today">All → Today</button>'+
@@ -3688,9 +3719,10 @@ function renderSticky(){
   const v=state.settings.view;
   const show=v==='board'||v==='notes';   /* board covers Free Floating: same view */
   st.style.display=show?'':'none';
-  /* 'foot', not 'top': in Notes the strip sits BELOW the pane, so the note list and
-     the editor start at the top of the content area. The name is the placement. */
-  st.dataset.pos=v==='notes'?'foot':'corner';
+  /* the name is the placement: in Notes the strip is the first block of the content
+     column, so it stands at the top right and the pane follows it. Board and Free
+     Floating keep the bottom right corner. */
+  st.dataset.pos=v==='notes'?'top':'corner';
   $('#main').classList.toggle('stickycorner',show&&v!=='notes');
   const pad=$('#stickyPad');
   if(pad&&document.activeElement!==pad){

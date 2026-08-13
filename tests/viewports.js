@@ -446,6 +446,29 @@ async function runProfile(browser, base, prof) {
     await sleep(80);
     return first;
   };
+  /* the same measurement taken under both themes. A theme is a set of custom property
+     values and nothing else, so a placement or a clearance must come out identical
+     under each; measuring it twice is how that claim stays true rather than assumed.
+     The flip touches no storage and no state, and is restored before the flow goes on. */
+  const bothThemes = async fn => {
+    const first = await fn();
+    await page.evaluate(() => {
+      const e = document.documentElement;
+      e.__themeWas = e.getAttribute('data-theme');
+      if (e.__themeWas === 'mono') e.removeAttribute('data-theme');
+      else e.setAttribute('data-theme', 'mono');
+    });
+    await sleep(180);
+    const second = await fn();
+    await page.evaluate(() => {
+      const e = document.documentElement;
+      if (e.__themeWas) e.setAttribute('data-theme', e.__themeWas);
+      else e.removeAttribute('data-theme');
+      delete e.__themeWas;
+    });
+    await sleep(100);
+    return [first, second];
+  };
   const flow = async (name, fn) => {
     try { await fn(); }
     catch (e) {
@@ -2523,24 +2546,56 @@ async function runProfile(browser, base, prof) {
     check('sticky: present on Free Floating', f.display !== 'none' && f.visible, JSON.stringify(f));
     await audit('sticky-float');
     await act({ css: '.navbtn[data-action="floattoggle"]' });
-    /* Notes: top right on wide, in flow on narrow; never over the page */
+    /* Notes: TOP right on wide, at the end of the flow on narrow; never over the page */
     await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
     const n = await measure();
     check('sticky: present in Notes', n.display !== 'none' && n.visible, JSON.stringify(n));
-    if (!narrow) {
-      /* in flow at the BOTTOM right, below the pane. It used to sit above it on
-         order:-1, and that strip WAS the dead band over the note list: 464px of
-         panel in a 940px row, with the list and the editor starting 149px down.
-         An overlay is still refused here for the reason it always was: the page
-         reaches the right edge, so a floating panel covers its toolbar. */
-      const foot = await A(() => {
-        const s = document.getElementById('sticky').getBoundingClientRect();
-        const nt = document.getElementById('notes').getBoundingClientRect();
-        return { pos: getComputedStyle(document.getElementById('sticky')).position,
-          gap: Math.round(s.top - nt.bottom), right: Math.round(window.innerWidth - s.right) };
+    /* THE PLACEMENT AND THE CLEARANCE, measured under both themes.
+       The editor's own controls live in the top right corner of the page: the toolbar
+       spans the page's full width, and Unpin and Delete are the last two items of the
+       meta row above it. That corner is exactly where a floated sticky would land, so
+       the guarantee has to be measured against those three elements by name, not
+       inferred from the page's outer box. In flow the overlap cannot be built at all,
+       which is the reason the placement is in flow. */
+    const notesGeo = () => A(() => {
+      const st = document.getElementById('sticky');
+      const s = st.getBoundingClientRect(), cs = getComputedStyle(st);
+      const nt = document.getElementById('notes').getBoundingClientRect();
+      const main = document.getElementById('main');
+      const top = main.getBoundingClientRect().top + parseFloat(getComputedStyle(main).paddingTop);
+      const nact = t => [...document.querySelectorAll('.nact')].find(e => t.test(e.textContent.trim()));
+      const named = [['toolbar', document.querySelector('.ntools')],
+                     ['unpin', nact(/^(Unpin|Pin)$/)], ['delete', nact(/^Delete$/)]];
+      const hits = named.map(([nm, el]) => {
+        if (!el) return { nm, missing: true };
+        const r = el.getBoundingClientRect();
+        return { nm, over: s.left < r.right && s.right > r.left && s.top < r.bottom && s.bottom > r.top,
+                 gap: Math.round(r.top - s.bottom) };
       });
-      check('sticky: sits at the foot in Notes, in flow, below the pane rather than above it',
-        foot.pos === 'static' && foot.gap >= 0 && foot.right < 60, JSON.stringify(foot));
+      return { pos: cs.position, order: cs.order, hits,
+        theme: document.documentElement.getAttribute('data-theme') || 'sky',
+        t: Math.round(s.top), b: Math.round(s.bottom), right: Math.round(window.innerWidth - s.right),
+        contentTop: Math.round(top), notesTop: Math.round(nt.top), notesBottom: Math.round(nt.bottom) };
+    });
+    for (const g of await bothThemes(notesGeo)) {
+      const th = ' [' + g.theme + ']';
+      if (!narrow) {
+        check('sticky: stands at the top right of the content area in Notes' + th,
+          g.pos === 'static' && g.order === '-1' && Math.abs(g.t - g.contentTop) <= 1 && g.right < 60,
+          JSON.stringify(g));
+        check('sticky: and the note pane follows it, with nothing above the strip' + th,
+          g.notesTop >= g.b, JSON.stringify({ strip: g.b, notes: g.notesTop }));
+      } else {
+        /* the answer where there is no right hand side to sit at: the pad stays at
+           the end of the flow rather than being hoisted above the list, where it
+           would bury the list and stand in the way of the keyboard. */
+        check('sticky: at a single-column width it stays at the end of the flow' + th,
+          g.pos === 'static' && g.order === '0' && g.t >= g.notesBottom, JSON.stringify(g));
+      }
+      check('sticky: never covers the editor toolbar, Unpin or Delete' + th,
+        g.hits.every(h => !h.missing && !h.over), JSON.stringify(g.hits));
+    }
+    if (!narrow) {
       /* the page's own rect is NOT the question: .noteed clips it, so a page taller
          than its pane reports a box running past the pane's bottom edge and past
          anything below it. What can actually be covered is the page's VISIBLE
@@ -2555,11 +2610,11 @@ async function runProfile(browser, base, prof) {
         if (bot <= top || right <= left) return false;
         return s.left < right && s.right > left && s.top < bot && s.bottom > top;
       });
-      check('sticky: and never covers the page or its toolbar', !overlap);
+      check('sticky: and never covers the page itself', !overlap);
       /* height in Notes comes out of .noteed whether the strip sits above the pane
-         or below it: same block, same column flex. The foot move bought placement,
-         not room, which is why the pad doubles at 1200 and up only. The guard is
-         unchanged: a short note must still fit its pane with no scroll. */
+         or below it: same block, same column flex. Neither move bought room, which
+         is why the pad doubles at 1200 and up only. The guard is unchanged: a short
+         note must still fit its pane with no scroll. */
       const pane = await A(() => {
         const ed = document.querySelector('.noteed');
         if (!ed) return null;
@@ -2585,12 +2640,15 @@ async function runProfile(browser, base, prof) {
     await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
   });
 
-  /* ---- N2b. the band above the Notes view: dead when empty, the tray's when not ----
-     The band was real and it was never the tray's slot: `#tray:not(:empty)` already
-     collapsed correctly. It was the sticky strip on order:-1 (138px) plus two slots
-     that carried spacing while empty (`#boardnav` 11px, `#strip` 9px on narrow). The
-     rule this pins is the one the board columns already obey: with nothing to show
-     above it, the content starts at the top of the content area. */
+  /* ---- N2b. the top of the Notes view, and the tray that is not drawn there ----
+     Two things are pinned here. First the top of the column: the first block starts
+     at the top of the content area, with no emptied slot holding a band open above
+     it (`#boardnav` 11px and `#strip` 9px on narrow were the two that used to). On a
+     wide layout that first block is the sticky strip, which IS the top right
+     placement; on narrow the sticky is at the end of the flow, so it is the list.
+     Second the tray: filling state.carry while Notes is open must draw nothing, move
+     nothing and change nothing in state, and every carried item must be there to
+     triage the moment the board is back. */
   await flow('notes-band', async () => {
     await act({ css: '.navbtn[data-action="view"][data-v="notes"]' });
     const geo = () => A(() => {
@@ -2603,51 +2661,87 @@ async function runProfile(browser, base, prof) {
       const tr = document.getElementById('tray');
       return { top: Math.round(top), notes: r('#notes'), list: r('.notelist'), ed: r('.noteed'),
                sticky: r('#sticky'), tray: tr.firstElementChild ? r('#tray .tray') : null,
-               body: r('#noteBody') };
+               body: r('#noteBody'), board: r('#board'), quick: r('#quickadd'),
+               theme: document.documentElement.getAttribute('data-theme') || 'sky' };
     });
-    /* (a) no tray: the list and the editor start at the top of the content area */
+    /* (a) the top of the column, under both themes since a theme must not move it */
     const bare = await geo();
-    check('notes: with no tray the note list starts at the top of the content area',
-      bare.list && Math.abs(bare.list.t - bare.top) <= 1, JSON.stringify(bare));
-    check('notes: and the editor is top-aligned with it',
-      bare.ed && Math.abs(bare.ed.t - bare.list.t) <= 1 || (narrow && bare.ed.t > bare.list.t),
-      JSON.stringify({ list: bare.list && bare.list.t, ed: bare.ed && bare.ed.t }));
-    check('notes: no band is held open above the pane',
-      bare.notes && Math.abs(bare.notes.t - bare.top) <= 1, JSON.stringify(bare.notes));
+    for (const g of await bothThemes(geo)) {
+      const th = ' [' + g.theme + ']';
+      const first = narrow ? g.list : g.sticky;
+      check('notes: the first block of the view starts at the top of the content area' + th,
+        first && Math.abs(first.t - g.top) <= 1, JSON.stringify({ first, top: g.top }));
+      if (!narrow) {
+        check('notes: the strip is that block, right aligned, and the list follows it' + th,
+          g.sticky && g.list && g.list.t >= g.sticky.b && g.sticky.r >= g.list.r,
+          JSON.stringify({ sticky: g.sticky, list: g.list }));
+        check('notes: the editor is top-aligned with the list' + th,
+          g.ed && Math.abs(g.ed.t - g.list.t) <= 1, JSON.stringify({ list: g.list.t, ed: g.ed.t }));
+        check('notes: no emptied slot holds a band between the strip and the pane' + th,
+          g.notes && g.notes.t - g.sticky.b <= 12, JSON.stringify({ strip: g.sticky.b, notes: g.notes.t }));
+      } else {
+        check('notes: the editor follows the list in the single column' + th,
+          g.ed && g.ed.t > g.list.t, JSON.stringify({ list: g.list.t, ed: g.ed.t }));
+        check('notes: no band is held open above the pane' + th,
+          g.notes && Math.abs(g.notes.t - g.top) <= 1, JSON.stringify(g.notes));
+      }
+    }
     await audit('notes-no-tray');
-    /* (b) a tray arrives. Written straight into state because this is a geometry
-       check, not a triage one: the triage flow above already drives the real path. */
-    await A(() => {
+    /* (b) a tray fills WHILE Notes is open. Written straight into state because this
+       is a presentation check, not a triage one: the triage flow above already drives
+       the real path. Nothing may be drawn, nothing may move, nothing may change. */
+    const carryBefore = await A(() => {
       window.A.state.carry = [{ id: 'bandA', title: 'Email the landlord', done: false,
-                                subtasks: [], up: 1, from: 'Prio 0 · Mon' },
+                                subtasks: [], up: 1, pos: 1, from: 'Prio 0 · Mon' },
                               { id: 'bandB', title: 'Book the dentist', done: false,
-                                subtasks: [], up: 1, from: 'Prio 0 · Mon' }];
+                                subtasks: [], up: 1, pos: 1, from: 'Prio 0 · Mon' }];
       window.A.render();
+      return JSON.stringify(window.A.state.carry) + '|' + window.A.state.settings.lastRoll;
     });
     await sleep(220);
-    const withTray = await geo();
-    check('notes: the tray takes the band, starting where the pane used to',
-      withTray.tray && Math.abs(withTray.tray.t - bare.top) <= 4, JSON.stringify(withTray.tray));
-    check('notes: and the pane starts below it, still top-aligned',
-      withTray.notes && withTray.notes.t >= withTray.tray.b, JSON.stringify(withTray.notes));
-    /* the requirement the tray and the sticky have to each other, at EVERY width.
-       They are kept apart on the vertical axis, not by reserving width: the tray is
-       the first block of the content area and the sticky is the last, in every view
-       and at every profile, so the tray never gives up a pixel of width to it. */
-    const apart = withTray.tray && withTray.sticky &&
-      !(withTray.tray.l < withTray.sticky.r && withTray.tray.r > withTray.sticky.l &&
-        withTray.tray.t < withTray.sticky.b && withTray.tray.b > withTray.sticky.t);
-    check('notes: the tray never overlaps or runs under the sticky note',
-      apart, JSON.stringify({ tray: withTray.tray, sticky: withTray.sticky }));
-    check('notes: and it keeps the full content width, so nothing was reserved for the sticky',
-      withTray.tray && withTray.notes && Math.abs(withTray.tray.w - withTray.notes.w) <= 1,
-      JSON.stringify({ tray: withTray.tray && withTray.tray.w, notes: withTray.notes && withTray.notes.w }));
-    /* the editor has to stay writable while the tray is up. 240px is #noteBody's own
-       floor on wide; the narrow rule gives it 40vh, so measure the element itself. */
-    check('notes: the editor is still writable with the tray up',
-      withTray.body && withTray.body.h >= (narrow ? 0.3 * prof.height : 200),
-      JSON.stringify(withTray.body));
-    await audit('notes-tray');
+    for (const g of await bothThemes(geo)) {
+      const th = ' [' + g.theme + ']';
+      check('notes: a filled carry tray is not drawn in Notes at all' + th, !g.tray, JSON.stringify(g.tray));
+      check('notes: and the view does not move a pixel for it' + th,
+        g.notes && bare.notes && g.notes.t === bare.notes.t && g.notes.h === bare.notes.h,
+        JSON.stringify({ was: bare.notes, now: g.notes }));
+    }
+    const left = await A(() => document.querySelectorAll('[data-action^="carry-"]').length);
+    check('notes: no triage control is left in the DOM, which a hidden tray would leave',
+      left === 0, 'controls=' + left);
+    const carryAfter = await A(() =>
+      JSON.stringify(window.A.state.carry) + '|' + window.A.state.settings.lastRoll);
+    check('notes: the carried items and the roll stamp are untouched by the view',
+      carryAfter === carryBefore, carryAfter);
+    /* the editor has to stay writable. 240px is #noteBody's own floor on wide; the
+       narrow rule gives it 40vh, so measure the element itself. */
+    const nowGeo = await geo();
+    check('notes: the editor keeps its full height, having given nothing to a tray',
+      nowGeo.body && nowGeo.body.h >= (narrow ? 0.3 * prof.height : 200), JSON.stringify(nowGeo.body));
+    await audit('notes-carry-hidden');
+    /* (c) the same carry, on the two views that DO draw it. The tray is the first
+       block of the content area there and the sticky is the corner or the end of the
+       flow, so they are kept apart on the vertical axis, never by reserving width. */
+    for (const [label, go] of [['board', '.navbtn[data-action="view"][data-v="board"]'],
+                               ['free floating', '.navbtn[data-action="floattoggle"]']]) {
+      await act({ css: go });
+      await sleep(200);
+      for (const g of await bothThemes(geo)) {
+        const th = ' [' + label + ', ' + g.theme + ']';
+        check('tray: still drawn, unchanged, on this view' + th, !!g.tray, JSON.stringify(g.tray));
+        check('tray: it sits under the quick add and above the columns, where triage belongs' + th,
+          g.tray && g.quick && g.board && g.tray.t >= g.quick.b && g.tray.b <= g.board.t,
+          JSON.stringify({ quick: g.quick, tray: g.tray, board: g.board }));
+        const apart = g.tray && g.sticky &&
+          !(g.tray.l < g.sticky.r && g.tray.r > g.sticky.l && g.tray.t < g.sticky.b && g.tray.b > g.sticky.t);
+        check('tray: and never overlaps or runs under the sticky note' + th,
+          apart, JSON.stringify({ tray: g.tray, sticky: g.sticky }));
+      }
+      const items = await A(() => document.querySelectorAll('#tray .trayitem').length);
+      check('tray: both carried items are there to triage [' + label + ']', items === 2, 'items=' + items);
+      await audit('tray-' + label.replace(/\W+/g, '-'));
+    }
+    await act({ css: '.navbtn[data-action="floattoggle"]' });
     await A(() => { window.A.state.carry = []; window.A.render(); });
     await sleep(200);
     await act({ css: '.navbtn[data-action="view"][data-v="board"]' });

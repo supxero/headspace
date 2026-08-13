@@ -3996,12 +3996,18 @@ console.log('— sticky note: one shared scratch block —');
   S().settings.floatMode=true; A.render(); await wait(20);
   ok(q('#sticky').style.display!=='none','still there on Free Floating');
   S().settings.floatMode=false; S().settings.view='notes'; A.render(); await wait(20);
-  /* 'foot', not 'top': the strip sits BELOW the pane so the note list and the editor
-     start at the top of the content area. The old name WAS the dead band. */
-  ok(q('#sticky').style.display!=='none'&&q('#sticky').dataset.pos==='foot',
-    'and in Notes, at its foot placement, below the pane rather than above it');
-  ok(!/order:\s*-1/.test((html.match(/#sticky\[data-pos="foot"\]\{([^}]*)\}/)||[])[1]||''),
-    'and it takes no negative order, which is what used to hoist it over the list');
+  /* 'top', not 'foot': in Notes the strip is the FIRST block of the content column,
+     so it stands at the top right with the list and the editor below it. Board and
+     Free Floating keep the bottom right corner. */
+  ok(q('#sticky').style.display!=='none'&&q('#sticky').dataset.pos==='top',
+    'and in Notes, at its top placement, above the pane rather than below it');
+  ok(/order:\s*-1/.test((html.match(/#sticky\[data-pos="top"\]\{([^}]*)\}/)||[])[1]||''),
+    'which it reaches by taking the order back on the one wide rule');
+  /* the fix belongs at the rule that lost the order, not on top of it: a foot
+     placement still in the sheet with a top rule shadowing it is two placements
+     arguing, and whichever wins depends on source order. */
+  ok(!/data-pos="foot"/.test(html),
+    'and no foot placement is left in the sheet for a later rule to have to override');
   ok(q('#stickyPad').value==='milk, and call the plumber','the same text in every placement: one block, not three');
   S().settings.view='calendar'; A.render(); await wait(20);
   ok(q('#sticky').style.display==='none','the calendar keeps its full width');
@@ -4039,9 +4045,9 @@ console.log('— sticky note: one shared scratch block —');
     /* the only pad-height rule in the 1200 band must be the Notes one. A bare
        `#stickyPad{height:184px}` there would hand the corner the double too. */
     const bigPad=big.split('\n').filter(l=>/#stickyPad\{/.test(l));
-    ok(bigPad.length===1&&/data-pos="foot"/.test(bigPad[0]),
+    ok(bigPad.length===1&&/data-pos="top"/.test(bigPad[0]),
       'and the corner never takes the doubled height, at 1280 no more than at 1024');
-    ok(/#sticky\[data-pos="foot"\] #stickyPad\{height:184px\}/.test(big),
+    ok(/#sticky\[data-pos="top"\] #stickyPad\{height:184px\}/.test(big),
       'the double survives in Notes alone, and only above 1200px where the pane can pay it');
     ok(!/#stickyPad\{[^}]*height/.test(wide),
       'the 901 to 1199 band names no pad height of its own: both wide placements keep the 92px base there');
@@ -4051,9 +4057,16 @@ console.log('— sticky note: one shared scratch block —');
        corner's own width, so it repeats the same expression. */
     const res=(wide.match(/#main\.stickycorner #board\{padding-right:([^}]*)\}/)||[])[1]||'';
     ok(/264px/.test(res),'the base reservation is the base corner width plus its 32px offset');
-    /* Notes keeps the doubled width it already had; this pass did not touch widths */
-    ok(/#sticky\[data-pos="foot"\]\{[^}]*width:464px/.test(wide),
-      'the Notes strip keeps its 464px width, untouched by the height pass');
+    /* Notes keeps the doubled width it already had; no pass has touched widths since */
+    ok(/#sticky\[data-pos="top"\]\{[^}]*width:464px/.test(wide),
+      'the Notes strip keeps its 464px width, untouched by the placement move');
+    /* the order lives in the WIDE band only. Under 900px there is no right hand
+       side to sit at, and 205px of pad hoisted above the list would bury the list
+       and stand in the way of the keyboard, so narrow keeps it at the end. */
+    ok(/#sticky\[data-pos="top"\]\{[^}]*order:-1/.test(wide),
+      'the top placement takes its order inside the 901px band, where a right hand side exists');
+    ok(!/order:\s*-1/.test(narrowB),
+      'and under 900px the pad stays at the end of the flow, clear of the list and the keyboard');
     /* narrow keeps 168. Height is uncovered there but it is not free of scroll:
        a near-empty board at 820 measures exactly 1180 of 1180, so 336 would start
        a scroll that was not there, and it is most of a phone screen with the
@@ -4082,6 +4095,36 @@ console.log('— sticky note: one shared scratch block —');
   pad.value='changed text'; fire(pad,'input'); await wait(10); A.save(); await wait(10);
   ok(A.stateSig(S())!==sig0,'a sticky edit changes the signature, so sync pushes it');
   pad.value=''; fire(pad,'input'); await wait(10); A.save(); await wait(10);
+}
+
+console.log('— the carry tray is a board panel, and Notes does not draw it —');
+{
+  /* A PRESENTATION decision and nothing else. The roll, its Monday 00:00 local
+     timing and state.carry are untouched by the view: the same items sit in carry
+     the whole way round and are back on screen the moment the board is. The slot is
+     EMPTIED rather than hidden, so `#tray:not(:empty)` collapses the band with no
+     second mechanism, and no triage control is left built in a view that does not
+     offer triage. */
+  const carry=()=>JSON.stringify(S().carry);
+  S().carry=[{id:'cv1',title:'Email the landlord',done:false,subtasks:[],up:1,pos:1,from:'Prio 0 · Mon'},
+             {id:'cv2',title:'Book the dentist',done:false,subtasks:[],up:1,pos:1,from:'Prio 0 · Mon'}];
+  S().settings.view='board'; S().settings.floatMode=false; A.render(); await wait(20);
+  ok(/Carry-over/.test(q('#tray').textContent),'the tray draws on the board, exactly as it did');
+  const before=carry(), roll0=S().settings.lastRoll;
+  S().settings.floatMode=true; A.render(); await wait(20);
+  ok(/Carry-over/.test(q('#tray').textContent),'and on Free Floating, which is a mode of the same view');
+  S().settings.floatMode=false; S().settings.view='notes'; A.render(); await wait(20);
+  ok(q('#tray').innerHTML==='','in Notes the slot is emptied, so the tray is not drawn at all');
+  ok(!q('[data-action="carry-all"]')&&!q('[data-action="carry-one"]')&&!q('[data-action="carry-drop"]'),
+    'and no triage control survives in the DOM, which a hidden tray would have left there');
+  ok(carry()===before,'the carried items are untouched: none dropped, marked or re-dated by the view');
+  ok(S().settings.lastRoll===roll0,'and the roll never ran, so its Monday 00:00 local timing is its own');
+  S().settings.view='calendar'; A.render(); await wait(20);
+  ok(/Carry-over/.test(q('#tray').textContent),'the calendar is unchanged by this: only Notes opts out');
+  S().settings.view='board'; A.render(); await wait(20);
+  ok(/Carry-over/.test(q('#tray').textContent)&&S().carry.length===2,
+    'and both items are back on the board, still waiting to be triaged');
+  S().carry=[]; A.render(); await wait(20);
 }
 
 console.log('— sticky note: merge, the honest limit said plainly —');
