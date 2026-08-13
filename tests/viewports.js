@@ -2534,13 +2534,32 @@ async function runProfile(browser, base, prof) {
       });
       check('sticky: the board reserves the corner width plus its offset, which is what closes risk 16',
         reserve.pad >= reserve.corner + reserve.offset, JSON.stringify(reserve));
-      /* the corner's HEIGHT is the axis it never won, at any wide width. Doubled,
-         it was measured over a day column's "+ add" at (794,625) at 1280 in the
-         boot-tray state, which is risk 16's residual arriving for real rather than
-         in theory. 92px is the number that keeps those controls hit-testable. */
+      /* THE VERTICAL TWIN OF THE RESERVATION ABOVE, and the thing that actually
+         closed risk 16. #board reserves the corner's width at the end of the scroll
+         it has, which is sideways; .colbody is the only vertical scroller in a
+         column (#board is overflow-y:hidden, .col is overflow:hidden) and until
+         2026-08-13 it reserved nothing, so a column whose tail landed in the
+         corner's band had no scroll with which to clear it and the "+ add" row sat
+         under the pad. That, not the corner's size, is what the (794,625) defect
+         was. Same inequality as the width one, checked the same way. */
+      const vres = await A(() => {
+        const cb = document.querySelector('#board .colbody');
+        const s = document.getElementById('sticky').getBoundingClientRect();
+        return { pad: cb ? Math.round(parseFloat(getComputedStyle(cb).paddingBottom)) : -1,
+          corner: Math.round(s.height), offset: Math.round(window.innerHeight - s.bottom) };
+      });
+      check('sticky: the column reserves the corner height plus its offset, the vertical twin',
+        vres.pad >= vres.corner + vres.offset, JSON.stringify(vres));
+      /* the corner's HEIGHT, three bands, and the band is read off the viewport the
+         same way the sheet reads it. 184 from 901 to 1199 (232px wide there, it never
+         reaches a day column's add control), 130 from 1200 to 1821 on a short screen
+         (at 1280 the auditor centres that control at x=794, exactly the 464px
+         corner's left edge, and 152 passes while 154 fails), 184 again once the
+         viewport is 1000px tall, which is the axis that imposed the cap. */
       const cpad = await A(() => Math.round(document.getElementById('stickyPad').getBoundingClientRect().height));
-      check('sticky: the corner pad stays 92px at every wide width, the height the board cannot spare',
-        cpad === 92, String(cpad));
+      const want = prof.width < 1200 ? 184 : (prof.height >= 1000 ? 184 : 130);
+      check('sticky: the corner pad takes the height its band affords, against a reserved column',
+        cpad === want, cpad + ' (want ' + want + ' at ' + prof.width + 'x' + prof.height + ')');
     } else {
       check('sticky: joins the flow full width on narrow layouts, never a floating corner',
         b.pos === 'static' && b.w > 300, JSON.stringify(b));

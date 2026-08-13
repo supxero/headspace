@@ -720,18 +720,27 @@ select option{background:var(--pearl);color:var(--txt)}
      901px band and the narrow layout keeps the pad at the end of the flow.
    The textarea is STATIC markup, never rebuilt by a render, so its caret and
    its native undo survive every foreign render for free, the #qi trick.
-   SIZE: the pad's HEIGHT doubles, 92 to 184, in ONE placement and ONE band: the
-   Notes strip at 1200px and up. Widths are untouched by this pass. Every other
-   placement refused, and each refusal is a measurement, not a preference:
-   - THE CORNER CANNOT GROW TALLER ANYWHERE. It is an overlay on the board, so
-     every pixel it gains is a pixel of board it covers at rest. At 1024 that was
-     already known: a day column's "+ add" row sits 159px above the board's bottom
-     while the corner stands 147px into that, 12px of headroom against the 92px a
-     double wants. The new measurement is that 1280 is no better once a tray is
-     up: the viewport pass put a doubled corner over a "+ add" at (794,625) in the
-     ordinary boot-tray state, ten hit-test misses, on the widest profile there is.
-     This is risk 16 stated as a number rather than as a worry, and nothing between
-     92 and 184 buys anything either: 120px clears that control by one pixel.
+   SIZE: the pad's HEIGHT is 92 at the base and every placement now overrides it.
+   The corner used to be the one that could not, and the reason it can now is not a
+   new measurement of the corner: it is that .colbody gained a padding-bottom, so a
+   column has scroll to put its tail clear of the corner instead of ending under it.
+   The refusals that remain are still measurements, not preferences:
+   - THE CORNER GROWS, BUT ONLY AGAINST THAT RESERVATION, and never past the point
+     where a centred add control meets it. It is an overlay on the board, so every
+     pixel it gains is a pixel of board it covers AT REST; the reservation is what
+     makes "at rest" stop being the whole story, because the column can now always
+     be scrolled clear. What it does not fix is a control the corner reaches with
+     the column already at its end, and that is what caps the middle band: at 1280
+     the auditor centres a day column's "+ add" at x=794, exactly the 464px
+     corner's left edge, and from there only height is left to decide it. Measured
+     with the reservation in place, 152 passes and 154 fails, and 152 itself
+     flickered between 0 and 2 misses across runs, so the corner takes 130 there
+     and stands 23px inside a cliff rather than on it. From 901 to 1199 the corner
+     is only 232px wide and never reaches that control at all, so it takes the full
+     184 and audits clean at 260. Above 1000px of viewport height the 1280 cap goes
+     too, on the axis that imposed it. The (794,625) defect this comment used to
+     record as permanent was a corner grown WITHOUT the reservation; it is the
+     reservation that was missing, not the room.
    - NOTES IS WALLED AT 1024 BUT NOT AT 1280, and neither the move to the foot nor
      the move back to the top changed which. Above the pane or below it, the strip
      is the same block of the same column flex, so .noteed pays its height either
@@ -743,9 +752,11 @@ select option{background:var(--pearl);color:var(--txt)}
      of scroll: a near-empty board at 820 measures exactly 1180 of 1180, so any
      addition starts a scroll that was not there, and 336px of scratch pad is most
      of a phone screen with the keyboard up. Doubled once (84 to 168), not twice.
-   So on a 1024 tablet the pad does not grow at all, on either axis, in either
-   placement, and on the board it does not grow at any width. That is the honest
-   shape of the result: the board is the thing this panel is not allowed to eat. */
+   So on a 1024 tablet the pad still does not grow on the WIDTH axis in either
+   placement, and Notes there still cannot pay a taller pad; what changed is that
+   the board can, because the column now reserves the room rather than the corner
+   simply sitting on it. The board is still the thing this panel is not allowed to
+   eat, and the reservation is how it eats nothing. */
 #main{position:relative}
 /* the corner keeps its 232px here and doubles only in the band below, where the
    board has the room. This is the base, so it is also what 901 to 1199px gets. */
@@ -753,9 +764,9 @@ select option{background:var(--pearl);color:var(--txt)}
   background:var(--panel);border:1px solid var(--line2);border-radius:var(--r2);
   box-shadow:var(--shadow);padding:8px 10px 9px;display:flex;flex-direction:column;gap:3px}
 .stickycap{font-family:var(--fbx);font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--mut2)}
-/* 92px is the BASE, which is what the corner gets from 901 to 1199px and what the
-   narrow flow overrides. It is no longer one number shared by both wide placements:
-   the corner is walled at 1024 and Notes is not, so each states its own below. */
+/* 92px is the BASE, and since the corner took a height of its own it is reached by
+   exactly ONE placement: the Notes strip from 901 to 1199px. The corner overrides it
+   in every band it appears in and the narrow flow overrides it below 900. */
 #stickyPad{width:100%;height:92px;resize:none;border:none;background:transparent;box-shadow:none;
   border-radius:0;padding:0;font-size:12.5px;line-height:1.5;color:var(--txt);outline:none;overflow-y:auto}
 #stickyPad::placeholder{color:var(--mut2)}
@@ -770,6 +781,35 @@ select option{background:var(--pearl);color:var(--txt)}
   /* the corner's clearance at the end of the board's sideways scroll: it tracks
      the corner's own width, or the last column slides back under it */
   #main.stickycorner #board{padding-right:264px}
+  /* ---------- THE VERTICAL TWIN OF THAT RESERVATION ----------
+     #board reserves the corner's WIDTH at the end of the scroll it has, which is
+     sideways. This reserves the corner's HEIGHT at the end of the scroll a COLUMN
+     has, which is .colbody's: #board is overflow-y:hidden and .col is overflow:hidden,
+     so .colbody is the only thing in a column that scrolls vertically. Measured
+     before it was written, not assumed.
+     WHAT IT BUYS. Without it a column whose content happens to end inside the
+     corner's band has no scroll at all to clear it: the tail, the "+ add" row
+     included, simply sits under the pad, which is the residual risk 16 named and
+     the mechanism behind the (794,625) defect. With it the scroller always keeps at
+     least the corner's height plus its 18px offset of room past the last control, so
+     scrolling a column to its end always puts that control clear of the corner. The
+     guarantee is the inequality, not the number: reservation >= corner height + 18,
+     asserted directly the way Section 13 asserts the width one, so it holds by
+     construction at whatever size the corner is rather than by luck at one.
+     WHAT IT COSTS, stated rather than discovered: the padding is content, so a
+     column that used to end with its last card now ends with a band of its own
+     surface below it, and a short column grows until it meets .col's max-height.
+     That is the price of the tail being reachable, and it is the same shape of price
+     #board's padding-right pays sideways.
+     249 = 221 (a 184px pad plus 37px of cap, gap, padding and border) + 18 + 10 of
+     slack, the same 10px the width reservation carries. */
+  #main.stickycorner .colbody{padding-bottom:249px}
+  /* THE CORNER'S HEIGHT IN THIS BAND IS 184, matching the Notes strip, because here
+     the corner is 232px WIDE and never reaches a day column's add control at all.
+     Measured clean with the reservation in place at 901x700, 1024x700, 1024x768,
+     1199x700 and 1199x768, and still clean at a 260px pad on every one of them, so
+     184 stands 76px inside the wall rather than against it. */
+  #sticky[data-pos="corner"] #stickyPad{height:184px}
 }
 /* THE CORNER DOUBLES ONLY WHERE THE BOARD HAS THE ROOM. Measured, and the wall is
    hard: at 1024 the board is 684px wide and the second day column's "+ add" sits
@@ -784,15 +824,27 @@ select option{background:var(--pearl);color:var(--txt)}
 @media (min-width:1200px){
   #sticky{width:464px}
   #main.stickycorner #board{padding-right:496px}
-  /* THE HEIGHT DOUBLES IN NOTES ONLY, and only here. The corner does NOT come with
-     it: the pass measured a doubled corner burying a day column's "+ add" at rest
-     on THIS profile, at (794,625) in the ordinary boot-tray state, so the wall the
-     1024 board put up in Section 13 stands at 1280 too the moment a tray is up.
-     Notes has no board under it, so the only question there is the pane, and the
-     pane at 1280 can pay 92px where the 1024 pane cannot. Unchanged by the move
-     back to the top: the strip costs the pane the same height at either end of
-     the column. */
+  /* Notes keeps its 184: the pane can pay it at 1280 where the 1024 pane cannot. */
   #sticky[data-pos="top"] #stickyPad{height:184px}
+  /* THE CORNER COMES BACK DOWN WHERE IT IS 464px WIDE, and the cause is horizontal
+     before it is vertical. The auditor reaches a control by scrolling it into view
+     first, block and inline centred, so what decides is where a centred add control
+     lands. At 1280 the content area is 940px and the board scrolls, so that centring
+     puts a day column's "+ add" centre at x=794, which is EXACTLY the corner's left
+     edge (1280 less the 22px offset less 464). From there nothing but the vertical
+     relationship is left, and at 800px of viewport the board is 439px tall.
+     MEASURED, with the reservation above already in place: 152 passes, 154 fails,
+     and 152 itself flickered between 0 and 2 misses across runs. That is a cliff,
+     not a size. 130 stands 23px inside it and still audits clean with the board 40px
+     shorter than the seed's own tray leaves it, which is two more tray rows; 138
+     survives 20px of that and 145 survives none. So 130, and the headroom is the
+     reason rather than the number being pretty.
+     At 1920 the same centring lands the add at x=1114 against a corner beginning at
+     1434, so it is not width that binds at every wide size: it is height, at this
+     one. Which is what the band below is for. */
+  #sticky[data-pos="corner"] #stickyPad{height:130px}
+  /* 195 = 167 (the 130px pad plus 37 of chrome) + 18 + 10, the same inequality */
+  #main.stickycorner .colbody{padding-bottom:195px}
   /* THE LIST FILLS THE BAND BESIDE THE STRIP, and the cause is what moves, not the
      pane. The strip is a row of #main's column, so everything after it began 231px
      down (14 padding, 221 of strip, 10 of margin) and the canvas to its left drew
@@ -836,6 +888,23 @@ select option{background:var(--pearl);color:var(--txt)}
   #main.stickytop .noteed{grid-column:2;grid-row:2}
   #main.stickytop>#tray,#main.stickytop>#boardnav,#main.stickytop>#strip,
   #main.stickytop>#habits,#main.stickytop>#weekMobile{grid-column:1/-1}
+}
+/* ---------- a TALL viewport pays the full 184, and the axis is deliberate ----------
+   The band above is capped by height, not by width: once the centred add control sits
+   on the 464px corner's left edge at 1280, the only question left is how far up the
+   board the corner reaches, and that is viewport height. So the cap lifts on the axis
+   that imposed it rather than on the one that happens to be nearby. This is the first
+   height query in the sheet and it is here for that reason alone.
+   MEASURED at a 184px pad with the reservation: at 1000px of viewport the board is
+   639px and the pass is clean at 1200, 1280, 1440 and 1920 wide. 1000 rather than 900
+   is the headroom: at 1280x900 the worst control clears the corner by 25px, at
+   1280x1000 by 125px, and 25px is one tray row away from being a cliff again.
+   The corner is then the same 464x221 the Notes strip is, which is what was asked
+   for; it is simply not affordable on a 800px-tall screen and the sheet says so in
+   two bands instead of pretending one number fits both. */
+@media (min-width:1200px) and (min-height:1000px){
+  #sticky[data-pos="corner"] #stickyPad{height:184px}
+  #main.stickycorner .colbody{padding-bottom:249px}
 }
 /* ---------- 1822px and up: the strip stops being a row and becomes a COLUMN ----------
    The 1200px grid handed the list the band beside the strip, but the strip itself was

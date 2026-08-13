@@ -4024,33 +4024,148 @@ console.log('— sticky note: one shared scratch block —');
        actually carries the pad, not whichever comes first */
     const narrowB=([...css.matchAll(/@media \(max-width:900px\)\{([\s\S]*?)\n\}/g)]
       .map(m=>m[1]).find(b=>/#stickyPad/.test(b)))||'';
-    /* the corner doubles only above 1200px. Below that the board has no room:
+    /* the corner's WIDTH doubles only above 1200px, and that wall has not moved:
        at 1024 a day column's add control has its centre at x=738 and a 264px
-       corner already reaches it, which the viewport pass caught as real misses. */
+       corner already reaches it, which the viewport pass caught as real misses.
+       The HEIGHT is a separate question with a different answer, resolved below. */
     const big=(css.match(/@media \(min-width:1200px\)\{([\s\S]*?)\n\}/)||[])[1]||'';
     ok(/#sticky\{[^}]*width:232px/.test(css),
       'the corner keeps 232px as its base, which is what 901 to 1199px gets');
     ok(/#sticky\{width:464px\}/.test(big),'and doubles to 464px only where the board has the room');
     ok(/#main\.stickycorner #board\{padding-right:496px\}/.test(big),
       'with the reservation moving to match, or the last column slides back under it');
-    /* HEIGHT, the second pass, and the corner lost it outright. 92px is what the
-       corner gets at EVERY wide width: at 1024 a day column's "+ add" row sits
-       159px above the board's bottom while the corner already stands 147px into
-       that, and at 1280 the pass measured a doubled corner over a "+ add" at
-       (794,625) in the ordinary boot-tray state. The double survives only in
-       Notes, which has no board under it, and only at 1200px and up, because at
-       1024 the pane measured 571px of content into 502px of room. */
+    /* ---------- HEIGHT, RESOLVED RATHER THAN GREPPED ----------
+       The pass before this one pinned the corner's height by searching the sheet for
+       a rule and by counting the pad rules in a band. That is blind to the two things
+       which actually decide a height: whether the band is live at the width being
+       claimed, and whether a later rule of equal or greater weight overrides it.
+       It was blind to a worse one as well. Both of those assertions passed against a
+       sheet in which the corner rule DID NOT EXIST, because "no corner rule in the
+       1200 band" and "no pad height in the 901 band" are exactly what an absent
+       feature looks like. The corner took the 92px base and the suite called it
+       intended. A test that can be satisfied by the feature being missing is not
+       pinning the feature. So the height is resolved here the way a browser resolves
+       it, and the assertion is the RESULTING PIXEL VALUE at a viewport.
+       For the record, specificity was never the mechanism and no source-order fix was
+       ever needed: `#sticky[data-pos="corner"] #stickyPad` is two ids and an attribute
+       against the base's one id, so it outranks `#stickyPad` wherever its band is
+       live, in any order the two are written in. What was wrong was that it was not
+       in the served file. */
+    const specOf=sel=>{
+      const s=sel.replace(/::[\w-]+/g,' ').replace(/\*/g,' ');
+      const ids=(s.match(/#[\w-]+/g)||[]).length;
+      const cls=(s.match(/\.[\w-]+/g)||[]).length+(s.match(/\[[^\]]*\]/g)||[]).length
+        +(s.replace(/\[[^\]]*\]/g,' ').match(/:[\w-]+/g)||[]).length;
+      const typ=(s.replace(/\[[^\]]*\]/g,' ').match(/(^|[\s>+~])[a-zA-Z][\w-]*/g)||[]).length;
+      return ids*10000+cls*100+typ;
+    };
+    /* only plain width and height queries are judged. Anything else gating one of
+       these declarations is collected and reported instead of guessed at, so the
+       resolver fails loudly rather than quietly going wrong when the sheet grows a
+       condition it does not understand. @supports lands here for the same reason. */
+    const mediaLive=(cond,vw,vh)=>{
+      if(!cond) return true;
+      let known=true;
+      for(const part of cond.split(/\s+and\s+/)){
+        const m=part.trim().match(/^\(\s*(min|max)-(width|height)\s*:\s*(\d+)px\s*\)$/);
+        if(!m){ known=false; continue }
+        const v=m[2]==='width'?vw:vh;
+        if(m[1]==='min'?v<+m[3]:v>+m[3]) return false;
+      }
+      return known?true:null;
+    };
+    const unjudged=[];
+    /* match, drop the dead bands, then order by importance, specificity and source
+       position and take the last one standing: the cascade, on the real parsed sheet
+       rather than on the file's text, so a rule moving between bands changes the
+       answer here the same way it changes the answer in Chrome. */
+    const cascade=(el,prop,vw,vh)=>{
+      const cands=[]; let n=0;
+      const walk=(rules,cond)=>{
+        for(const r of rules){
+          if(r.type===4||r.type===12){
+            walk(r.cssRules||[],(cond?cond+' and ':'')+
+              (r.type===4?(r.media&&r.media.mediaText||''):'supports('+(r.conditionText||'?')+')'));
+            continue;
+          }
+          if(r.type!==1) continue;
+          n++;
+          const val=r.style&&r.style.getPropertyValue(prop);
+          if(!val) continue;
+          let sp=-1;
+          for(const one of r.selectorText.split(',')){
+            let hit=false; try{ hit=el.matches(one.trim()) }catch(e){}
+            if(hit) sp=Math.max(sp,specOf(one.trim()));
+          }
+          if(sp<0) continue;
+          const live=mediaLive(cond,vw,vh);
+          if(live===null){ unjudged.push(cond+' {'+r.selectorText+'}'); continue }
+          if(!live) continue;
+          cands.push({imp:r.style.getPropertyPriority(prop)==='important'?1:0,sp,n,val});
+        }
+      };
+      walk(doc.styleSheets[0].cssRules,'');
+      cands.sort((a,b)=>a.imp-b.imp||a.sp-b.sp||a.n-b.n);
+      return cands.length?cands[cands.length-1].val:'';
+    };
+    const padAt=(pos,vw,vh)=>{
+      const st=q('#sticky'), was=st.getAttribute('data-pos');
+      st.setAttribute('data-pos',pos);
+      const v=cascade(q('#stickyPad'),'height',vw,vh);
+      if(was===null) st.removeAttribute('data-pos'); else st.setAttribute('data-pos',was);
+      return v;
+    };
     ok(/#stickyPad\{[^}]*height:92px/.test(css),
-      'the corner pad is 92px at every wide width, which is what keeps a column add row hit-testable');
-    /* the only pad-height rule in the 1200 band must be the Notes one. A bare
-       `#stickyPad{height:184px}` there would hand the corner the double too. */
-    const bigPad=big.split('\n').filter(l=>/#stickyPad\{/.test(l));
-    ok(bigPad.length===1&&/data-pos="top"/.test(bigPad[0]),
-      'and the corner never takes the doubled height, at 1280 no more than at 1024');
-    ok(/#sticky\[data-pos="top"\] #stickyPad\{height:184px\}/.test(big),
-      'the double survives in Notes alone, and only above 1200px where the pane can pay it');
-    ok(!/#stickyPad\{[^}]*height/.test(wide),
-      'the 901 to 1199 band names no pad height of its own: both wide placements keep the 92px base there');
+      'the 92px base is still declared, now as the floor the placements override');
+    /* THE CORNER, BAND BY BAND. 92px must appear nowhere in this column: the moment
+       it does, the corner is back on the base and the reservation below is holding
+       room open for a pad that is not there. */
+    ok(padAt('corner',1024,768)==='184px',
+      'the corner resolves to 184px from 901 to 1199, where it is 232px wide and never '+
+      'reaches a day column add control: '+padAt('corner',1024,768));
+    ok(padAt('corner',1280,800)==='130px',
+      'and comes down to 130px at 1200 to 1821 on a short viewport, 23px inside the '+
+      '152-passes-154-fails cliff: '+padAt('corner',1280,800));
+    ok(padAt('corner',1365,800)==='130px',
+      'including at the 1365 that was reported resolving to the 92px base: '+padAt('corner',1365,800));
+    ok(padAt('corner',1440,1050)==='184px'&&padAt('corner',1920,1080)==='184px',
+      'and pays the full 184px once the viewport is 1000px tall, the axis that imposed '+
+      'the cap: '+padAt('corner',1440,1050)+' / '+padAt('corner',1920,1080));
+    ok(padAt('corner',820,1180)==='168px',
+      'under 900px the corner is not a corner at all: the in-flow pad keeps its 168');
+    /* THE BASE IS DOWN TO ONE READER, and it is the Notes strip below 1200. That is
+       the guarantee the deleted "the corner never takes the double" meant to make. */
+    ok(padAt('top',1024,768)==='92px',
+      'the Notes strip from 901 to 1199 is the one placement still reading the base');
+    ok(padAt('top',1280,800)==='184px'&&padAt('top',1920,1080)==='184px',
+      'the strip doubles at 1200 and up, where the pane can pay it, and stays doubled '+
+      'in the three-column band: '+padAt('top',1280,800)+' / '+padAt('top',1920,1080));
+    ok(padAt('top',820,1180)==='168px','and the narrow flow is 168 in either placement');
+    ok(!unjudged.length,
+      'every band gating this height is a plain width or height query, so the resolver '+
+      'judges all of them: '+unjudged.join('; '));
+
+    /* ---------- THE RESERVATION, AS THE INEQUALITY IT CLAIMS TO BE ----------
+       #main.stickycorner .colbody's padding-bottom is the vertical twin of #board's
+       padding-right: it is what gives a column enough scroll to put its tail, the
+       "+ add" row included, clear of the corner. The sheet states the guarantee as
+       reservation >= corner height + its 18px offset, so that is what is checked, at
+       every band, against the RESOLVED pad rather than against the two numbers the
+       comments happen to name. Grow the pad and forget the padding and this fails
+       here rather than as hit-test misses in the browser pass. */
+    const cb=q('.colbody');
+    ok(!!cb,'a day column has a scrolling body to carry the reservation');
+    const resAt=(vw,vh)=>parseFloat(cascade(cb,'padding-bottom',vw,vh))||0;
+    const off=+((css.match(/#sticky\{[^}]*bottom:(\d+)px/)||[])[1])||0;
+    /* the pad is not the whole corner: #sticky's 8+9 of padding, 2 of border, the 3px
+       flex gap and the 15px cap box stand above it. 37, measured once, named here. */
+    const CHROME=17+2+3+15;
+    for(const [vw,vh] of [[1024,768],[1280,800],[1365,800],[1440,1050],[1920,1080]]){
+      const pad=parseFloat(padAt('corner',vw,vh)), need=pad+CHROME+off;
+      ok(resAt(vw,vh)>=need,
+        'the column reserves the corner it actually has at '+vw+'x'+vh+': '+resAt(vw,vh)+
+        ' >= '+pad+' + '+CHROME+' + '+off+' = '+need);
+    }
     /* the reservation is the thing that keeps the last column clear AND, because
        it counts inside the board's scroll width, is what stops a non-scrolling
        board from ever putting a column under the corner. It must track the
