@@ -4074,6 +4074,76 @@ console.log('— sticky note: one shared scratch block —');
     ok(/#stickyPad\{height:168px/.test(narrowB),
       'the narrow pad stays at 168, because doubling again starts a scroll at 820 that was not there');
     ok(/font-size:16px/.test(narrowB),'and keeps the 16px that stops the browser zooming on focus');
+
+    /* THE THIRD COLUMN, and the width that pays for it. Above the threshold the strip
+       stops being a row of #main's column and becomes a grid track beside the list and
+       the editor, so all three start at the content top and the band the strip held
+       open across the top is gone rather than moved somewhere else. The band is found
+       by what it DOES (the 464px track) rather than by its number, so the arithmetic
+       below is free to disagree with it and say so. */
+    const threeM=[...css.matchAll(/@media \(min-width:(\d+)px\)\{([\s\S]*?)\n\}/g)]
+      .find(m=>/grid-template-columns:[^;]*464px/.test(m[2]));
+    const threeW=threeM?+threeM[1]:NaN, three=threeM?threeM[2]:'';
+    ok(three,'the strip has a third-column band of its own above the two-column grid');
+    ok(/#main\.stickytop\{[^}]*grid-template-columns:272px minmax\(0,1fr\) 464px/.test(three),
+      'three tracks: the 272px list, the editor, and the strip at its unchanged 464px');
+    ok(/#main\.stickytop\{[^}]*grid-template-rows:minmax\(0,1fr\)/.test(three),
+      'one row, so the three share a top edge and the list and the editor still fill the pane');
+    ok(/#main\.stickytop \.notelist\{grid-row:1\}/.test(three),
+      'the list drops its two-row span, there being only one row left to sit in');
+    ok(/#main\.stickytop \.noteed\{grid-column:2;grid-row:1\}/.test(three),
+      'the editor takes the middle track, beside the list rather than under the strip');
+    ok(/#main\.stickytop #sticky\{grid-column:3;grid-row:1;margin:0\}/.test(three),
+      'and the strip takes the third, dropping the 10px that was its gap down to the pane');
+    /* IN FLOW, still. A grid track cannot be floated over .ntools, Unpin or Delete, and
+       width does not relax that refusal: the wider the pane, the more of those controls
+       an overlay would reach. Nothing in the band may position the strip. */
+    ok(!/position:\s*(absolute|fixed)/.test(three),
+      'nothing in the band positions the strip: it is a column there, never an overlay');
+    ok(!/#sticky\[data-pos="top"\]/.test(three)&&!/#stickyPad/.test(three),
+      'the strip keeps its 464px width and its 184px pad: the band moves it, it does not resize it');
+    ok(!/stickycorner/.test(three),
+      'and the board corner is not in the band at all, at any width, which is risk 16 kept shut');
+    ok(css.indexOf('@media (min-width:'+threeW+'px)')>css.indexOf('@media (min-width:1200px)'),
+      'the wider branch is declared after the two-column grid, so it is the one that applies');
+    /* THE THRESHOLD IS ARITHMETIC, checked against the parts rather than written twice.
+       The editor track has to carry .notewrap's reading measure whole: the measure plus
+       .notepage's padding and border, .noteed's own padding and the scrollbar gutter a
+       scrolling note takes. Beside it stand the list and the strip with the grid's two
+       gaps, inside a content area that is the viewport less the rail and #main's
+       padding. Change the list, the strip, the gap, the measure, the rail or any of the
+       padding and this is where the threshold stops adding up, rather than the editor
+       quietly losing the measure the whole number exists to protect. */
+    const num=re=>{const m=css.match(re);return m?+m[1]:NaN};
+    const parts={
+      list:num(/\.notelist\{width:(\d+)px/),
+      strip:num(/#sticky\[data-pos="top"\]\{[^}]*width:(\d+)px/),
+      gap:num(/#main\.stickytop\{[^}]*column-gap:(\d+)px/),
+      rail:num(/--rail:(\d+)px/),
+      mainPad:num(/#main\{[^}]*padding:\d+px (\d+)px/),
+      measure:num(/\.notewrap\{width:(\d+)px/),
+      pagePad:num(/\.notepage\{[^}]*padding:\d+px (\d+)px/),
+      pageBorder:num(/\.notepage\{[^}]*border:(\d+)px solid/),
+      edPad:num(/\.noteed\{[^}]*padding:\d+px (\d+)px/),
+      bar:num(/\*::-webkit-scrollbar\{width:(\d+)px/),
+    };
+    ok(Object.values(parts).every(n=>n>0),'every part of the threshold reads off the sheet: '+
+      JSON.stringify(parts));
+    const editor=parts.measure+2*parts.pagePad+2*parts.pageBorder+parts.edPad+parts.bar;
+    ok(editor===718,'the editor track needs 718px to leave the 640px measure whole: '+editor);
+    const total=parts.list+parts.gap+editor+parts.gap+parts.strip+2*parts.mainPad+parts.rail;
+    ok(total===threeW,'and the band starts exactly where the parts add up, not at a round '+
+      'number: '+[parts.list,parts.gap,editor,parts.gap,parts.strip,2*parts.mainPad,parts.rail]
+      .join(' + ')+' = '+total+', band at '+threeW);
+    /* the rail COLLAPSED only ever hands the content area more room (the freed column,
+       less the 56px the restore button stands in), so the branch can never be reached
+       with less width than it was cut for. Stated as a test so a later change to the
+       collapsed padding has to face it. */
+    const railOff=num(/:root\[data-rail="off"\] #main\{padding-left:(\d+)px\}/);
+    ok(railOff>0&&railOff+parts.mainPad<parts.rail+2*parts.mainPad,
+      'and collapsing the rail only widens the content area, so the threshold is cut for '+
+      'the tighter expanded case: '+railOff+' + '+parts.mainPad+' against '+
+      (parts.rail+2*parts.mainPad));
   }
   /* THE DEAD BAND, which was never the tray's. A slot a render can empty must
      carry its spacing on :not(:empty), the contract #habits, #weekMobile and

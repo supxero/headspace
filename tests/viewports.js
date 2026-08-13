@@ -15,15 +15,27 @@
    Run from the project root:  node tests/viewports.js
    Needs Chrome installed (or CHROME_PATH set) and tests/node_modules (npm install).
 
-   The four profiles. The layout branches at window.innerWidth<900 and the custom
+   The five profiles. The layout branches at window.innerWidth<900 and the custom
    picker layer gates on (hover:hover), so the two tablet rows are the interesting
-   ones: 1024 gets the wide desktop layout with a coarse pointer and no hover. */
+   ones: 1024 gets the wide desktop layout with a coarse pointer and no hover.
+   desktop-1920 is the fifth and it exists for ONE branch: the Notes sticky becomes a
+   third column at 1822px and up, and until it was added the set topped out at 1280,
+   so that branch was drawn by nobody. It is a fine-pointer, hovering profile like
+   1280, and it runs the whole flow set under both themes exactly as the others do. */
 const PROFILES = [
+  { name: 'desktop-1920', width: 1920, height: 1080, coarse: false },
   { name: 'desktop-1280', width: 1280, height: 800,  coarse: false },
   { name: 'tablet-1024',  width: 1024, height: 768,  coarse: true  },
   { name: 'tablet-820',   width: 820,  height: 1180, coarse: true  },
   { name: 'phone-390',    width: 390,  height: 844,  coarse: true  },
 ];
+
+/* The width at which the Notes strip leaves the column flow and becomes a third grid
+   track beside the list and the editor. Measured, not chosen: 272px list + 14 gap +
+   718px editor (the 640px reading measure, .notepage's 60px padding and 2px border,
+   .noteed's 6px padding and the 10px scrollbar gutter) + 14 gap + 464px strip = 1482px
+   of content area, plus #main's 32px of padding and the 308px rail = 1822px. */
+const THREECOL = 1822;
 
 const MIN_TARGET = 44;   /* smallest acceptable hit target on a coarse profile, px */
 
@@ -373,6 +385,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 /* ---------- one profile ---------- */
 async function runProfile(browser, base, prof) {
   const coarse = prof.coarse, narrow = prof.width < 900;
+  /* the three wide Notes layouts, named once: the stacked column flow (901 to 1199),
+     the two-column grid that gives the list the band beside the strip (1200 to 1821),
+     and the three-column row where the strip stands beside the pane (1822 and up) */
+  const gridded = prof.width >= 1200, threecol = prof.width >= THREECOL;
   const R = { profile: prof, media: null, audits: [], checks: [], flowErrors: [] };
   const check = (name, cond, detail) =>
     R.checks.push({ name, ok: !!cond, detail: detail === undefined ? '' : String(detail) });
@@ -2560,7 +2576,6 @@ async function runProfile(browser, base, prof) {
     const notesGeo = () => A(() => {
       const st = document.getElementById('sticky');
       const s = st.getBoundingClientRect(), cs = getComputedStyle(st);
-      const nt = document.getElementById('notes').getBoundingClientRect();
       const main = document.getElementById('main');
       const top = main.getBoundingClientRect().top + parseFloat(getComputedStyle(main).paddingTop);
       const nact = t => [...document.querySelectorAll('.nact')].find(e => t.test(e.textContent.trim()));
@@ -2572,10 +2587,21 @@ async function runProfile(browser, base, prof) {
         return { nm, over: s.left < r.right && s.right > r.left && s.top < r.bottom && s.bottom > r.top,
                  gap: Math.round(r.top - s.bottom) };
       });
-      return { pos: cs.position, order: cs.order, hits,
+      /* THE PANE IS ITS TWO CHILDREN, not #notes. Inside the 1200px grid #notes is
+         display:contents, so it has no box of its own and getBoundingClientRect
+         reports an empty rect: measuring it there would compare the strip against
+         0,0,0,0 and pass whatever the layout did. The list and the editor are real
+         boxes in every band, so the pane is read off them. */
+      const rr = q => { const e = document.querySelector(q); if (!e) return null;
+        const b = e.getBoundingClientRect();
+        return { t: Math.round(b.top), b: Math.round(b.bottom),
+                 l: Math.round(b.left), r: Math.round(b.right) }; };
+      const list = rr('.notelist'), ed = rr('.noteed');
+      return { pos: cs.position, order: cs.order, hits, list, ed,
         theme: document.documentElement.getAttribute('data-theme') || 'sky',
-        t: Math.round(s.top), b: Math.round(s.bottom), right: Math.round(window.innerWidth - s.right),
-        contentTop: Math.round(top), notesTop: Math.round(nt.top), notesBottom: Math.round(nt.bottom) };
+        t: Math.round(s.top), b: Math.round(s.bottom), l: Math.round(s.left), r: Math.round(s.right),
+        right: Math.round(window.innerWidth - s.right), contentTop: Math.round(top),
+        paneTop: Math.min(list.t, ed.t), paneBottom: Math.max(list.b, ed.b) };
     });
     for (const g of await bothThemes(notesGeo)) {
       const th = ' [' + g.theme + ']';
@@ -2583,14 +2609,25 @@ async function runProfile(browser, base, prof) {
         check('sticky: stands at the top right of the content area in Notes' + th,
           g.pos === 'static' && g.order === '-1' && Math.abs(g.t - g.contentTop) <= 1 && g.right < 60,
           JSON.stringify(g));
-        check('sticky: and the note pane follows it, with nothing above the strip' + th,
-          g.notesTop >= g.b, JSON.stringify({ strip: g.b, notes: g.notesTop }));
+        if (threecol) {
+          /* the strip is a COLUMN here, so nothing follows it downwards: it stands
+             beside the pane, clear of the editor's right edge, and the list, the
+             editor and the strip all start on the same line at the content top. */
+          check('sticky: at 1822 and up it stands beside the pane, not above it' + th,
+            g.l >= g.ed.r && Math.abs(g.ed.t - g.contentTop) <= 1 &&
+            Math.abs(g.list.t - g.contentTop) <= 1,
+            JSON.stringify({ sticky: { l: g.l, t: g.t }, ed: g.ed, list: g.list, top: g.contentTop }));
+        } else {
+          check('sticky: and the note pane follows it, with nothing above the strip' + th,
+            (gridded ? g.ed.t : g.paneTop) >= g.b,
+            JSON.stringify({ strip: g.b, ed: g.ed.t, paneTop: g.paneTop }));
+        }
       } else {
         /* the answer where there is no right hand side to sit at: the pad stays at
            the end of the flow rather than being hoisted above the list, where it
            would bury the list and stand in the way of the keyboard. */
         check('sticky: at a single-column width it stays at the end of the flow' + th,
-          g.pos === 'static' && g.order === '0' && g.t >= g.notesBottom, JSON.stringify(g));
+          g.pos === 'static' && g.order === '0' && g.t >= g.paneBottom, JSON.stringify(g));
       }
       check('sticky: never covers the editor toolbar, Unpin or Delete' + th,
         g.hits.every(h => !h.missing && !h.over), JSON.stringify(g.hits));
@@ -2659,7 +2696,14 @@ async function runProfile(browser, base, prof) {
         return { t: Math.round(b.top), b: Math.round(b.bottom), l: Math.round(b.left), r: Math.round(b.right),
                  h: Math.round(b.height), w: Math.round(b.width) }; };
       const tr = document.getElementById('tray');
-      return { top: Math.round(top), notes: r('#notes'), list: r('.notelist'), ed: r('.noteed'),
+      const list = r('.notelist'), ed = r('.noteed');
+      /* the pane, read off its two children rather than #notes, which is
+         display:contents inside the 1200px grid and has no box to measure */
+      const pane = list && ed
+        ? { t: Math.min(list.t, ed.t), b: Math.max(list.b, ed.b),
+            l: Math.min(list.l, ed.l), r: Math.max(list.r, ed.r) }
+        : null;
+      return { top: Math.round(top), notes: r('#notes'), list, ed, pane, wrap: r('.notewrap'),
                sticky: r('#sticky'), tray: tr.firstElementChild ? r('#tray .tray') : null,
                body: r('#noteBody'), board: r('#board'), quick: r('#quickadd'),
                theme: document.documentElement.getAttribute('data-theme') || 'sky' };
@@ -2671,14 +2715,38 @@ async function runProfile(browser, base, prof) {
       const first = narrow ? g.list : g.sticky;
       check('notes: the first block of the view starts at the top of the content area' + th,
         first && Math.abs(first.t - g.top) <= 1, JSON.stringify({ first, top: g.top }));
-      if (!narrow) {
-        check('notes: the strip is that block, right aligned, and the list follows it' + th,
-          g.sticky && g.list && g.list.t >= g.sticky.b && g.sticky.r >= g.list.r,
-          JSON.stringify({ sticky: g.sticky, list: g.list }));
+      if (threecol) {
+        /* THREE COLUMNS, one row: the list, the editor and the strip all start at the
+           content top, and the strip is the rightmost of the three. The dead band the
+           strip used to hold across the top is not moved here, it is gone: nothing
+           above the editor at all. */
+        check('notes: list, editor and strip all start at the top of the content area' + th,
+          g.list && g.ed && g.sticky && Math.abs(g.list.t - g.top) <= 1 &&
+          Math.abs(g.ed.t - g.top) <= 1 && Math.abs(g.sticky.t - g.top) <= 1,
+          JSON.stringify({ top: g.top, list: g.list.t, ed: g.ed.t, sticky: g.sticky.t }));
+        check('notes: the strip is the third column, right aligned and clear of the editor' + th,
+          g.sticky && g.ed && g.list && g.sticky.l >= g.ed.r && g.ed.l >= g.list.r &&
+          g.sticky.r >= g.ed.r,
+          JSON.stringify({ list: g.list, ed: g.ed, sticky: g.sticky }));
+        /* the whole point of the width: the reading measure survives the third column */
+        check('notes: and the editor page keeps its 640px measure, which is what set 1822' + th,
+          g.wrap && g.wrap.w === 640, JSON.stringify(g.wrap));
+      } else if (!narrow) {
+        check('notes: the strip is that block, right aligned, and the pane follows it' + th,
+          g.sticky && g.list && g.sticky.r >= g.pane.r &&
+          (gridded ? g.ed.t >= g.sticky.b && Math.abs(g.list.t - g.top) <= 1
+                   : g.pane.t >= g.sticky.b),
+          JSON.stringify({ sticky: g.sticky, list: g.list, ed: g.ed }));
         check('notes: the editor is top-aligned with the list' + th,
-          g.ed && Math.abs(g.ed.t - g.list.t) <= 1, JSON.stringify({ list: g.list.t, ed: g.ed.t }));
+          /* inside the 1200px grid the list takes the band beside the strip, so the
+             editor starts below the strip and the list starts above it */
+          g.ed && (gridded ? g.ed.t > g.list.t : Math.abs(g.ed.t - g.list.t) <= 1),
+          JSON.stringify({ list: g.list.t, ed: g.ed.t }));
         check('notes: no emptied slot holds a band between the strip and the pane' + th,
-          g.notes && g.notes.t - g.sticky.b <= 12, JSON.stringify({ strip: g.sticky.b, notes: g.notes.t }));
+          /* the gap under the strip: below 1200 the whole pane follows it, inside the
+             grid the list is already beside it and the editor is what follows */
+          g.pane && (gridded ? g.ed.t : g.pane.t) - g.sticky.b <= 12,
+          JSON.stringify({ strip: g.sticky.b, ed: g.ed.t, pane: g.pane.t }));
       } else {
         check('notes: the editor follows the list in the single column' + th,
           g.ed && g.ed.t > g.list.t, JSON.stringify({ list: g.list.t, ed: g.ed.t }));
@@ -2702,9 +2770,13 @@ async function runProfile(browser, base, prof) {
     for (const g of await bothThemes(geo)) {
       const th = ' [' + g.theme + ']';
       check('notes: a filled carry tray is not drawn in Notes at all' + th, !g.tray, JSON.stringify(g.tray));
+      /* measured on the pane's two real boxes, not on #notes: inside the 1200px grid
+         #notes is display:contents and reports 0,0,0,0, so comparing it with itself
+         would pass whatever the tray did to the layout */
       check('notes: and the view does not move a pixel for it' + th,
-        g.notes && bare.notes && g.notes.t === bare.notes.t && g.notes.h === bare.notes.h,
-        JSON.stringify({ was: bare.notes, now: g.notes }));
+        g.pane && bare.pane && g.pane.t === bare.pane.t && g.pane.b === bare.pane.b &&
+        g.pane.l === bare.pane.l && g.pane.r === bare.pane.r,
+        JSON.stringify({ was: bare.pane, now: g.pane }));
     }
     const left = await A(() => document.querySelectorAll('[data-action^="carry-"]').length);
     check('notes: no triage control is left in the DOM, which a hidden tray would leave',

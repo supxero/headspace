@@ -689,11 +689,22 @@ select option{background:var(--pearl);color:var(--txt)}
      right was asked for, so the order:-1 came back to the one rule that had lost
      it, rather than a second Notes-only selector going on top of a foot placement.
      The cost is stated plainly rather than discovered later. The strip takes a row
-     of its own, so the canvas to its left draws nothing: 476x221 at 1280, 220x129
+     of its own, so the canvas to its left drew nothing: 476x221 at 1280, 220x129
      at 1024. That band is exactly what the foot placement bought and what the top
      placement spends again. The HEIGHT is the same either way, above the pane or
      below it, because it is the same block of the same column flex, so the pane
      loses nothing to the move.
+     AT 1200px AND UP THE NOTE LIST NOW TAKES THAT BAND: #main is a grid there and
+     #notes is display:contents, so the list spans both rows down the left while
+     the strip and the editor stack on the right (the .stickytop block below the
+     pad rule). The strip does not move or resize by one pixel and neither does the
+     editor; 190x221 of canvas is still bare above the editor at 1280, which is the
+     strip's own 464px width and not something a layout can reclaim. The 901 to
+     1199 band cannot have it: column two would be 398px against a 464px strip.
+     AT 1822px AND UP THE STRIP BECOMES THE THIRD COLUMN and that last bare band
+     goes with it: one row, three tracks, list and editor and strip all starting at
+     the content top. 1822 is where the editor can keep its 640px measure with both
+     of them beside it; the band's own comment does the arithmetic.
      An OVERLAY is still refused, now with this pass's numbers rather than from
      memory: at 1280 the page runs to x=1258 inside a content area ending at 1264,
      with Unpin at 1113-1166, Delete at 1172-1227 and the toolbar spanning
@@ -782,6 +793,84 @@ select option{background:var(--pearl);color:var(--txt)}
      back to the top: the strip costs the pane the same height at either end of
      the column. */
   #sticky[data-pos="top"] #stickyPad{height:184px}
+  /* THE LIST FILLS THE BAND BESIDE THE STRIP, and the cause is what moves, not the
+     pane. The strip is a row of #main's column, so everything after it began 231px
+     down (14 padding, 221 of strip, 10 of margin) and the canvas to its left drew
+     nothing: 476x221 at 1280, 636x221 at 1440. So #main becomes a two-column grid
+     here and #notes hands its own children over with display:contents, which is
+     the one thing that lets the list take column ONE across BOTH rows while the
+     strip and the editor stack in column two. No negative margin, nothing pulled.
+     NOTHING MOVES RIGHT AND NOTHING SHRINKS. Column two is the pane minus the list
+     and the gap, so it ends where the pane ends: the strip keeps 464px and lands
+     on exactly the x it had (800 to 1264 at 1280, 960 to 1424 at 1440), the editor
+     keeps its 654px and its 648px page, and the editor still starts below the
+     strip. The list is the only thing that changes: 540px tall to 771px, starting
+     at the top of the content area. 190x221 of canvas is still bare above the
+     editor at 1280; that is the strip's width talking and only a narrower strip
+     could buy it back.
+     ONLY HERE. At 901 to 1199 column two would be narrower than the strip itself
+     (398px against 464px at 1024), so the strip would overflow back across the
+     list; that band keeps the stacked flow, where the band is 129px rather than
+     221px. Under 900px there is no band at all, the strip is last in the flow.
+     AND AT 1822px THE 190x221 GOES TOO, because the strip stops being a row and
+     becomes the third grid track: see the band below this one. That width is the
+     first at which the editor can keep its 640px measure with a 464px strip and
+     a 272px list beside it, so it is where the band starts and not a pixel below.
+     THE EMPTY SLOTS span the full width. #tray, #boardnav, #strip, #habits and
+     #weekMobile are all guaranteed empty in a wide Notes view (renderTray returns
+     early on the view, renderNav empties the two board slots, and renderHabits and
+     renderWeekly host in the rail whenever railWide()), so this decides nothing
+     visible; it means a slot that somehow drew would be a row of its own rather
+     than a squeeze on the list's column.
+     The display:contents is !important because render() writes #notes's display
+     inline. It applies only while .stickytop is set, which is only while Notes is
+     the view, so the inline display:none that hides #notes everywhere else still
+     wins. Same override the rail's .railhide already makes. */
+  #main.stickytop{display:grid;grid-template-columns:272px minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr);column-gap:14px;padding-bottom:16px}
+  #main.stickytop>#notes{display:contents!important}
+  #main.stickytop .notelist{grid-column:1;grid-row:1/3}
+  /* align-self on a grid item is the BLOCK axis, so the strip's flex-end no longer
+     means "right": justify-self is what keeps it against the pane's right edge. */
+  #main.stickytop #sticky{grid-column:2;grid-row:1;justify-self:end;align-self:start}
+  #main.stickytop .noteed{grid-column:2;grid-row:2}
+  #main.stickytop>#tray,#main.stickytop>#boardnav,#main.stickytop>#strip,
+  #main.stickytop>#habits,#main.stickytop>#weekMobile{grid-column:1/-1}
+}
+/* ---------- 1822px and up: the strip stops being a row and becomes a COLUMN ----------
+   The 1200px grid handed the list the band beside the strip, but the strip itself was
+   still a row of #main's column, so the editor still began 231px down and 190x221 of
+   canvas still stood bare above it at 1280. Wide enough, none of that has to be paid:
+   the strip stands BESIDE the pane rather than above it, and the list, the editor and
+   the strip all start at the content top together. The bare band is gone, not moved.
+   1822 IS MEASURED, AND WHAT IT PROTECTS IS THE EDITOR'S MEASURE. The page is
+   fit-content around .notewrap's 640px reading measure, so its full width is
+   640 + 60 of .notepage padding + 2 of border = 702px. .noteed spends 6px of its own
+   padding and, while a note is long enough to scroll, the 10px scrollbar gutter, so
+   the editor column needs 718px to leave the measure whole. Beside it stand the 272px
+   list and the 464px strip with the grid's two 14px gaps: 272 + 14 + 718 + 14 + 464 =
+   1482px of content area, and #main spends 16px either side inside a column that is
+   the viewport less the 308px rail, so 1482 + 32 + 308 = 1822. One pixel narrower and
+   the scrollbar takes the measure below 640, which is the whole of the number: it is
+   the width at which three columns fit without the editor paying for the third. It is
+   cut for the EXPANDED rail because that is the tighter case; collapsing the rail only
+   ever hands the content area more (the freed column, less the 56px the restore button
+   stands in), so the branch cannot be reached with less room than it was measured for.
+   NOTHING ELSE MOVES. The strip keeps its 464px width and its 184px pad, the list
+   keeps its 272px, the editor keeps its page, and the strip is still IN FLOW: it is a
+   grid track, not a float, so the overlap measured against .ntools, Unpin and Delete
+   cannot be built here any more than it can below. Below 1822 the two-column grid is
+   untouched, and below 1200 so is the stacked column flow. */
+@media (min-width:1822px){
+  /* ONE row, so the three tracks share the top edge; 1fr rather than auto so the list
+     and the editor still fill the pane's height the way they do in the two-row grid. */
+  #main.stickytop{grid-template-columns:272px minmax(0,1fr) 464px;
+    grid-template-rows:minmax(0,1fr)}
+  #main.stickytop .notelist{grid-row:1}
+  #main.stickytop .noteed{grid-column:2;grid-row:1}
+  /* justify-self:end and align-self:start carry over from the 1200 rule; the 10px was
+     the gap down to a pane that is no longer underneath it. */
+  #main.stickytop #sticky{grid-column:3;grid-row:1;margin:0}
 }
 @media (max-width:900px){
   #sticky{position:static;width:auto;margin:10px 0 4px}
@@ -3724,6 +3813,9 @@ function renderSticky(){
      Floating keep the bottom right corner. */
   st.dataset.pos=v==='notes'?'top':'corner';
   $('#main').classList.toggle('stickycorner',show&&v!=='notes');
+  /* the Notes placement names itself on #main too, so the grid that lets the note
+     list fill the band beside the strip has something to hang off (1200px and up) */
+  $('#main').classList.toggle('stickytop',show&&v==='notes');
   const pad=$('#stickyPad');
   if(pad&&document.activeElement!==pad){
     const txt=(state.sticky&&state.sticky.text)||'';
