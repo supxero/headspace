@@ -11,8 +11,16 @@ await wait(300);
 const A=w.A, S=()=>w.A.state;
 const q=s=>doc.querySelector(s), qa=s=>[...doc.querySelectorAll(s)];
 const click=s=>{const e=q(s); if(!e) throw new Error('missing '+s); e.click()};
-const T=()=>new Date().toISOString().slice(0,10);
-const plus=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().slice(0,10)};
+/* These two must agree with the app's `iso` (index.html), which pins a date to LOCAL
+   noon before slicing the ISO string. A bare toISOString() is UTC, so east of Greenwich
+   these named YESTERDAY for the whole early-morning window (at UTC+8, local 00:00 to
+   08:00) while the app was already on today. That did not read as a failed assertion,
+   it crashed: #qd only carries options for the app's today and tomorrow, so a select
+   set to a date it does not offer keeps '', addFromText splits '' into a dest with an
+   undefined zone, and place() splices undefined. The rest of the file already
+   normalises to noon; these two were the ones left on UTC. */
+const T=()=>{const d=new Date();d.setHours(12,0,0,0);return d.toISOString().slice(0,10)};
+const plus=n=>{const d=new Date();d.setDate(d.getDate()+n);d.setHours(12,0,0,0);return d.toISOString().slice(0,10)};
 const fire=(el,t)=>el.dispatchEvent(new w.Event(t,{bubbles:true}));
 const select=async id=>{ // make sure this card is the open one
   if(!q('.task.sel [data-action="sel"][data-id="'+id+'"]')){
@@ -3988,8 +3996,12 @@ console.log('— sticky note: one shared scratch block —');
   S().settings.floatMode=true; A.render(); await wait(20);
   ok(q('#sticky').style.display!=='none','still there on Free Floating');
   S().settings.floatMode=false; S().settings.view='notes'; A.render(); await wait(20);
-  ok(q('#sticky').style.display!=='none'&&q('#sticky').dataset.pos==='top',
-    'and in Notes, at its top placement');
+  /* 'foot', not 'top': the strip sits BELOW the pane so the note list and the editor
+     start at the top of the content area. The old name WAS the dead band. */
+  ok(q('#sticky').style.display!=='none'&&q('#sticky').dataset.pos==='foot',
+    'and in Notes, at its foot placement, below the pane rather than above it');
+  ok(!/order:\s*-1/.test((html.match(/#sticky\[data-pos="foot"\]\{([^}]*)\}/)||[])[1]||''),
+    'and it takes no negative order, which is what used to hoist it over the list');
   ok(q('#stickyPad').value==='milk, and call the plumber','the same text in every placement: one block, not three');
   S().settings.view='calendar'; A.render(); await wait(20);
   ok(q('#sticky').style.display==='none','the calendar keeps its full width');
@@ -4015,27 +4027,55 @@ console.log('— sticky note: one shared scratch block —');
     ok(/#sticky\{width:464px\}/.test(big),'and doubles to 464px only where the board has the room');
     ok(/#main\.stickycorner #board\{padding-right:496px\}/.test(big),
       'with the reservation moving to match, or the last column slides back under it');
-    /* the corner's HEIGHT is the number that could not move. At 1024 a day
-       column's "+ add" row sits 159px above the board's bottom and the corner
-       already stands 147px into that: measured, a 138px pad buries that control
-       at any corner wider than 260px. So the corner bought its size on width. */
+    /* HEIGHT, the second pass, and the corner lost it outright. 92px is what the
+       corner gets at EVERY wide width: at 1024 a day column's "+ add" row sits
+       159px above the board's bottom while the corner already stands 147px into
+       that, and at 1280 the pass measured a doubled corner over a "+ add" at
+       (794,625) in the ordinary boot-tray state. The double survives only in
+       Notes, which has no board under it, and only at 1200px and up, because at
+       1024 the pane measured 571px of content into 502px of room. */
     ok(/#stickyPad\{[^}]*height:92px/.test(css),
-      'the wide pad keeps its 92px height, which is what keeps the column add row hit-testable at 1024');
-    ok(!/#sticky\[data-pos="top"\] #stickyPad/.test(css),
-      'and both wide placements share that one height, so there is no second number to drift');
+      'the corner pad is 92px at every wide width, which is what keeps a column add row hit-testable');
+    /* the only pad-height rule in the 1200 band must be the Notes one. A bare
+       `#stickyPad{height:184px}` there would hand the corner the double too. */
+    const bigPad=big.split('\n').filter(l=>/#stickyPad\{/.test(l));
+    ok(bigPad.length===1&&/data-pos="foot"/.test(bigPad[0]),
+      'and the corner never takes the doubled height, at 1280 no more than at 1024');
+    ok(/#sticky\[data-pos="foot"\] #stickyPad\{height:184px\}/.test(big),
+      'the double survives in Notes alone, and only above 1200px where the pane can pay it');
+    ok(!/#stickyPad\{[^}]*height/.test(wide),
+      'the 901 to 1199 band names no pad height of its own: both wide placements keep the 92px base there');
     /* the reservation is the thing that keeps the last column clear AND, because
        it counts inside the board's scroll width, is what stops a non-scrolling
        board from ever putting a column under the corner. It must track the
        corner's own width, so it repeats the same expression. */
     const res=(wide.match(/#main\.stickycorner #board\{padding-right:([^}]*)\}/)||[])[1]||'';
     ok(/264px/.test(res),'the base reservation is the base corner width plus its 32px offset');
-    /* Notes: width only. #noteBody is a fixed 240px and gives nothing back, so a
-       taller strip comes out of the pane, and at 1024 that pane is already full. */
-    ok(/#sticky\[data-pos="top"\]\{[^}]*width:464px/.test(wide),
-      'the Notes strip takes the doubled width, which is the axis that costs the editor nothing');
-    /* narrow: width is already full, so height is the only axis left */
-    ok(/#stickyPad\{height:168px/.test(narrowB),'the narrow pad doubles 84 to 168, the only axis it has left');
+    /* Notes keeps the doubled width it already had; this pass did not touch widths */
+    ok(/#sticky\[data-pos="foot"\]\{[^}]*width:464px/.test(wide),
+      'the Notes strip keeps its 464px width, untouched by the height pass');
+    /* narrow keeps 168. Height is uncovered there but it is not free of scroll:
+       a near-empty board at 820 measures exactly 1180 of 1180, so 336 would start
+       a scroll that was not there, and it is most of a phone screen with the
+       keyboard up. Doubled once (84 to 168), not twice. */
+    ok(/#stickyPad\{height:168px/.test(narrowB),
+      'the narrow pad stays at 168, because doubling again starts a scroll at 820 that was not there');
     ok(/font-size:16px/.test(narrowB),'and keeps the 16px that stops the browser zooming on focus');
+  }
+  /* THE DEAD BAND, which was never the tray's. A slot a render can empty must
+     carry its spacing on :not(:empty), the contract #habits, #weekMobile and
+     #tray already kept; #boardnav and #strip did not, and in Notes they held
+     11px and 9px of canvas open above the pane on top of the sticky's 138px. */
+  {
+    const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+    ok(/#boardnav\{[^}]*\}/.test(css)&&!/#boardnav\{[^}]*margin-bottom/.test(css),
+      'the board nav carries no margin while it is empty');
+    ok(/#boardnav:not\(:empty\)\{margin-bottom:11px\}/.test(css),
+      'it takes its 11px only when it has drawn something');
+    ok(/#strip:not\(:empty\)\{display:flex\}/.test(css),
+      'and the day strip stays display:none while empty, so its padding cannot hold a band either');
+    ok(/#tray:not\(:empty\)\{margin-bottom:12px\}/.test(css),
+      'the tray slot itself always collapsed correctly, which is why it was not the cause');
   }
 
   const sig0=A.stateSig(S());
