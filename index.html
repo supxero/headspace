@@ -409,7 +409,13 @@ select option{background:var(--pearl);color:var(--txt)}
 .binrow .nbtn{flex:none;font-size:11.5px;padding:6px 10px}
 
 /* board nav */
-#boardnav{display:flex;align-items:center;gap:7px;margin-bottom:11px;flex-wrap:wrap}
+/* the empty-slot contract, the one `#habits`, `#weekMobile` and `#tray` already keep:
+   a slot that a render can empty must carry its spacing on :not(:empty), or it holds
+   a band of canvas open in every view that does not draw it. #boardnav and #strip were
+   the two that missed it, and in Notes (where both are emptied) they were 11px and 9px
+   of dead space above the pane. */
+#boardnav{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+#boardnav:not(:empty){margin-bottom:11px}
 .nbtn{padding:7px 12px;border-radius:9px;font-size:12.5px;color:var(--navy);border:1px solid var(--line);background:var(--pearl);transition:.15s;font-weight:500}
 .nbtn:active{background:var(--navy);border-color:var(--navy);color:var(--on)}
 .nbtn:hover{color:var(--navy);border-color:var(--line2)}
@@ -675,33 +681,46 @@ select option{background:var(--pearl);color:var(--txt)}
      right; #board reserves the sticky's width at the END of its sideways
      scroll, so at max scroll the last column clears the corner, and any other
      column scrolls clear the way content already moves under a margin note.
-   - Notes (wide): a right-aligned strip ABOVE the pane (order:-1 in #main's
-     column flex), in flow. An overlay was measured and rejected: the page
-     reaches the right edge, so top-right floating covers its toolbar, and
-     reserving a side margin instead leaves the page ~140px wide at 1024 once
-     the rail and the list have taken theirs. A strip of height is the cheap
-     dimension in Notes; width is not.
+   - Notes (wide): a right-aligned strip BELOW the pane, in flow, at the FOOT of
+     #main's column. It used to sit above the pane on order:-1, and that was the
+     whole of the dead band over the note list: a 464px strip in a 940px row left
+     476x138 of bare canvas above the list, and the list and the editor started
+     149px down instead of at the top of the content area. #main does not scroll
+     on a wide layout, so a foot strip is on screen exactly as much as a top one
+     was, and it costs the same height; what it stops costing is a band the eye
+     reads as empty. An OVERLAY is still rejected here, for the reason it always
+     was: the page reaches the right edge, so a floating panel covers its toolbar,
+     and reserving a side margin instead leaves the page ~140px wide at 1024.
    - Under 900px: in flow, full width, at the END of the view, where a floating
-     corner would cover content and fight the on-screen keyboard.
+     corner would cover content and fight the on-screen keyboard. Same foot, so
+     the narrow rule and the Notes rule finally agree about where this thing goes.
    The textarea is STATIC markup, never rebuilt by a render, so its caret and
    its native undo survive every foreign render for free, the #qi trick.
-   SIZE: the pad was doubled, and the double is spent on a DIFFERENT axis at each
-   of the three placements, because at each one a different axis is the free one.
-   All three end at roughly twice the writing area; none of them is the same pair
-   of numbers, and one number applied to all three was wrong at two of them.
-   - the corner grows WIDE, and only above 1200px. It is an overlay, so every
-     pixel it gains is a pixel of board it covers at rest, and at 1024 there is
-     nothing to give on either axis: a column's "+ add" row sits 159px above the
-     board's bottom while the corner already stands 147px into that (12px of
-     headroom), and its centre sits at x=738 while a 264px corner already reaches
-     x=738. Both walls were measured, not guessed. So 901 to 1199px keeps the
-     corner exactly as it was, and 1200px and up doubles the width.
-   - Notes grows WIDE for a different reason: #noteBody is a fixed 240px and gives
-     nothing back, so strip height comes out of .noteed, and at 1024 that pane is
-     already exactly full (589px of content in 589px of room). Any height there
-     starts a scroll on a short note. 464x92 is twice 232x92 on its own.
-   - the narrow flow is the one place height is the free axis: the width is
-     already the full column, so the pad simply doubles, 84 to 168. */
+   SIZE: the pad's HEIGHT doubles, 92 to 184, in ONE placement and ONE band: the
+   Notes strip at 1200px and up. Widths are untouched by this pass. Every other
+   placement refused, and each refusal is a measurement, not a preference:
+   - THE CORNER CANNOT GROW TALLER ANYWHERE. It is an overlay on the board, so
+     every pixel it gains is a pixel of board it covers at rest. At 1024 that was
+     already known: a day column's "+ add" row sits 159px above the board's bottom
+     while the corner stands 147px into that, 12px of headroom against the 92px a
+     double wants. The new measurement is that 1280 is no better once a tray is
+     up: the viewport pass put a doubled corner over a "+ add" at (794,625) in the
+     ordinary boot-tray state, ten hit-test misses, on the widest profile there is.
+     This is risk 16 stated as a number rather than as a worry, and nothing between
+     92 and 184 buys anything either: 120px clears that control by one pixel.
+   - NOTES IS WALLED AT 1024 BUT NOT AT 1280, and the foot move did not change
+     which. Above the pane or below it, the strip is the same block of the same
+     column flex, so .noteed pays its height either way; the move bought placement,
+     not room, and all it won back was the 11px `#boardnav` was holding. At 1024
+     the doubled pad measured 571px of content into 502px of pane, a scroll on a
+     short note. At 1280 the pane pays the 92px and a short note still fits.
+   - the narrow flow keeps its 168. Height is uncovered there but it is not free
+     of scroll: a near-empty board at 820 measures exactly 1180 of 1180, so any
+     addition starts a scroll that was not there, and 336px of scratch pad is most
+     of a phone screen with the keyboard up. Doubled once (84 to 168), not twice.
+   So on a 1024 tablet the pad does not grow at all, on either axis, in either
+   placement, and on the board it does not grow at any width. That is the honest
+   shape of the result: the board is the thing this panel is not allowed to eat. */
 #main{position:relative}
 /* the corner keeps its 232px here and doubles only in the band below, where the
    board has the room. This is the base, so it is also what 901 to 1199px gets. */
@@ -709,14 +728,16 @@ select option{background:var(--pearl);color:var(--txt)}
   background:var(--panel);border:1px solid var(--line2);border-radius:var(--r2);
   box-shadow:var(--shadow);padding:8px 10px 9px;display:flex;flex-direction:column;gap:3px}
 .stickycap{font-family:var(--fbx);font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--mut2)}
-/* the pad height is the one number shared by both wide placements, and it is the
-   number that cannot move: see the corner and Notes notes above. Only the narrow
-   flow, which has no width left to spend, overrides it. */
+/* 92px is the BASE, which is what the corner gets from 901 to 1199px and what the
+   narrow flow overrides. It is no longer one number shared by both wide placements:
+   the corner is walled at 1024 and Notes is not, so each states its own below. */
 #stickyPad{width:100%;height:92px;resize:none;border:none;background:transparent;box-shadow:none;
   border-radius:0;padding:0;font-size:12.5px;line-height:1.5;color:var(--txt);outline:none;overflow-y:auto}
 #stickyPad::placeholder{color:var(--mut2)}
 @media (min-width:901px){
-  #sticky[data-pos="top"]{position:static;order:-1;align-self:flex-end;width:464px;margin:0 0 10px}
+  /* natural order, so it lands after #notes: the FOOT of the column, not the head.
+     No `order` at all is the point; order:-1 was the dead band. */
+  #sticky[data-pos="foot"]{position:static;align-self:flex-end;width:464px;margin:0 0 16px}
   /* the corner's clearance at the end of the board's sideways scroll: it tracks
      the corner's own width, or the last column slides back under it */
   #main.stickycorner #board{padding-right:264px}
@@ -734,10 +755,19 @@ select option{background:var(--pearl);color:var(--txt)}
 @media (min-width:1200px){
   #sticky{width:464px}
   #main.stickycorner #board{padding-right:496px}
+  /* THE HEIGHT DOUBLES IN NOTES ONLY, and only here. The corner does NOT come with
+     it: the pass measured a doubled corner burying a day column's "+ add" at rest
+     on THIS profile, at (794,625) in the ordinary boot-tray state, so the wall the
+     1024 board put up in Section 13 stands at 1280 too the moment a tray is up.
+     Notes has no board under it, so the only question there is the pane, and the
+     pane at 1280 can pay 92px where the 1024 pane cannot. */
+  #sticky[data-pos="foot"] #stickyPad{height:184px}
 }
 @media (max-width:900px){
   #sticky{position:static;width:auto;margin:10px 0 4px}
-  /* 16px keeps the browser from zooming the page when the field takes focus */
+  /* 168, not 336: the near-empty board at 820 is exactly 1180 of 1180, so doubling
+     again starts a scroll that was not there. 16px keeps the browser from zooming
+     the page when the field takes focus. */
   #stickyPad{height:168px;font-size:16px}
 }
 
@@ -818,7 +848,9 @@ select option{background:var(--pearl);color:var(--txt)}
 .syncstat.error .sdot,.syncstat.conflict .sdot{background:var(--navy)}
 .synchint{font-size:11.5px!important;color:var(--mut2)!important;line-height:1.5}
 
-/* day strip (mobile) */
+/* day strip (mobile). Hidden while empty on every width, not just the wide one: the
+   narrow rule below opts it in with the same :not(:empty) guard #boardnav uses, so its
+   padding and margin cannot hold a band open in Notes or the calendar. */
 #strip{display:none;gap:6px;overflow-x:auto;padding-bottom:9px;margin-bottom:9px}
 #strip button{flex:none;padding:7px 12px;border-radius:99px;font-size:12.5px;border:1px solid var(--line);color:var(--navy);background:var(--pearl);white-space:nowrap}
 #strip button:active{background:var(--navy);border-color:var(--navy);color:var(--on)}
@@ -919,7 +951,7 @@ select option{background:var(--pearl);color:var(--txt)}
   #board{overflow-x:visible;flex-direction:column;padding-bottom:0}
   .col{width:100%;max-height:none}
   .colbody{overflow-y:visible;max-height:none}
-  #strip{display:flex}
+  #strip:not(:empty){display:flex}
   .duo{grid-template-columns:1fr 1fr}
   /* stacked columns: the landing-side bar turns horizontal, same as the midpoint axis */
   .col.drop-before::after,.col.drop-after::after{left:12px;right:12px;width:auto;height:3px}
@@ -3656,7 +3688,9 @@ function renderSticky(){
   const v=state.settings.view;
   const show=v==='board'||v==='notes';   /* board covers Free Floating: same view */
   st.style.display=show?'':'none';
-  st.dataset.pos=v==='notes'?'top':'corner';
+  /* 'foot', not 'top': in Notes the strip sits BELOW the pane, so the note list and
+     the editor start at the top of the content area. The name is the placement. */
+  st.dataset.pos=v==='notes'?'foot':'corner';
   $('#main').classList.toggle('stickycorner',show&&v!=='notes');
   const pad=$('#stickyPad');
   if(pad&&document.activeElement!==pad){

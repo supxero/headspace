@@ -259,6 +259,8 @@ Risks 1, 3 and 9 of the revision before last are fixed, as is risk 4 (title vs t
 **Revisited when the pad was doubled (Section 13), and the answer is the opposite of what was feared.** The residual named above is now closed at the wide profiles, and it is closed by construction rather than by luck: the reservation counts inside the board's scroll width, so a board too short to scroll has `colsTotal <= clientW - corner - 32`, while the corner's left edge sits at `clientW - corner - 22`. Content therefore ends at least 10px before the corner on any board that cannot scroll, at any viewport, at any corner width, as long as the reservation is at least the corner width plus its offset. That inequality is now asserted directly in the viewport pass rather than inferred from one lucky layout, and growing the corner does not weaken it because the reservation grows with it. A side effect worth knowing: because the reservation is larger, the board tips into scrollable at a *lower* column count than before, which removes non-scrolling boards from more situations rather than adding them.
 
 **What the doubling did expose is a different and more common geometry**, and it is what capped the size: on a board that DOES scroll, a bigger overlay covers more controls at rest. Measured on tablet-1024, a corner grown to 348px wide put the second day column's `+ add` centre (x=738) under the pad and the viewport pass reported 48 to 72 hit-test misses across the ordinary `boot-tray` and `enter-chain` states. Scrolling clears it, which is the documented margin-note contract, but a control whose centre is not hit-testable at rest is a defect by this pass's own rule and was treated as one. The size was cut to fit the constraint rather than the constraint relaxed to fit the size.
+
+**Revisited again when the HEIGHT was asked for (Section 16), and this is where the residual stopped being theoretical.** Section 13 recorded the vertical wall as a 1024 problem with 12px of headroom: a day column's `+ add` row sits 159px above the board's bottom there while the corner already stands 147px into it. The height pass asked whether 1280 was different, and measured that it is not. A corner doubled to a 184px pad stands 239px into the board, and on **desktop-1280** the viewport pass put it over a day column's `+ add` at (794,625) in the ordinary `boot-tray` state: ten hit-test misses on the widest profile the pass runs, under both themes. So the honest statement of risk 16 is now stronger than "the geometry exists": **on the board the corner cannot grow taller at any width**, and the reason is not the exotic non-scrolling case at all but the everyday one, a board pushed down the page by a tray it has not been triaged out of yet. Nothing between the two sizes buys anything either: a 120px pad clears that control by one pixel, which is not a size, it is a coincidence. The corner therefore kept 92px everywhere, the width reservation and the by-construction argument above are untouched, and the only placement that took the doubled height is the one with no board under it (Notes, and only at 1200px and up, where the editor pane can pay). The board is the thing this panel is not allowed to eat, and that is now asserted at both wide profiles rather than argued at one.
 17. **A dead folder reference is tolerated in two places, and both must stay.** A note whose `folder` names no live folder renders loose (`noteFolderOf`) and rebuilds loose (`rebuild` drops the reference), which is what makes "folder deleted there, note filed here" safe in any order of merges. A future path that reads `n.folder` directly (an export viewer, a count, a filter) and trusts it to resolve will miscount or crash on exactly the state the merge is designed to produce; `noteFolderOf` is the accessor that already answers correctly.
 
 ## 9. Input and interaction (new, 2026-08-12)
@@ -418,9 +420,11 @@ One flat level, no nesting, a note lives in one folder or none. A folder is a fi
 
 ### 11.2 The sticky note (Change 2)
 
-One shared block of plain text in a `textarea`, no formatting, no list. Placement: a floating bottom-right corner over the canvas on Board and Free Floating, with `#board` reserving the corner's width at the end of its sideways scroll so the last column always clears it (risk 16); in Notes a right-aligned in-flow strip ABOVE the pane rather than an overlay, because the page reaches the right edge (a floating corner covered its toolbar) and a reserved side margin left the page ~140px at 1024, so "top right" is paid in height, the cheap dimension there; under 900px it joins the flow full width at the END of the view, because a phone has no spare corner: a floating panel there would cover content and fight the on-screen keyboard. The panel is powder on the canvas with a railcap caption: quiet, and clearly secondary to the columns. The pad is STATIC markup, never rebuilt by any render (the `#qi` trick), so its caret and its native undo survive foreign renders for free; `renderSticky` only shows, places, and refreshes the text while the pad is unfocused. State is `sticky:{text,at}`, merged whole by `at`: **the same body-versus-body last-write-wins exposure a note body has, stated plainly in Section 2 and risk 11, not solved**. The stamp is written at the keystroke, so the one race that could make it worse (the unstamped debounce window) cannot occur.
+One shared block of plain text in a `textarea`, no formatting, no list. Placement: a floating bottom-right corner over the canvas on Board and Free Floating, with `#board` reserving the corner's width at the end of its sideways scroll so the last column always clears it (risk 16); in Notes a right-aligned in-flow strip rather than an overlay, because the page reaches the right edge (a floating corner covered its toolbar) and a reserved side margin left the page ~140px at 1024, so it is paid in height, the cheap dimension there; under 900px it joins the flow full width at the END of the view, because a phone has no spare corner: a floating panel there would cover content and fight the on-screen keyboard. The panel is powder on the canvas with a railcap caption: quiet, and clearly secondary to the columns. The pad is STATIC markup, never rebuilt by any render (the `#qi` trick), so its caret and its native undo survive foreign renders for free; `renderSticky` only shows, places, and refreshes the text while the pad is unfocused. State is `sticky:{text,at}`, merged whole by `at`: **the same body-versus-body last-write-wins exposure a note body has, stated plainly in Section 2 and risk 11, not solved**. The stamp is written at the keystroke, so the one race that could make it worse (the unstamped debounce window) cannot occur.
 
-**Sizes superseded by Section 13**: the pad was doubled, and because each placement has a different free axis it is now three sizes rather than one. The placement rules, the merge, the static-markup pad and `renderSticky`'s job are all exactly as described above and were not touched.
+**Sizes superseded by Section 13, then by Section 16**: the pad's width was doubled first (three sizes, one per free axis), and its height second (one placement, one band). The merge, the static-markup pad and `renderSticky`'s job are exactly as described above and have never been touched by a sizing pass.
+
+**The Notes placement changed in Section 16 and this paragraph is the correction.** It said ABOVE the pane, on `order:-1`, and that word was the whole of the dead band over the note list: a 464px strip in a 940px row, so the list and the editor began 149px down with 476x138 of bare canvas beside the panel. It is now the FOOT of the same column, below the pane, in flow, right-aligned, `data-pos="foot"`. `#main` does not scroll on a wide layout, so a foot strip is on screen exactly as much as a top one was and costs the pane the identical height; what it stops costing is a band the eye reads as empty. An overlay in Notes is still refused, for the reason recorded above.
 
 ## 13. Doubling the sticky note (new, 2026-08-12)
 
@@ -445,6 +449,8 @@ So at 901 to 1199px the corner keeps exactly the size it had. Above 1200px the b
 This is the honest shape of the result: **on a 1024 tablet the sticky note does not get bigger at all**, and the alternative was a corner that buries a real control on a common device.
 
 ### 13.2 Notes: width only, because height is the editor's
+
+*(Superseded in part by Section 16: the strip moved from above the pane to below it, and at 1200px and up the pad did take the doubled height. The reasoning here still holds at 1024, where it still cannot.)*
 
 `#noteBody` is a fixed 240px and gives nothing back, so strip height comes out of `.noteed`, the pane around the page. At 1024 that pane was already exactly full, 589px of content in 589px of room, so any height at all starts a scroll on a short note; a 138px pad was measured doing precisely that, 571px of content in 543px. Width costs the editor nothing, and 464 x 92 is twice 232 x 92 on its own. After the change every Notes height at both wide profiles is byte-identical to before: pane 621/589, page 411/551, body 240, editor scroll none.
 
@@ -600,9 +606,81 @@ No whitelist was relaxed and none needed widening for red: `--north` was already
 
 Expected count moved 1239 to 1267. The viewport pass is clean across all four profiles under both themes: no control under 44px on the three coarse ones, no horizontal page overflow, and the statement legible and unclipped at 390px. The two `#popRoot .popover` "root not found" notes under mono predate this change and are unchanged in count.
 
+## 16. The dead band above Notes, and the height that only one placement could pay (new, 2026-08-13)
+
+Three fixes were asked for in the Notes view: kill the empty band above the pane, let the carry-over tray have that band without colliding with the sticky note, and double the sticky's height. Behaviour, sync and the merge are untouched. Two of the three shipped as asked. The third shipped in one placement out of three, and the other two refusals are measurements, printed below.
+
+### 16.1 What the band actually was
+
+The brief's hypothesis was that the tray's slot holds height while empty. It does not, and it never did: `#tray:not(:empty){margin-bottom:12px}` plus a `renderTray` that writes `innerHTML=''` means the tray slot collapses to a zero-height box, which the geometry pass confirms (`#tray` measured `h0` at all four profiles with `carry: []`). The band had two other authors.
+
+**The sticky note's own strip, 138.5px of the 149.5.** In Notes the sticky sat ABOVE the pane on `order:-1` in `#main`'s column flex. It is 464px wide in a 940px content row at 1280, so what a screenshot shows is a small panel pinned right and 476 x 138 of bare canvas beside it, sitting on top of the note list. Measured before: `#notes` began at y=163.5 with the content area starting at y=14.
+
+**Two slots that carried spacing while empty, 11px and 9px.** `#boardnav` declared `margin-bottom:11px` unconditionally, and `#strip` declared `display:flex` (narrow) with its own padding and margin, unconditionally. Both are emptied by `render()` in every non-board view. The app already had the right idiom in three places (`#habits:not(:empty)`, `#weekMobile:not(:empty)`, `#tray:not(:empty)`); these two were the ones that missed it. That is the whole diagnosis: **an empty-slot contract that two of five slots did not keep, plus a panel parked in the wrong half of the column.**
+
+The fix is the contract for the two slots, and for the sticky a move from `order:-1` to natural order, which puts it after `#notes`: the FOOT of the column rather than the head. `data-pos` follows the placement, `top` to `foot`, so the name cannot lie about it again. `#main` does not scroll on a wide layout, so the strip is on screen exactly as much as it was.
+
+| profile | `.notelist`/`.noteed` top, before | after | content area top |
+|---|---|---|---|
+| desktop-1280 | 163.5 | **14** | 14 |
+| tablet-1024 | 163.5 | **14** | 14 |
+| tablet-820 | 146 | **126** | 126 |
+| phone-390 | 156 | **136** | 136 |
+
+At the two wide profiles the list and the editor are top-aligned with each other at the content top; at 820 and 390 they stack, and the pair starts at the content top. This is what board columns already did, and it is now asserted rather than assumed.
+
+### 16.2 The tray in that band, and how it is kept off the sticky
+
+With the band no longer held open, a tray simply is the band: `#tray` is the first drawn block of the content area in Notes (quick add is hidden there), so it starts at the same y the pane starts at when there is no tray, at every profile. Measured: tray top 14 / 14 / 126 / 136, pane top 183 / 183 / 408.3 / 443.9.
+
+**They are kept apart on the vertical axis, and the tray gives up no width at all.** The brief expected a horizontal reservation in the spirit of `#board`'s `padding-right`. None is needed and none was added, because the sticky is no longer anywhere near the top of the Notes column: the tray is the first block of the content area and the sticky is the last, in every view and at every width. The rule is one sentence rather than four, which is the useful outcome of the placement change:
+
+| width | sticky in Notes | how it clears the tray |
+|---|---|---|
+| 1200px and up | foot strip, in flow, right-aligned, 464 x 184 pad | last block of the column; tray is the first |
+| 901 to 1199px | foot strip, in flow, right-aligned, 464 x 92 pad | same |
+| under 900px | full width, in flow, end of the view | same, and the sticky is not a corner overlay here either |
+
+Tray width measured equal to the content width at all four profiles (940 / 684 / 782 / 352), unchanged by this work. The overlap test is asserted as a rect intersection in the viewport pass, under both themes.
+
+**What arrival and departure do to the view.** On a wide layout `#main` does not scroll and `#notes` is `flex:1`, so a tray takes its height out of the pane rather than pushing the pane down the page: the list and the editor shrink together and stay top-aligned, and neither leaves the viewport. On narrow the page scrolls, so the tray pushes the rest down by its own height, which is the normal behaviour of a document. **Mid-edit, the honest answer is that the caret survives and the scroll position does not**: `render()` calls `renderNotes()`, which rebuilds `#notes` wholesale and then restores focus and the caret offset through `noteCaretGet`/`noteCaretSet`, but `.noteed` is a new element so its `scrollTop` returns to 0. On a note long enough to scroll, a tray landing mid-sentence leaves the caret correct and the view at the top of the page. That is pre-existing, it is the same rebuild every foreign render does, and it was NOT changed here because the brief ruled behaviour changes out; it is recorded so the next person does not have to rediscover it. The cheapest fix, if it is ever wanted, is to carry `.noteed.scrollTop` across the rebuild the way the caret already is.
+
+### 16.3 The height: one placement paid, two refused
+
+"Double its height, leave the width alone." The pad is 92px at both wide placements and 168px narrow. Doubling means 184 and 336. What shipped:
+
+| placement | before | after | why |
+|---|---|---|---|
+| Notes strip, 1200px and up | 464 x 92 | 464 x **184** | the pane can pay it; measured, a short note still fits with no scroll |
+| Notes strip, 901 to 1199px | 464 x 92 | **unchanged** | at 1024 the doubled pad put 571px of content into 502px of pane |
+| corner, any wide width | 232/464 x 92 | **unchanged** | it buries a day column's `+ add` at rest, at 1280 as well as at 1024 |
+| narrow flow, under 900px | full x 168 | **unchanged** | 336 starts a scroll at 820 that was not there, and is most of a phone screen with the keyboard up |
+
+**The corner is the refusal that matters, and it is risk 16 arriving for real.** Section 13 recorded the vertical wall as a 1024 problem with 12px of headroom. The height pass asked whether the widest profile is different and measured that it is not: a corner with a 184px pad stands 239px into the board, and the viewport pass put it over a day column's `+ add` at (794,625) on **desktop-1280** in the ordinary `boot-tray` state, ten hit-test misses under both themes. The mechanism is not the exotic non-scrolling case risk 16 had left open; it is the everyday one, a board pushed down the page by a tray nobody has triaged yet. Nothing between the two sizes is worth having either: a 120px pad clears that control by a single pixel. So the corner keeps 92px at every width, the width reservation and the by-construction argument of Section 13 are untouched, and risk 16 has been rewritten to say this as a number.
+
+**Notes at 1024 is the second refusal, and the foot move did not rescue it.** It is worth being exact about what the move bought, because it is tempting to assume it bought room. Above the pane or below it, the strip is the same block of the same column flex, so `.noteed` pays its height either way. The move bought placement only. The 11px `#boardnav` was holding is the entire height the pane gained, which is why 1024 still cannot pay 92 more.
+
+**What it costs the editor**, `.noteed` height, no tray, before against after:
+
+| profile | before | after | short-note page | scrolls |
+|---|---|---|---|---|
+| desktop-1280 | 620.5 | **533.5** | 411.4 | no |
+| tablet-1024 | 588.5 | **593.5** | 439 | no |
+| tablet-820 | 644.4 | 644.4 | 644.4 | no (the pane is content-sized in the stacked flow) |
+| phone-390 | 537.6 | 537.6 | 537.6 | no |
+
+So the editor loses 87px at 1280, which is what the doubled pad costs, and **gains** 5px at 1024, which is the `#boardnav` margin. With a tray up as well, 1280's pane is 364.5 against a 440.4 page and does scroll where it previously did not; 1024's is 424.5 against 439 and scrolled before too. Under 900px nothing about the editor moved: the sticky pad is unchanged there and the pane is content-sized, so `#noteBody` is still 40vh (337.6px at 390). **At 390 with the on-screen keyboard up**, modelled the way Section 13 modelled it by cutting the viewport to 55% (390x464): the list is 176px, the pane 385.6px and `#noteBody` 185.6px of writing area inside a 464px visible viewport, with no horizontal overflow and the page scrolling to reach it. That is the same as before this commit, because nothing narrow changed size.
+
+### 16.4 What the audits gained
+
+- `tests/test.js`: the empty-slot contract pinned directly (`#boardnav` carries no margin in its base rule, takes 11px only on `:not(:empty)`, `#strip` stays `display:none` while empty, and the tray's own already-correct rule asserted so the diagnosis cannot be re-litigated); `data-pos="foot"` asserted in the Notes view along with the absence of any negative `order`; and the height table pinned as three separate facts, including that the 1200px band contains exactly one pad-height rule and that it names the foot placement, so a later tidy cannot hand the corner the double by dropping a selector.
+- `tests/viewports.js`: a new `notes-band` flow measuring, at all four profiles under both themes, that the list and the editor start at the content top with no tray, that a tray takes exactly that band, that tray and sticky never intersect, that the tray keeps the full content width, and that the editor stays writable with the tray up; the Notes sticky check rewritten from "top right" to "foot, below the pane"; the corner's 92px height asserted on the board; and the page-overlap test taught to clamp the page rect to `.noteed` before testing it, since a page taller than its pane reports a box running past everything below it and was reporting a false overlap.
+
+Expected count moved 1308 to 1315. Both suites green: `node tests/test.js` at 1315, and the viewport pass **clean across all four profiles under both themes**, with no horizontal overflow and no control under 44px on the three coarse profiles.
+
 ## Housekeeping notes
 
-- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, the one-rail-surface commit to 1289, the white-means-active commit to 1308, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
+- CLAUDE.md's expected test count is now checked by the suite itself, so it can no longer drift silently; the theming commit moved it to 837, the Notes data-integrity commit to 871, the input-and-interaction commit to 961, the step-button follow-up to 1010, the layout-and-navigation commit to 1127, the four-additions commit to 1239, the white-backdrop-and-one-size commit to 1267, the sticky-note resize to 1276, the one-rail-surface commit to 1289, the white-means-active commit to 1308, the Notes-band commit to 1315, and it added the theme rules (two themes, the variables-only contract, the `agora_dayplanner_theme` key never renamed, no pure white in either palette) to the hard-rules list.
 - `IOS-CHECKLIST.md` predates the theme and does not yet exercise it on a device; the two items worth a minute when someone next holds a phone: the status-bar/browser chrome colour following a switch (the meta), and Silkscreen's legibility at the smallest labels on a real OLED.
 - `SETUP.md`/`START-HERE.md` predate sync, the tray changes, the bin, and the Notes view, and have not been re-verified; SETUP.md's one line naming the focus panel was updated to True north during the rename, the rest untouched. The in-app Help also does not mention Notes yet; adding a line there is copy work awaiting the owner's wording.
 - `IOS-CHECKLIST.md` (retitled inside to "Manual device checklist") is the manual companion to Section 7, rewritten 2026-08-10 for the app as it stands: thirteen risk-ordered items with concrete steps and pass/fail descriptions, now covering the rich-notes update-pickup stakes (a stale build shows markup as text), rich-text sync between two physical devices, the Notes editor under Safari's keyboard/autocorrect/caret, the 44px overlays under a real finger on iPhone AND an Android tablet, True north's uncollapsible-with-content rule on a small screen, and the touch tab-reorder gap verified inert. Budget stated in the file: one ~45 minute sitting plus a second-device item and an overnight item.
