@@ -60,7 +60,8 @@ ok(col.classList.contains('today'),'today column is marked');
 ok(qa('.col[data-day="'+T()+'"] .zone').length===3,'three zones on a day');
 let extra=q('.zone[data-day="'+T()+'"][data-zone="extra"]');
 ok(extra.classList.contains('locked'),'Extra starts locked');
-ok(/Opens when every Prio 0 is ticked/.test(extra.textContent),'lock message explains why');
+ok(!!extra.querySelector('.zh .lk'),'and the lock glyph on the zone header says so');
+ok(!/Opens when every Prio 0 is ticked/.test(extra.textContent),'no lock sentence is drawn');
 S().days[T()].must.forEach(t=>t.done=true); A.render(); await wait(20);
 extra=q('.zone[data-day="'+T()+'"][data-zone="extra"]');
 ok(!extra.classList.contains('locked'),'Extra unlocks when all Musts are ticked');
@@ -3329,16 +3330,22 @@ console.log('— the copy pass: the lines that stopped rendering —');
   ok(!/\d+ of \d+ done/.test(q('#board').textContent),'and so is "N of N done"');
   ok(!!q('.zone[data-day="'+T()+'"][data-zone="must"] .zh .n'),
     'the per-zone count on the zone header is untouched');
-  /* the Extra lock keeps the sentence that names an action and drops the one that
-     only editorialised; with no Prio 0 the zone says nothing, element included */
-  ok(/Opens when every Prio 0 is ticked/.test(
-      q('.zone[data-day="'+T()+'"][data-zone="extra"]').textContent),
-    'a locked Extra with a Prio 0 on the day still says what unlocks it');
+  /* the Extra lock drops BOTH sentences: the one that only editorialised and the one
+     that explained the rule. The glyph is the whole locked state now, and the .lockmsg
+     element goes with the string in either case, Prio 0 on the day or not. */
+  const exL=q('.zone[data-day="'+T()+'"][data-zone="extra"]');
+  ok(exL.classList.contains('locked')&&!!exL.querySelector('.zh .lk'),
+    'a locked Extra with a Prio 0 on the day is locked and shows the lock glyph');
+  ok(!exL.querySelector('.lockmsg')&&!/Opens when every Prio 0 is ticked/.test(exL.textContent),
+    'and no longer says what unlocks it, the .lockmsg element included');
   S().days[T()].must=[]; A.render(); await wait(25);
   const ex=q('.zone[data-day="'+T()+'"][data-zone="extra"]');
-  ok(ex.classList.contains('locked'),'with no Prio 0 the zone is still locked');
+  ok(ex.classList.contains('locked')&&!!ex.querySelector('.zh .lk'),
+    'with no Prio 0 the zone is still locked and still shows the glyph');
   ok(!ex.querySelector('.lockmsg')&&!/Free time is earned/.test(q('#board').textContent),
-    'and says nothing there, the .lockmsg element included');
+    'and says nothing there either');
+  ok(!/Opens when every Prio 0 is ticked/.test(q('#board').textContent),
+    'the lock sentence is off the board entirely');
   /* the inline add: a plus, and a name that is not the plus */
   const za=q('.zadd');
   ok(!!za&&za.textContent.trim()==='+','the inline add control is the plus alone');

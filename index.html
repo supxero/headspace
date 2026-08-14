@@ -462,7 +462,6 @@ select option{background:var(--pearl);color:var(--txt)}
 .zh .lk{width:12px;height:12px;margin-left:2px;color:var(--denim);flex:none}
 .zh .n{margin-left:auto;font-weight:500;letter-spacing:0;font-size:10.5px}
 .zone.locked{opacity:.55}
-.lockmsg{font-size:11px;color:var(--mut2);padding:4px 4px 6px;font-style:italic}
 .freego{font-size:11px;color:var(--teal);padding:4px 4px 6px;font-weight:600}
 .zadd{width:100%;text-align:left;font-size:11.5px;color:var(--mut2);padding:5px 6px;border-radius:7px;transition:.14s;margin-top:2px}
 .zadd:hover{background:rgba(var(--ink-rgb),.06);color:var(--navy)}
@@ -2971,13 +2970,12 @@ function dayCol(d,i){
     h+='<div class="zone'+(locked?' locked':'')+'" data-drop="day" data-day="'+d+'" data-zone="'+z+'">'+
       '<div class="zh"><i class="pip" style="background:'+ZC[z]+'"></i>'+ZL[z]+
       (z==='extra'?(locked?' '+LOCK:''):'')+'<span class="n">'+x[z].length+'</span></div>';
-    if(z==='extra'){
-      /* locked with Prio 0 on the day, the line says what unlocks it. Locked with
-         NONE, it says nothing at all and renders no element: .lockmsg carries its own
-         padding, so an emptied div would leave a gap where the sentence was. */
-      h+= locked
-        ? (x.must.length?'<div class="lockmsg">Opens when every Prio 0 is ticked.</div>':'')
-        : '<div class="freego">free time, go</div>';
+    if(z==='extra'&&!locked){
+      /* 2026-08-14: the locked zone says nothing at all and renders no element. The
+         lock glyph on .zh is the whole state now; the sentence that explained it went
+         with its counterpart in the same pass, .lockmsg and its padding included, or an
+         emptied div would hold a band of canvas where the line was. */
+      h+='<div class="freego">free time, go</div>';
     }
     h+=x[z].map(t=>card(t,{kind:'day',date:d,zone:z})).join('');
     h+=addRow({kind:'day',date:d,zone:z})+'</div>';
