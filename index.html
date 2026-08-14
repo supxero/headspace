@@ -394,7 +394,6 @@ select option{background:var(--pearl);color:var(--txt)}
 .trayhead{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px}
 .trayhead b{font-family:var(--fd);font-size:13.5px;color:var(--navy);display:flex;align-items:center;gap:7px}
 .trayhead b::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none}
-.trayhead .why{font-size:11.5px;color:var(--mut)}
 .trayhead .acts{margin-left:auto;display:flex;gap:6px}
 /* tray only: powder keeps the controls readable now the panel behind them is brighter */
 .tbtn{font-size:11.5px;padding:5px 10px;border-radius:8px;border:1px solid var(--line2);color:var(--navy);background:var(--panel);transition:.15s}
@@ -592,8 +591,7 @@ select option{background:var(--pearl);color:var(--txt)}
 .noterow.on{background:var(--pearl);border-color:var(--line2);box-shadow:var(--shadow)}
 .noterow .nt{display:flex;align-items:center;gap:5px;font-size:13px;font-weight:600;color:var(--txt);max-width:100%}
 .noterow .nt svg{width:11px;height:11px;flex:none;color:var(--denim)}
-.noterow .ntx,.noterow .nsub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.noterow .nsub{font-size:11px;color:var(--mut2)}
+.noterow .ntx{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (hover:hover){ .noterow:hover{background:rgba(var(--ink-rgb),.06)} .noterow.on:hover{background:var(--pearl)} }
 .noterow:active{transform:scale(.99)}
 /* folders: one level, no nesting. A folder is a quiet group heading in the list,
@@ -2826,7 +2824,7 @@ function renderQuick(){
 function renderTray(){
   if(state.settings.view==='notes'||!state.carry.length){$('#tray').innerHTML='';return}
   $('#tray').innerHTML='<div class="tray"><div class="trayhead">'+
-    '<b>Carry-over</b><span class="why">'+state.carry.length+' unfinished from before. Triage, or move them all.</span>'+
+    '<b>Carry-over</b>'+
     '<span class="acts"><button class="tbtn" data-action="carry-all" data-to="today">All → Today</button>'+
     '<button class="tbtn" data-action="carry-all" data-to="float">All → Free Floating</button></span></div>'+
     state.carry.map(t=>'<div class="trayitem">'+
@@ -2927,7 +2925,6 @@ function renderBoard(){
   b.innerHTML=h;
 }
 function floatCol(f,i){
-  const open=f.tasks.filter(t=>!t.done).length;
   return '<div class="col backlog" data-fid="'+f.id+'" style="animation-delay:'+(i*35)+'ms">'+
     /* the header is the tab's drag handle, so a drag starting on a card inside the
        column stays a card drag and the two never compete for the same press */
@@ -2943,7 +2940,10 @@ function floatCol(f,i){
     '<button class="mini" data-action="float-rename" data-fid="'+f.id+'" title="Rename">✎</button>'+
     (state.floats.length>1?'<button class="mini" data-action="float-del" data-fid="'+f.id+'" '+
       'title="Delete tab" aria-label="Delete tab">✕</button>':'')+
-    '</div><div class="meta">'+open+' open</div></div>'+
+    /* the tab is its name and its controls. The open count is gone with the day
+       columns' tally, element included, for the same reason: an empty .meta keeps
+       its margin. The rail's "N open" bar is a different line and stays. */
+    '</div></div>'+
     '<div class="colbody"><div class="zone" data-drop="float" data-fid="'+f.id+'">'+
     (f.tasks.length?f.tasks.map(t=>card(t,{kind:'float',fid:f.id})).join(''):'<div class="empty">Nothing here yet.</div>')+
     '</div>'+addRow({kind:'float',fid:f.id})+'</div></div>';
@@ -2953,14 +2953,16 @@ function dayCol(d,i){
   const dt=new Date(d+'T12:00:00');
   const openMust=x.must.filter(t=>!t.done).length;
   const allMustDone=x.must.length>0&&openMust===0;
-  const total=ZONES.reduce((a,z)=>a+x[z].length,0);
-  const done=ZONES.reduce((a,z)=>a+x[z].filter(t=>t.done).length,0);
 
+  /* the header is the date and, when the day is overloaded, the warning. The tally
+     line is GONE, element and all: an empty .meta would still take its 3px margin
+     and hold a band of canvas open under every date, the same trap the empty-slot
+     contract closes for #tray and #boardnav. The zone counts (.zh .n) still say how
+     much is there, and a tick still shows itself on the card. */
   let h='<div class="col'+(dd===0?' today':'')+(dd<0?' past':'')+'" data-day="'+d+'" style="animation-delay:'+(i*35)+'ms">'+
     '<div class="colhead"><div class="d1"><span class="dow">'+DOW[dt.getDay()]+'</span>'+
     '<span class="dnum">'+MON[dt.getMonth()].slice(0,3)+' '+dt.getDate()+'</span>'+
     (dd===0?'<span class="badge">TODAY</span>':'')+'</div>'+
-    '<div class="meta">'+(total?done+' of '+total+' done':'nothing planned')+'</div>'+
     (openMust>5?'<div class="heavy">'+openMust+' Prio 0 tasks. Heavier than a day can hold, so demote or move some.</div>':'')+
     '</div><div class="colbody">';
 
@@ -2970,8 +2972,11 @@ function dayCol(d,i){
       '<div class="zh"><i class="pip" style="background:'+ZC[z]+'"></i>'+ZL[z]+
       (z==='extra'?(locked?' '+LOCK:''):'')+'<span class="n">'+x[z].length+'</span></div>';
     if(z==='extra'){
+      /* locked with Prio 0 on the day, the line says what unlocks it. Locked with
+         NONE, it says nothing at all and renders no element: .lockmsg carries its own
+         padding, so an emptied div would leave a gap where the sentence was. */
       h+= locked
-        ? '<div class="lockmsg">'+(x.must.length?'Opens when every Prio 0 is ticked.':'Add a Prio 0 first. Free time is earned.')+'</div>'
+        ? (x.must.length?'<div class="lockmsg">Opens when every Prio 0 is ticked.</div>':'')
         : '<div class="freego">free time, go</div>';
     }
     h+=x[z].map(t=>card(t,{kind:'day',date:d,zone:z})).join('');
@@ -2989,7 +2994,10 @@ function addRow(dest){
       '<button class="abtn" data-action="add-commit" data-k="'+k+'">Add</button>'+
       '<button class="abtn addcancel" data-action="add-cancel" title="Close" aria-label="Close">✕</button></div>';
   }
-  return '<button class="zadd" data-action="add-open" data-k="'+k+'">+ add</button>';
+  /* the control is the plus alone. A glyph is not a name, so the button carries an
+     aria-label: the blank-label sweep reads text OR aria-label, and this header has
+     shipped nameless buttons twice. */
+  return '<button class="zadd" data-action="add-open" data-k="'+k+'" aria-label="Add task">+</button>';
 }
 
 function card(t,loc){
@@ -3063,7 +3071,10 @@ function habitTools(hb,eds){
     '<button class="mini" data-action="habit-del" data-id="'+hb.id+'" title="Delete habit" aria-label="Delete habit">✕</button>';
 }
 function habitAddRow(){
-  return '<div class="haddrow"><input id="habitAdd" data-enter="habit" placeholder="Add a habit…" autocomplete="off">'+
+  /* the field is bare, and an input cannot label itself with text content: the
+     placeholder that named it is gone, so the name moves to aria-label, which both
+     blank-label sweeps read and no one has to look at. */
+  return '<div class="haddrow"><input id="habitAdd" data-enter="habit" aria-label="Add a habit" autocomplete="off">'+
     '<button class="nbtn" data-action="habit-add">Add</button></div>';
 }
 function renderHabits(){
@@ -3151,7 +3162,8 @@ function renderWeekly(){
     'This week<span class="sp">'+open+' open</span></div>';
   if(expanded){
     h+=(list.length?list.map(wrow).join(''):'<div class="empty">Nothing yet. Things to do sometime this week, no particular day.</div>')+
-      '<div class="fadd"><input id="weekAdd" placeholder="Sometime this week…" data-enter="week" autocomplete="off">'+
+      /* bare field, name in aria-label, exactly as habitAddRow */
+      '<div class="fadd"><input id="weekAdd" aria-label="Add to this week" data-enter="week" autocomplete="off">'+
       '<button data-action="week-add">Add</button></div>';
   }
   host.innerHTML=h+'</div>';
@@ -3329,15 +3341,10 @@ function noteLabel(n){
   const l=noteText(n).split('\n').map(s=>s.trim()).find(Boolean);
   return l||'Untitled';
 }
-function notePrev(n){
-  let b=noteText(n);
-  if(!(n.title||'').trim()){   /* the first line is already the label; preview the rest */
-    const lines=b.split('\n'), i=lines.findIndex(s=>s.trim());
-    b=i<0?'':lines.slice(i+1).join(' ');
-  }
-  b=b.trim().replace(/\s+/g,' ');
-  return b?b.slice(0,64):'Empty';
-}
+/* there is no row preview any more: a row is its label and nothing else, so the
+   snippet builder that fed .nsub is gone with the line it wrote. noteText stays, and
+   is still what SEARCH reads (noteRowsHtml), so a body no one can see in the list is
+   still matched by typing a phrase from it. */
 const noteWords=n=>{const b=noteText(n).trim(); return b?b.split(/\s+/).length:0};
 
 /* ---- caret as an absolute text offset ----
@@ -3437,8 +3444,10 @@ function noteRowHtml(n,inf){
   return '<div class="noteli'+(inf?' inf':'')+'">'+
     '<button class="noterow'+(n.id===state.settings.noteSel?' on':'')+
     '" data-action="note-open" data-id="'+n.id+'">'+
-    '<span class="nt">'+(n.pinned?PIN:'')+'<span class="ntx">'+esc(noteLabel(n))+'</span></span>'+
-    '<span class="nsub">'+esc(notePrev(n))+'</span></button>'+
+    /* the label alone. noteLabel still falls back to the body's first line for an
+       untitled note, which is now the ONLY thing naming that row: without it the row
+       would render empty, which is the one shape a list may never take. */
+    '<span class="nt">'+(n.pinned?PIN:'')+'<span class="ntx">'+esc(noteLabel(n))+'</span></span></button>'+
     (mv?'<button class="notemv" data-action="note-movemenu" data-id="'+n.id+
       '" title="Move to a folder" aria-label="Move to a folder">'+MOVE_I+'</button>':'')+
     '</div>';
@@ -3644,7 +3653,8 @@ function noteStepState(){
 /* the in-place patches that keep the list row and the meta line honest while someone
    is typing. One copy, read by the input handler and by undo alike. */
 function notePatchRow(n){
-  const sn=$('.noterow.on .nsub'); if(sn) sn.textContent=notePrev(n);
+  /* the row has one line to keep honest now: an untitled note's label follows its
+     first line as that line is typed. The snippet patch went with the snippet. */
   if(!(n.title||'').trim()){ const row=$('.noterow.on .ntx'); if(row) row.textContent=noteLabel(n) }
   const m=$('#noteMeta'); if(m) m.textContent=noteMetaText(n,Date.now());
 }
@@ -4972,7 +4982,7 @@ document.addEventListener('input',e=>{
   if(e.target.classList&&e.target.classList.contains('addin')) ui.addText=e.target.value;
   /* the notes editor: every keystroke lands in state and rides the normal save
      debounce. No render here, so the caret is never disturbed by typing; only the
-     list row's label and snippet and the quiet meta line are patched in place.
+     list row's label and the quiet meta line are patched in place.
      The body serializes through the sanitizer on every input, collapsing back to
      plain text whenever no formatting is present. */
   if(e.target.id==='noteTitle'||e.target.id==='noteBody'){

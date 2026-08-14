@@ -2256,7 +2256,7 @@ console.log('— Notes: the writing surface —');
   A.save(); await wait(10);
 }
 
-console.log('— Notes: search, sort by last edit, preview fallback —');
+console.log('— Notes: search, sort by last edit, the untitled row label —');
 {
   const now=Date.now();
   S().notes=[
@@ -2270,9 +2270,13 @@ console.log('— Notes: search, sort by last edit, preview fallback —');
     'the list sorts by most recently edited ('+ids().join(',')+')');
   ok(q('.noterow[data-id="nc"] .ntx').textContent==='Citrus first line',
     'an untitled note is known by its first line, never a blank row');
-  ok(q('.noterow[data-id="nc"] .nsub').textContent==='and the rest of the citrus note',
-    'and previews the rest of its body, not the line already shown');
-  ok(q('.noterow[data-id="na"] .nsub').textContent==='apples and pears','a titled note previews its body from the top');
+  /* the body preview is gone from the row. The fallback above is therefore the ONLY
+     thing naming an untitled note, which is why it stays. */
+  ok(!q('.noterow .nsub')&&q('.noterow[data-id="nc"]').textContent.trim()==='Citrus first line',
+    'the row is that label alone: no body preview line under it');
+  ok(q('.noterow[data-id="na"] .ntx').textContent==='Alpha'&&
+    !/apples/.test(q('.noterow[data-id="na"]').textContent),
+    'a titled note lists its title and none of its body');
 
   /* search: titles and bodies, patched in place, editor untouched */
   const bodyEl=q('#noteBody'), se=q('#noteSearch');
@@ -2489,16 +2493,20 @@ console.log('— Notes: rich text: storage, sanitizer, commands —');
   pgSel.value='plain'; fire(pgSel,'change'); await wait(10);
   ok(!('pg' in S().notes.find(n=>n.id==='na')),'blank removes the field entirely, exports stay clean');
 
-  /* search reaches through markup, previews and counts are markup blind */
+  /* search reaches through markup and counts are markup blind. THE BODY IS NOT DRAWN
+     in the row any more, which is exactly why this pair matters: the only way back to
+     a note by its contents is the search box, so it has to keep reaching. */
   ed.innerHTML='<div>find the <b>golden</b> thread</div>';
   fire(ed,'input'); await wait(10); A.save(); await wait(10);
   const se=q('#noteSearch'); se.value='golden thread'; fire(se,'input'); await wait(10);
   const hits=qa('.noterow').map(r=>r.dataset.id);
   ok(hits.length===1&&hits[0]==='na',
     'search sees through formatting: a phrase crossing a tag boundary still matches');
+  ok(!/golden/.test(q('.noterow[data-id="na"]').textContent),
+    'and matches a body the row never shows');
   se.value=''; fire(se,'input'); await wait(10);
-  ok(q('.noterow[data-id="na"] .nsub').textContent==='find the golden thread',
-    'the row preview strips the markup');
+  ok(q('.noterow[data-id="na"] .ntx').textContent==='Alpha'&&!q('.noterow .nsub'),
+    'the row stays the title alone after the search clears');
   ok(/4 words/.test(q('#noteMeta').textContent),'the word count reads text, not tags');
 
   /* migration: a legacy plain body with literal markup characters stays literal */
@@ -3295,6 +3303,86 @@ console.log('— no interactive element renders blank —');
   if(anyTask){ anyTask.click(); await wait(25); }
   const pick=q('input[data-action="pickdate"]');
   ok(!!pick&&(pick.getAttribute('aria-label')||'').length>0,'the per-task date input carries an aria-label');
+}
+
+console.log('— the copy pass: the lines that stopped rendering —');
+{
+  /* 2026-08-14: a removal pass over text the app was saying about itself. Every one of
+     these was a rendered string inside an element of its own, and the ELEMENT went with
+     the string: an emptied .meta keeps its 3px margin and an emptied .lockmsg keeps its
+     padding, so either would hold a band of canvas exactly where the sentence was, which
+     is the trap the `:not(:empty)` contract closes for the render slots. What is pinned
+     here is the absence, and the name every control had to keep once its visible label
+     was gone. Nothing about the counts themselves changed: the zone header still shows
+     .zh .n, the rail bars still show theirs, and state is untouched. */
+  /* this block rewrites a day, both rail panels and the tray to reach every removal,
+     so it hands the planner back exactly as it found it: a later block reads the
+     saved bytes and the state signature and must not see any of this. */
+  const KEEP=['days','habits','week','focus','carry','settings'];
+  const snap=JSON.parse(JSON.stringify(KEEP.reduce((o,k)=>(o[k]=S()[k],o),{})));
+  S().settings.view='board'; S().settings.floatMode=false;
+  S().days[T()]={must:[{id:'cp1',title:'a prio 0',done:false,subtasks:[]}],
+    should:[{id:'cp2',title:'a prio 1',done:true,subtasks:[]}],extra:[]};
+  A.render(); await wait(25);
+  ok(!q('.col[data-day] .colhead .meta'),'a day header draws no tally element at all');
+  ok(!/nothing planned/.test(q('#board').textContent),'"nothing planned" is gone from the board');
+  ok(!/\d+ of \d+ done/.test(q('#board').textContent),'and so is "N of N done"');
+  ok(!!q('.zone[data-day="'+T()+'"][data-zone="must"] .zh .n'),
+    'the per-zone count on the zone header is untouched');
+  /* the Extra lock keeps the sentence that names an action and drops the one that
+     only editorialised; with no Prio 0 the zone says nothing, element included */
+  ok(/Opens when every Prio 0 is ticked/.test(
+      q('.zone[data-day="'+T()+'"][data-zone="extra"]').textContent),
+    'a locked Extra with a Prio 0 on the day still says what unlocks it');
+  S().days[T()].must=[]; A.render(); await wait(25);
+  const ex=q('.zone[data-day="'+T()+'"][data-zone="extra"]');
+  ok(ex.classList.contains('locked'),'with no Prio 0 the zone is still locked');
+  ok(!ex.querySelector('.lockmsg')&&!/Free time is earned/.test(q('#board').textContent),
+    'and says nothing there, the .lockmsg element included');
+  /* the inline add: a plus, and a name that is not the plus */
+  const za=q('.zadd');
+  ok(!!za&&za.textContent.trim()==='+','the inline add control is the plus alone');
+  ok((za.getAttribute('aria-label')||'').trim().length>0,
+    'and carries an accessible name, or the blank-label sweep above would have it');
+  ok(!/\+ add/.test(q('#board').textContent),'the word "add" is off the board');
+  /* the two rail fields: bare, named where only a screen reader looks */
+  S().habits.list=[{id:'cph',name:'a habit',days:[1,2,3,4,5,6]}];
+  S().week.list=[{id:'cpw',title:'a week item',done:false}];
+  S().settings.habitsOpen=true; S().settings.weekOpen=true;
+  A.render(); await wait(25);
+  const hi=q('#habitAdd'), wi=q('#weekAdd');
+  ok(!!hi&&!hi.getAttribute('placeholder'),'the habits field shows no placeholder');
+  ok((hi.getAttribute('aria-label')||'').trim().length>0,'and is named by aria-label instead');
+  ok(!!wi&&!wi.getAttribute('placeholder'),'the weekly field shows no placeholder');
+  ok((wi.getAttribute('aria-label')||'').trim().length>0,'and is named the same way');
+  /* the app's own source sits in a <script> in the body, so read what is DRAWN */
+  const shown=()=>qa('body > *:not(script)').map(e=>e.textContent).join(' ');
+  ok(!/Add a habit|Sometime this week/.test(shown()),
+    'neither placeholder string is drawn anywhere');
+  /* the collapsed-panel bars are a DIFFERENT line and were NOT part of this pass */
+  S().habits.list=[]; S().week.list=[]; S().focus=[];
+  delete A.ui.peek.habits; delete A.ui.peek.week; delete A.ui.peek.focus; A.ui.northOn=false;
+  A.render(); await wait(25);
+  ok(/0 habits/.test(q('#habitsRail').textContent),'the habits bar still counts "0 habits"');
+  ok(/0 open/.test(q('#weekRail').textContent),'the weekly bar still says "0 open"');
+  ok(/not set/.test(q('#fpanel').textContent),'and True north still says "not set"');
+  /* the tray keeps its heading and every triage control; only the sentence went */
+  S().carry=[{id:'cy1',title:'left over',from:'Mon 1 Jun'}]; A.render(); await wait(25);
+  ok(!!q('#tray .trayhead'),'the carry-over tray still draws its head');
+  ok(!q('#tray .why')&&!/unfinished from before/.test(q('#tray').textContent),
+    'without the sentence under it');
+  ok(qa('#tray .trayhead .tbtn').length===2&&qa('#tray .trayitem').length===1,
+    'and both move-all controls and the item itself are still there');
+  ok(S().carry.length===1,'the roll is untouched: carry still holds what it held');
+  /* free floating: the tab head is its name and its controls */
+  S().settings.floatMode=true; A.render(); await wait(25);
+  ok(qa('.col.backlog').length>0&&!q('.col.backlog .colhead .meta'),
+    'a Free Floating tab head draws no open count');
+  ok(!/\d+ open/.test(q('#board').textContent),'"(N) open" is gone from the tabs');
+  ok(!!q('.col.backlog .colhead .dow'),'the tab name is still there');
+  /* hand it all back, then commit so no debounced write from here lands later */
+  KEEP.forEach(k=>{ S()[k]=snap[k] });
+  A.render(); await wait(25); A.save(); await wait(20);
 }
 
 console.log('— touch targets: the coarse-pointer block —');

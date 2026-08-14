@@ -298,7 +298,12 @@ function bootstrap(seedJson) {
         if (r < min - 0.05) out.contrast.push(what + ' = ' + r.toFixed(2) + ' (needs ' + min + ')');
       };
       sample('.task .ttl', 4.5, 'task title on its card');
-      sample('.colhead .meta', 4.5, 'column meta on its header');
+      /* 2026-08-14: the column head's tally line is gone, the element with it, so the
+         sample that measured it would find nothing and return in silence, which is the
+         one thing an assertion may never do. The whisper tier on a column is now the
+         inline add control, drawn in every zone of every day, so measure that instead;
+         --mut2 is a 3:1 role here exactly as it is in the declared pairs above. */
+      sample('.zadd', 3, 'the inline add control on its column');
       sample('.zh', 4.5, 'zone label on its column');
       sample('#noteBody', 4.5, 'note body on its page');
       /* the whisper tier (.synchint, mut2) is deliberately quieter and asserted
@@ -2539,7 +2544,7 @@ async function runProfile(browser, base, prof) {
          it has, which is sideways; .colbody is the only vertical scroller in a
          column (#board is overflow-y:hidden, .col is overflow:hidden) and until
          2026-08-13 it reserved nothing, so a column whose tail landed in the
-         corner's band had no scroll with which to clear it and the "+ add" row sat
+         corner's band had no scroll with which to clear it and the inline add row sat
          under the pad. That, not the corner's size, is what the (794,625) defect
          was. Same inequality as the width one, checked the same way. */
       const vres = await A(() => {
