@@ -428,6 +428,15 @@ select option{background:var(--pearl);color:var(--txt)}
 /* board */
 #board{display:flex;gap:12px;overflow-x:auto;overflow-y:hidden;padding-bottom:16px;flex:1;min-width:0;align-items:flex-start}
 .col{width:268px;flex:none;display:flex;flex-direction:column;max-height:100%;background:var(--cloud);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
+/* Today only: the one column takes the content area instead of a 268px track. FENCED
+   INTO THE WIDE LAYOUT deliberately. #board turns column-direction under 900px, where
+   a grow rule would size the column to its content rather than the width, and the
+   narrow board is a single day strip already, so the mode is not offered there and
+   the rule must not be reachable either. The sticky corner's reservation is padding
+   on #board, so the column grows into what is left of the row and never under it. */
+@media (min-width:901px){
+  #board.oneday .col{width:auto;flex:1 1 auto;min-width:0}
+}
 .anim .col{animation:rise .34s cubic-bezier(.2,.7,.3,1) backwards}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .col.today{border-color:var(--today);box-shadow:0 0 0 1px rgba(var(--today-rgb),.35),var(--shadow)}
@@ -1426,7 +1435,10 @@ function fresh(){
     sticky:{text:'',at:0},
     settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:null,
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
-      habitsOpen:true,weekOpen:true,lastWeek:null,noteSel:null}
+      /* todayOnly: the board draws today's column alone. A per-device view preference
+         beside habitsOpen and weekOpen, on VIEWSET so a Pull cannot import another
+         screen's mode, and outside stateSig like every other setting. */
+      habitsOpen:true,weekOpen:true,todayOnly:false,lastWeek:null,noteSel:null}
   };
 }
 
@@ -1937,7 +1949,7 @@ const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this dev
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
 const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay',
-  'showDone','lastRoll','habitsOpen','weekOpen','lastWeek','noteSel'];
+  'showDone','lastRoll','habitsOpen','weekOpen','todayOnly','lastWeek','noteSel'];
 const POLL_MS=25000;                          /* look for another device's changes this often */
 const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
 const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
@@ -2835,9 +2847,23 @@ function renderTray(){
     '</div>';
 }
 
-/* ================= render: board nav ================= */
+/* ================= render: board nav =================
+   TODAY ONLY is a mode of the board, not a place on it: it draws one day column where
+   seven would go. It is a WIDE-LAYOUT feature on the same contract the rail collapse
+   keeps, and this is the only function that decides it. Under 900px the board is
+   ALREADY a single day strip, so the flag must change nothing there or there would be
+   two mechanisms for one thing: the width branch below is read first, the control is
+   not drawn under 900px (renderNav), and the full-width rule is fenced into a
+   min-width:901px block. A device that is narrow now cannot be in the mode now,
+   whatever it stored while it was wide, and the resize handler re-renders on a real
+   width change, so crossing the boundary either way lands in the right one. */
+function todayOnlyOn(){ return state.settings.todayOnly===true&&window.innerWidth>=900 }
 function windowDays(){
-  const n=window.innerWidth<900?1:7, o=state.settings.boardOffset, out=[];
+  const n=(window.innerWidth<900||todayOnlyOn())?1:7, o=state.settings.boardOffset, out=[];
+  /* ONE branch for one column, whichever reason produced it: the day shown is
+     stripDay, the same field the phone strip drives, kept in step with boardOffset by
+     shiftBoard and showDay so the seven-column window and the single one always
+     name the same day. */
   if(n===1) return [state.settings.stripDay||today()];
   for(let i=0;i<n;i++) out.push(plus(o+i));
   return out;
@@ -2865,11 +2891,31 @@ function renderNav(){
     $('#strip').innerHTML=''; return;
   }
   const win=windowDays(), off=offBoard(win), pastOpen=pastOpenCount();
+  /* PREV AND NEXT STEP THE WINDOW THAT IS ON SCREEN. Seven days move a week; one day
+     moves a day, because a week per press on a one column board would skip six days
+     with nothing on screen to say so. The mode is not navigation, so navigating never
+     turns it off. Both steps go through shiftBoard, which is what keeps boardOffset
+     and stripDay in step, so neither field is written from here. */
+  const one=todayOnlyOn(), step=one?1:7;
   $('#boardnav').innerHTML=
-    '<button class="nbtn" data-action="nav" data-d="-7">‹ Prev</button>'+
+    '<button class="nbtn" data-action="nav" data-d="-'+step+'" title="'+(one?'Back a day':'Back a week')+'">‹ Prev</button>'+
     '<button class="nbtn solid" data-action="nav-today">Today</button>'+
-    '<button class="nbtn" data-action="nav" data-d="7">Next ›</button>'+
+    '<button class="nbtn" data-action="nav" data-d="'+step+'" title="'+(one?'Forward a day':'Forward a week')+'">Next ›</button>'+
     '<span class="jl">Jump to</span><input type="date" id="jumpDate" aria-label="Jump to a date" value="'+win[0]+'">'+
+    /* THE MODE SWITCH, after the navigation cluster because it is not part of it.
+       ONE STABLE LABEL, "Today only", with aria-pressed carrying the state and the
+       .solid fill this row already owns showing it. The label deliberately does NOT
+       flip to "Week" when the mode is on: a toggle button that renames itself
+       contradicts its own aria-pressed in one state or the other ("Week, pressed"
+       while the board shows one day, or "Week, not pressed" while it shows a week),
+       and a button reading "Week" that switches AWAY from the week is a trap for the
+       press. The word the other state needs lives in the title, which is the one part
+       of a toggle that is allowed to name the destination.
+       Not drawn under 900px, where the board is a single day strip already. */
+    (window.innerWidth>=900
+      ? '<button class="nbtn'+(one?' solid':'')+'" data-action="todayonly" aria-pressed="'+(one?'true':'false')+
+        '" title="'+(one?'Show the seven day week':'Show today alone')+'">Today only</button>'
+      : '')+
     /* Rollover runs once a day, so anything landing on a past day after it has run waits
        until tomorrow. Rather than sweeping continuously, which would fight a deliberate
        back-date, say so plainly and offer to bring them in. */
@@ -2898,10 +2944,13 @@ function offBoard(win){
 /* ================= render: board ================= */
 function renderBoard(){
   const key=[state.settings.view,state.settings.floatMode,state.settings.boardOffset,
-    state.settings.stripDay,state.floats.length].join('|');
+    state.settings.stripDay,todayOnlyOn(),state.floats.length].join('|');
   const changed=key!==ui.renderKey; ui.renderKey=key;
   const b=$('#board');
   b.classList.toggle('anim',changed);
+  /* one column takes the content area. Float mode is a mode of the board too and its
+     tabs are not day columns, so the class is off while it runs. */
+  b.classList.toggle('oneday',todayOnlyOn()&&!state.settings.floatMode);
 
   if(state.settings.floatMode){
     b.innerHTML=state.floats.map((f,i)=>floatCol(f,i)).join('');
@@ -2910,7 +2959,11 @@ function renderBoard(){
   const win=windowDays();
   let h=win.map((d,i)=>dayCol(d,i)).join('');
   const off=offBoard(win);
-  if(off.length&&window.innerWidth>=900){
+  /* the off-board summary is a SECOND column, so Today only does not draw it, exactly
+     as the phone's single-day board does not. The count is still reported in the nav
+     row, so nothing dated elsewhere goes unmentioned; the way to reach it is the
+     seven-day window, which is one press away. */
+  if(off.length&&window.innerWidth>=900&&!todayOnlyOn()){
     h+='<div class="col" style="animation-delay:'+(win.length*35)+'ms"><div class="colhead">'+
       '<div class="d1"><span class="dow">Off-board</span></div>'+
       '<div class="meta">dated outside this window</div></div><div class="colbody">'+
@@ -4335,6 +4388,19 @@ document.addEventListener('click',e=>{
     }
     case 'nav': shiftBoard(+el.dataset.d); break;
     case 'nav-today': showDay(today()); break;
+    /* TODAY ONLY. Turning it on SHOWS TODAY, whatever day the board was pointing at:
+       the mode is for the days when only today matters, so it would be useless if it
+       framed a random week's Thursday. showDay is how it gets there, never a write to
+       boardOffset or stripDay, so the two halves of the board position stay in step at
+       both widths (the trap Prev and Next fell into on iOS). Turning it OFF snaps
+       nothing: the seven-day window opens on the day being looked at.
+       Returns rather than breaks, the convention this switch keeps for a case that has
+       done its own save and render, and the one the other mode switch (mrange) uses. */
+    case 'todayonly':{
+      s.todayOnly=!s.todayOnly;
+      if(s.todayOnly) showDay(today());
+      save(); render(); return;
+    }
     case 'strip': showDay(el.dataset.day); break;
 
     case 'carry-all':{
@@ -4953,6 +5019,10 @@ function helpModal(){
     'Rename or delete a tab any time, and drag a card onto a day to schedule it.</p>'+
     '<p><b>Reaching a future date.</b> Use <b>‹ Prev / Next ›</b> to shift the board a week, <b>Jump to</b> for any date, '+
     'or open <b>Calendar</b> and tap the day. Anything dated outside the window shows in <b>Off-board</b> so nothing hides.</p>'+
+    '<p><b>Today only.</b> The button beside <b>Jump to</b> hides the upcoming days and leaves today alone on the board. '+
+    'Switching it on always brings you back to today, and while it is on <b>Prev</b> and <b>Next</b> step one day at a time '+
+    'rather than a week. Press it again for the seven days back. It is a per-device choice, never carried to your other '+
+    'devices, and phones do not show it because their board is one day already.</p>'+
     '<p><b>Calendar view.</b> Coloured dots show open tasks per day (purple Must, blue Should, green Extra). '+
     'Tap a date to see its list and add straight into it.</p>'+
     '<p><b>True north</b> holds the mindset you set for the week: a statement, a quote, a line to steer by. '+

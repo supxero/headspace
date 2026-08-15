@@ -890,6 +890,137 @@ async function runProfile(browser, base, prof) {
     }
   });
 
+  /* ---- E2. Today only: one column, and only where it is the only mechanism ----
+     A per-device view mode, so what is measured here is the drawing and the reach:
+     that the switch is drawn where it can mean something and NOT where the board is
+     a single day strip already, that the one column takes the content area rather
+     than staying a 268px track, that the mode survives a real reload, and that a
+     coarse pointer gets 44px of it. The audit inside the mode runs under both themes
+     like every other, so the wide column is proven for reach, whiteness and contrast
+     as well. */
+  await flow('today-only', async () => {
+    await act({ css: '.navbtn[data-action="view"][data-v="board"]' });
+    const seen = () => A(() => {
+      const b = document.getElementById('board');
+      const btn = document.querySelector('[data-action="todayonly"]');
+      const cols = [...document.querySelectorAll('#board .col')];
+      const br = btn && btn.getBoundingClientRect();
+      const cr = cols[0] && cols[0].getBoundingClientRect();
+      return {
+        btn: btn ? { label: btn.textContent.trim(), pressed: btn.getAttribute('aria-pressed'),
+                     solid: btn.classList.contains('solid'), title: (btn.title || '').trim(),
+                     w: Math.round(br.width), h: Math.round(br.height) } : null,
+        cols: cols.length, day: cols[0] ? cols[0].dataset.day : null,
+        colW: cr ? Math.round(cr.width) : 0,
+        oneday: b.classList.contains('oneday'),
+        boardW: Math.round(b.getBoundingClientRect().width),
+        padRight: Math.round(parseFloat(getComputedStyle(b).paddingRight) || 0),
+        strip: document.querySelectorAll('#strip button').length,
+        navD: [...document.querySelectorAll('[data-action="nav"]')].map(x => x.dataset.d).join(','),
+        mode: window.A.state.settings.todayOnly === true,
+        off: window.A.state.settings.boardOffset,
+        sd: window.A.state.settings.stripDay,
+        sig: window.A.stateSig(window.A.state),
+      };
+    });
+    /* the 400ms save debounce, forced, so what storage holds is what state holds */
+    const stored = () => A(() => {
+      window.A.save();
+      try { return JSON.parse(localStorage.getItem('agora_dayplanner_v1')).settings.todayOnly }
+      catch (e) { return 'ERR' }
+    });
+
+    const v0 = await seen();
+    if (narrow) {
+      /* under 900px the board is one day already, so the mode is not offered: a second
+         mechanism for the same thing is the defect, not the missing control */
+      check('today-only: no switch under 900px', v0.btn === null, JSON.stringify(v0.btn));
+      check('today-only: the day strip is the narrow mechanism and is still there',
+        v0.strip > 0, v0.strip + ' buttons');
+      check('today-only: the board takes no class from the mode there', !v0.oneday);
+      check('today-only: and Prev and Next keep the week step', v0.navD === '-7,7', v0.navD);
+      return;
+    }
+
+    check('today-only: the switch is drawn on a wide layout', !!v0.btn, JSON.stringify(v0.btn));
+    check('today-only: it names the mode it offers', v0.btn.label === 'Today only', v0.btn.label);
+    check('today-only: and says it is not engaged', v0.btn.pressed === 'false', String(v0.btn.pressed));
+    check('today-only: a title says what a press would do', !!v0.btn.title, v0.btn.title);
+    check('today-only: the board is the seven day window', v0.cols >= 7, v0.cols + ' columns');
+    if (coarse) check('today-only: the switch offers 44px', Math.min(v0.btn.w, v0.btn.h) >= 44,
+      v0.btn.w + 'x' + v0.btn.h);
+
+    /* scrolled to another week first: the mode must land on TODAY, not on what was
+       centred, and it must get there through showDay so both halves move together */
+    await act({ css: '[data-action="nav-today"]' });
+    await act({ css: '[data-action="nav"][data-d="7"]' });
+    const vAway = await seen();
+    check('today-only: the board is showing another week before the press',
+      vAway.day === plus(7), String(vAway.day));
+    await A(() => window.A.save());
+    const sigOff = (await seen()).sig;
+
+    await act({ css: '[data-action="todayonly"]' });
+    const v1 = await seen();
+    check('today-only: the press turns the mode on', v1.mode === true, String(v1.mode));
+    check('today-only: the board draws one column', v1.cols === 1, v1.cols + ' columns');
+    check('today-only: and it is TODAY, not the date that was on screen', v1.day === today, String(v1.day));
+    check('today-only: both halves of the board position came back with it',
+      v1.off === 0 && v1.sd === today, v1.off + '/' + v1.sd);
+    check('today-only: aria-pressed marks it engaged', v1.btn.pressed === 'true', String(v1.btn.pressed));
+    check('today-only: the label does not flip, so it cannot contradict aria-pressed',
+      v1.btn.label === 'Today only', v1.btn.label);
+    check('today-only: and the filled treatment shows it too', v1.btn.solid);
+    /* the point of the mode: the column is the content area, not a 268px track */
+    check('today-only: the one column takes the content area',
+      v1.colW >= v1.boardW - v1.padRight - 2 && v1.colW > 400,
+      'col=' + v1.colW + ' board=' + v1.boardW + ' padRight=' + v1.padRight);
+    check('today-only: it is a per-device view preference, so no signature moved',
+      v1.sig === sigOff, 'sig changed');
+    check('today-only: and the choice is written to this device', (await stored()) === true);
+    await audit('today-only');
+
+    /* Prev and Next STEP ONE DAY here, and navigating never turns the mode off */
+    const v1n = await seen();
+    check('today-only: Prev and Next offer the single day step', v1n.navD === '-1,1', v1n.navD);
+    await act({ css: '[data-action="nav"][data-d="1"]' });
+    const v2 = await seen();
+    check('today-only: Next moves the shown day on by one', v2.day === plus(1), String(v2.day));
+    check('today-only: through shiftBoard, so the pair stays in step',
+      v2.off === 1 && v2.sd === plus(1), v2.off + '/' + v2.sd);
+    check('today-only: and the mode is still on', v2.mode === true, String(v2.mode));
+    check('today-only: still one column after the step', v2.cols === 1, v2.cols + ' columns');
+    await act({ css: '[data-action="nav"][data-d="-1"]' });
+    check('today-only: Prev steps back a single day too', (await seen()).day === today);
+
+    /* a real reload: it is remembered per device and comes back drawn */
+    await A(() => window.A.save());
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('#board .col');
+    const v3 = await seen();
+    check('today-only: a fresh boot comes back in the mode', v3.mode === true, String(v3.mode));
+    check('today-only: on one column', v3.cols === 1, v3.cols + ' columns');
+    check('today-only: with the switch showing it engaged', v3.btn && v3.btn.pressed === 'true',
+      JSON.stringify(v3.btn));
+    check('today-only: and the column still takes the content area',
+      v3.colW >= v3.boardW - v3.padRight - 2, 'col=' + v3.colW + ' board=' + v3.boardW);
+
+    /* off again, and the board must be exactly what it was */
+    await A(() => window.A.save());
+    const sigOn = (await seen()).sig;
+    await act({ css: '[data-action="todayonly"]' });
+    const v4 = await seen();
+    check('today-only: pressing it again returns the seven day window', v4.cols >= 7, v4.cols + ' columns');
+    check('today-only: the board drops the one column class', !v4.oneday);
+    check('today-only: the switch says so too', v4.btn.pressed === 'false', String(v4.btn.pressed));
+    check('today-only: the column is back to its own track', v4.colW < 320, v4.colW + 'px');
+    check('today-only: turning it off pushes nothing either', v4.sig === sigOn, 'sig changed');
+    check('today-only: and the week opens on the day being looked at',
+      v4.day === today, String(v4.day));
+    check('today-only: nothing about the mode is left on this device',
+      (await stored()) === false, String(await stored()));
+  });
+
   /* ---- F. Free Floating ---- */
   await flow('free-floating', async () => {
     await act({ css: '.navbtn[data-action="floattoggle"]' });

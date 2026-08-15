@@ -793,6 +793,148 @@ console.log('— board nav on a phone viewport —');
   pw.close();
 }
 
+console.log('— Today only: the board narrows to one column —');
+{
+  /* A MODE OF THE BOARD, not a place on it, and a per-device view preference: it must
+     never sync, never enter stateSig, and never be a second mechanism for the single
+     column a phone already has. It also sits on the two-field board position: turning
+     it on goes through showDay so boardOffset and stripDay stay in step, exactly as
+     Prev and Next had to be fixed to do. */
+  const nav=()=>q('[data-action="todayonly"]');
+  const cols=()=>qa('#board .col');
+  const day1=()=>{ const c=q('#board .col'); return c?c.dataset.day:null };
+  S().settings.todayOnly=false; A.save(); A.render(); await wait(30);
+  click('[data-action="nav-today"]'); await wait(30);
+
+  ok(!!nav(),'the switch is drawn in the board nav row at a wide width');
+  ok(nav().className==='nbtn','styled as a board nav button like Prev, Today and Next');
+  ok(nav().textContent.trim()==='Today only','it names the mode it offers');
+  ok(nav().getAttribute('aria-pressed')==='false','and says it is not engaged');
+  ok(!!nav().title,'a title says what a press would do');
+  ok(cols().length===7,'the board starts as the seven day window');
+
+  /* scrolled to another week, the mode must still land on TODAY */
+  click('[data-action="nav"][data-d="7"]'); await wait(40);
+  ok(day1()===plus(7),'scrolled a week on, the board is showing another date');
+  const sigBefore=A.stateSig(S());
+  nav().click(); await wait(50);
+
+  ok(S().settings.todayOnly===true,'pressing it turns the mode on');
+  ok(cols().length===1,'the board draws one column');
+  ok(day1()===T(),'and it is TODAY, not the date that was on screen');
+  ok(S().settings.boardOffset===0,'the seven column offset was moved back with it');
+  ok(S().settings.stripDay===T(),'and so was the single column day, the two stay in step');
+  ok(nav().getAttribute('aria-pressed')==='true','aria-pressed marks the mode as engaged');
+  ok(nav().textContent.trim()==='Today only',
+    'the label does not flip, so it can never contradict aria-pressed');
+  ok(nav().classList.contains('solid'),'the engaged state also carries the filled treatment');
+  ok(q('#board').classList.contains('oneday'),'the board carries the class that gives the column the width');
+  ok(A.stateSig(S())===sigBefore,'the mode changes no signature, so sync has nothing to push');
+
+  /* the decision on Prev/Next: they STEP ONE DAY and the mode stays on */
+  ok(!!q('[data-action="nav"][data-d="1"]')&&!!q('[data-action="nav"][data-d="-1"]'),
+    'Prev and Next step a single day while the mode is on');
+  ok(!q('[data-action="nav"][data-d="7"]')&&!q('[data-action="nav"][data-d="-7"]'),
+    'and no longer offer the week step');
+  click('[data-action="nav"][data-d="1"]'); await wait(40);
+  ok(day1()===plus(1),'Next moves the shown day on by one');
+  ok(S().settings.boardOffset===1&&S().settings.stripDay===plus(1),
+    'through shiftBoard, so both halves of the board position move together');
+  ok(S().settings.todayOnly===true,'navigating never turns the mode off');
+  click('[data-action="nav"][data-d="-1"]'); await wait(40);
+  ok(day1()===T(),'Prev steps back a single day too');
+
+  { /* the off-board summary is a second column, so it is not drawn either */
+    S().days[plus(30)]={must:[{id:'far1',title:'far away',done:false,subtasks:[],up:1}],should:[],extra:[]};
+    A.save(); A.render(); await wait(30);
+    ok(cols().length===1,'a task dated outside the window does not add a second column');
+    ok(!q('[data-action="goto-day"]'),'so the off-board go-to control is not built in this mode');
+    ok(/off-board/.test(q('#boardnav').textContent),'the nav row still reports that something is out there');
+    S().settings.todayOnly=false; A.save(); A.render(); await wait(30);
+    ok(cols().length===8,'and the seven day window brings the off-board column back');
+    ok(!!q('[data-action="goto-day"]'),'with its way to reach the date');
+    delete S().days[plus(30)];
+    nav().click(); await wait(50);
+  }
+
+  { /* per device, like the panel collapses: remembered here, pushed nowhere */
+    A.save(); await wait(10);
+    const saved=JSON.parse(w.localStorage.getItem('agora_dayplanner_v1'));
+    ok(saved.settings.todayOnly===true,'the choice is written to this device');
+    ok(/'weekOpen','todayOnly'/.test(html),
+      'and it rides VIEWSET beside weekOpen, so a Pull never imports another screen mode');
+  }
+  { /* survives a reload */
+    const seed=w.localStorage.getItem('agora_dayplanner_v1');
+    const dom5=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+      beforeParse(win){ try{win.localStorage.setItem('agora_dayplanner_v1',seed)}catch(e){} }});
+    await wait(300);
+    const w5=dom5.window;
+    ok(w5.A.state.settings.todayOnly===true,'a fresh boot remembers the mode');
+    ok(w5.document.querySelectorAll('#board .col').length===1,'and comes back on one column');
+    ok(w5.document.querySelector('[data-action="todayonly"]').getAttribute('aria-pressed')==='true',
+      'with the switch showing it engaged');
+    w5.close();
+
+    /* the same stored planner on a narrow screen: the control is not drawn and the
+       flag changes nothing, because the board there is a single day strip already */
+    const dom6=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+      beforeParse(win){
+        Object.defineProperty(win,'innerWidth',{value:390,writable:true,configurable:true});
+        Object.defineProperty(win,'innerHeight',{value:844,writable:true,configurable:true});
+        try{win.localStorage.setItem('agora_dayplanner_v1',seed)}catch(e){}
+      }});
+    await wait(300);
+    const w6=dom6.window, d6=w6.document;
+    ok(!d6.querySelector('[data-action="todayonly"]'),'at 390px the switch is not drawn at all');
+    ok(d6.querySelectorAll('#board .col').length===1,'the narrow board is its own single day strip');
+    ok(!d6.querySelector('#board').classList.contains('oneday'),
+      'and it takes no class from the mode, so there is one mechanism, not two');
+    ok(!!d6.querySelector('[data-action="nav"][data-d="7"]'),
+      'Prev and Next keep the week step there, since the mode cannot be on');
+    ok(d6.querySelectorAll('#strip button').length>0,'the day strip is still the way to move a day');
+    w6.close();
+
+    /* and at 820px, the other narrow profile */
+    const dom7=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+      beforeParse(win){
+        Object.defineProperty(win,'innerWidth',{value:820,writable:true,configurable:true});
+        Object.defineProperty(win,'innerHeight',{value:1180,writable:true,configurable:true});
+        try{win.localStorage.setItem('agora_dayplanner_v1',seed)}catch(e){}
+      }});
+    await wait(300);
+    ok(!dom7.window.document.querySelector('[data-action="todayonly"]'),
+      'nor at 820px, the other side of the same boundary');
+    dom7.window.close();
+  }
+
+  /* flush first, so the far-dated task this block added and removed has finished
+     stamping its tombstone and the comparison below is about the mode alone */
+  A.save(); await wait(20);
+  const sigOn=A.stateSig(S());
+  nav().click(); await wait(50);
+  ok(S().settings.todayOnly===false,'pressing it again turns the mode off');
+  ok(cols().length===7,'the seven day window is back');
+  ok(day1()===T(),'opening on the day that was being looked at');
+  ok(!q('#board').classList.contains('oneday'),'and the board drops the one column class');
+  ok(nav().getAttribute('aria-pressed')==='false','the switch says so too');
+  ok(A.stateSig(S())===sigOn,'turning it off pushes nothing either');
+
+  { /* the shape of the code, not just its behaviour */
+    const css=q('style').textContent;
+    ok(/@media \(min-width:901px\)\{\s*#board\.oneday \.col\{[^}]*flex:1 1 auto/.test(css),
+      'the full width rule is fenced into the wide layout, where the mode can exist');
+    ok(!/#board\.oneday/.test(css.split('@media (max-width:900px)')[1]||''),
+      'and nothing about it is declared inside the narrow block');
+    ok(/case 'todayonly':\{[^{}]*save\(\);\s*render\(\);\s*return;/.test(html),
+      'the click case saves, renders and RETURNS, rather than breaking into the shared tail');
+    ok(!/case 'todayonly':\{[^{}]*break;/.test(html),'so it never does both');
+    ok(/if\(s\.todayOnly\) showDay\(today\(\)\)/.test(html),
+      'and it reaches today through showDay, never by writing boardOffset or stripDay');
+  }
+  S().settings.todayOnly=false; click('[data-action="nav-today"]'); await wait(30);
+}
+
 console.log('— export and import still round-trip —');
 {
   S().days={}; S().carry=[]; S().focus=[];
@@ -4114,7 +4256,11 @@ console.log('— sticky note: one shared scratch block —');
      later tidy cannot quietly flatten them back to one number. */
   {
     const css=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
-    const wide=(css.match(/@media \(min-width:901px\)\{([\s\S]*?)\n\}/)||[])[1]||'';
+    /* same rule as the narrow block below: there is more than one min-width:901px
+       block in the sheet (the board's one column mode opens another), so take the one
+       that actually carries the sticky rules rather than whichever comes first */
+    const wide=([...css.matchAll(/@media \(min-width:901px\)\{([\s\S]*?)\n\}/g)]
+      .map(m=>m[1]).find(b=>/#main\.stickycorner/.test(b)))||'';
     /* there are five max-width:900px blocks in the sheet; take the one that
        actually carries the pad, not whichever comes first */
     const narrowB=([...css.matchAll(/@media \(max-width:900px\)\{([\s\S]*?)\n\}/g)]
