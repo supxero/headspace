@@ -4627,6 +4627,25 @@ console.log('— the tray collapses by default, and the accent it carries —');
   ok(q('#tray .traycnt').textContent==='2 waiting','the count stays on the open bar');
   A.render(); await wait(20);
   ok(qa('#tray .trayitem').length===2,'a re-render keeps it open: a flag, not a peek');
+  /* BOTH DIRECTIONS, driven through the header itself. This is the assertion the
+     2026-08-17 pass lacked: it pressed the header once, asserted "opens", and every
+     later collapse in either suite went through rollover or an emptying triage, so a
+     header that opened and never closed, half a toggle, would have passed everything.
+     Same shape as the Section 18.1 absence assertions: green against a half-built
+     feature. The press on the LABEL is the exact reported gesture, and it must reach
+     the toggle because the action sits on the whole header, as on .kh and .hhead. */
+  q('#tray .trayhead b').click(); await wait(25);
+  ok(S().settings.trayOpen===false,
+    'a press on the label text itself closes it: the whole header is the toggle');
+  ok(!!q('#tray .tray.closed')&&!q('#tray .trayitem')&&qa('#tray .tbtn').length===0,
+    'closed again, the items and every triage control leave the DOM');
+  ok(!!q('#tray .trayhead .chev')&&!q('#tray .trayhead .chev.open'),
+    'the chevron is drawn in the closed state too, pointing right as the idiom says closed');
+  ok(q('#tray .traycnt').textContent==='2 waiting','and the count stays on the bar');
+  click('[data-action="tray-toggle"]'); await wait(25);
+  ok(S().settings.trayOpen===true&&qa('#tray .trayitem').length===2&&
+     !!q('#tray .trayhead .chev.open'),
+    'the next press opens it again with the chevron turned: a toggle, not a one-way latch');
   /* NEVER A SYNC: the flag is settings, outside stateSig, and rides VIEWSET */
   {
     const sig0=A.stateSig(S());

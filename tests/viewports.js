@@ -557,6 +557,28 @@ async function runProfile(browser, base, prof) {
     check('tray: the header press opens it, items and controls drawn',
       opened.open && opened.items === 4, JSON.stringify(opened));
     await audit('tray-open');
+    /* BOTH DIRECTIONS, as real presses with real hit-testing, before any triage.
+       The 2026-08-17 pass pressed the header once and asserted "opens"; every later
+       collapse went through rollover or an emptying triage, never the header, so a
+       one-way toggle would have passed the whole suite. The press lands on the LABEL
+       text, the exact reported gesture, which must bubble to the header's action. */
+    await act({ css: '#tray .trayhead b' });
+    const shut = await A(() => ({ open: window.A.state.settings.trayOpen === true,
+      closed: !!document.querySelector('#tray .tray.closed'),
+      items: document.querySelectorAll('#tray .trayitem').length,
+      controls: document.querySelectorAll('#tray [data-action^="carry-"]').length,
+      chev: !!document.querySelector('#tray .trayhead .chev'),
+      rot: !!document.querySelector('#tray .trayhead .chev.open') }));
+    check('tray: a press on the label text closes it again: the whole header is the toggle',
+      !shut.open && shut.closed && shut.items === 0 && shut.controls === 0, JSON.stringify(shut));
+    check('tray: the chevron is drawn closed and unrotated, the shared idiom',
+      shut.chev && !shut.rot, JSON.stringify(shut));
+    await act({ css: '#tray .trayhead[data-action="tray-toggle"]' });
+    const reopened = await A(() => ({ open: window.A.state.settings.trayOpen === true,
+      items: document.querySelectorAll('#tray .trayitem').length,
+      rot: !!document.querySelector('#tray .trayhead .chev.open') }));
+    check('tray: and the next press opens it once more, chevron turned: both directions live',
+      reopened.open && reopened.items === 4 && reopened.rot, JSON.stringify(reopened));
     await act({ css: '[data-action="carry-one"][data-to="today"]' });
     await act({ css: '[data-action="carry-one"][data-to="float"]' });
     await act({ css: '[data-action="carry-drop"]' });
