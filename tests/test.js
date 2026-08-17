@@ -432,6 +432,15 @@ ok(S().carry.some(t=>t.id==='oldx'),'unfinished task rolled into the tray');
 ok(!S().carry.some(t=>t.id==='oldy'),'finished task stayed on its day as history');
 ok(S().days[yd].must.some(t=>t.id==='oldy'),'…and is still there');
 ok(/Carry-over/.test(q('#tray').textContent),'carry tray renders');
+/* COLLAPSED ON ARRIVAL: the roll announces itself as a header bar, not the list */
+ok(S().settings.trayOpen===false,'the roll lands the tray collapsed');
+ok(!q('#tray .trayitem')&&!q('[data-action="carry-all"]'),
+  'the bar draws no items and no bulk actions until it is opened');
+ok(q('#tray .traycnt').textContent===S().carry.length+' waiting',
+  'and counts what is waiting, like "0 open": '+q('#tray .traycnt').textContent);
+ok(!!q('#tray .trayhead .chev'),'behind the shared chevron every collapsible header uses');
+click('[data-action="tray-toggle"]'); await wait(30);
+ok(S().settings.trayOpen===true&&!!q('#tray .trayitem'),'opening reveals the items');
 click('[data-action="carry-all"][data-to="today"]'); await wait(30);
 ok(S().carry.length===0,'All → Today empties the tray');
 ok(S().days[T()].must.some(t=>t.id==='oldx'),'and they land on Today · Must');
@@ -1343,11 +1352,17 @@ console.log('— the day turning while the app stays open —');
   ok(items()===0,'a plain re-render does not carry anything over on its own');
 
   ld.dispatchEvent(new lw.Event('visibilitychange')); await wait(120);
-  ok(items()===1,'coming back to the app after midnight fills the tray without a reload');
+  ok(/Carry-over/.test(ld.querySelector('#tray').textContent),
+    'coming back to the app after midnight fills the tray without a reload');
+  ok(items()===0&&LS().settings.trayOpen===false,
+    'and the arrival is the collapsed bar: a new carry never takes the top of the board');
+  ok(ld.querySelector('#tray .traycnt').textContent==='1 waiting',
+    'the bar counts the one item waiting');
+  ld.querySelector('[data-action="tray-toggle"]').click(); await wait(40);
+  ok(items()===1,'opening the bar reveals the carried item');
   ok(LS().carry.length===1&&LS().carry[0].id==='nite1','the unfinished task is the one carried');
   ok(LS().settings.lastRoll===T(),'the day is marked as carried over');
   ok((LS().days[plus(-1)].must||[]).some(t=>t.id==='nite2'),'the finished one stays on its day as history');
-  ok(/Carry-over/.test(ld.querySelector('#tray').textContent),'the tray panel is on screen');
 
   ok(LS().carry[0].pos===new Date(T()+'T00:00:00').getTime(),
     'the move is dated midnight, so a device opening later cannot out-stamp a triage');
@@ -1383,10 +1398,13 @@ console.log('— the day turning while the app stays open —');
   ok(LS().carry.some(t=>t.id==='late1'),'including the back-dated one');
   ok(!ld.querySelector('[data-action="roll-now"]'),'and the affordance goes once nothing is waiting');
   ok(lw.A.pastOpenCount()===0,'nothing left on past days');
-  /* put the tray back to one item for the checks that follow */
+  ok(LS().settings.trayOpen===false,
+    'a manual pull is a fresh arrival too, so it re-collapses an open tray');
+  /* put the tray back to one item for the checks that follow, and open it */
   const late=LS().carry.findIndex(t=>t.id==='late1');
   LS().carry.splice(late,1); delete LS().days[plus(-2)];
   lw.A.save(); lw.A.render(); await wait(25);
+  ld.querySelector('[data-action="tray-toggle"]').click(); await wait(40);
 
   const labels=[...ld.querySelectorAll('.trayitem .tbtn')].map(b=>b.textContent.trim());
   ok(labels.length===3,'each carried task offers three triage buttons');
@@ -1504,9 +1522,11 @@ console.log('— recycle bin —');
   A.restoreBin('bfoc'); await wait(25); A.save();
   ok(S().focus.some(f=>f.id==='bfoc'),'and restores to Focus');
 
-  /* dismissed from the carry-over tray */
+  /* dismissed from the carry-over tray; the tray arrives collapsed, so open it first */
   S().carry.push({id:'bcar',title:'dropped from the tray',done:false,subtasks:[],from:'Prio 0 · Fri'});
+  S().settings.trayOpen=false;
   A.save(); A.render(); await wait(25);
+  click('[data-action="tray-toggle"]'); await wait(25);
   click('[data-action="carry-drop"][data-id="bcar"]'); await wait(25); A.save();
   ok(!!bin().bcar,'a task dropped from the carry tray lands in the bin');
   ok(bin().bcar.loc.kind==='carry','marked as coming from the tray');
@@ -3515,8 +3535,10 @@ console.log('— the copy pass: the lines that stopped rendering —');
   ok(/0 habits/.test(q('#habitsRail').textContent),'the habits bar still counts "0 habits"');
   ok(/0 open/.test(q('#weekRail').textContent),'the weekly bar still says "0 open"');
   ok(/not set/.test(q('#fpanel').textContent),'and True north still says "not set"');
-  /* the tray keeps its heading and every triage control; only the sentence went */
-  S().carry=[{id:'cy1',title:'left over',from:'Mon 1 Jun'}]; A.render(); await wait(25);
+  /* the tray keeps its heading and every triage control; only the sentence went.
+     Opened for the check, since a collapsed bar deliberately draws no controls. */
+  S().carry=[{id:'cy1',title:'left over',from:'Mon 1 Jun'}];
+  S().settings.trayOpen=true; A.render(); await wait(25);
   ok(!!q('#tray .trayhead'),'the carry-over tray still draws its head');
   ok(!q('#tray .why')&&!/unfinished from before/.test(q('#tray').textContent),
     'without the sentence under it');
@@ -4435,41 +4457,56 @@ console.log('— sticky note: one shared scratch block —');
        stops being a row of #main's column and becomes a grid track beside the list and
        the editor, so all three start at the content top and the band the strip held
        open across the top is gone rather than moved somewhere else. The band is found
-       by what it DOES (the 464px track) rather than by its number, so the arithmetic
-       below is free to disagree with it and say so. */
+       by what it DOES (the track that saturates at 464px) rather than by its number,
+       so the arithmetic below is free to disagree with it and say so. */
     const threeM=[...css.matchAll(/@media \(min-width:(\d+)px\)\{([\s\S]*?)\n\}/g)]
       .find(m=>/grid-template-columns:[^;]*464px/.test(m[2]));
     const threeW=threeM?+threeM[1]:NaN, three=threeM?threeM[2]:'';
     ok(three,'the strip has a third-column band of its own above the two-column grid');
-    ok(/#main\.stickytop\{[^}]*grid-template-columns:272px minmax\(0,1fr\) 464px/.test(three),
-      'three tracks: the 272px list, the editor, and the strip at its unchanged 464px');
+    /* THE STRIP'S TRACK IS FLEXIBLE, WHICH IS THE 2026-08-17 CORRECTION: the old band
+       started at 1822 by asking for the strip's DOUBLED 464px as a prerequisite, the
+       one ceiling in a sum of floors, so between 1554 and 1821 the two-row grid held a
+       221px row for the strip while leaving MORE dead canvas beside it than the strip
+       takes. Now the editor track floors at its 718 and the strip takes what the row
+       leaves, saturating at 464 exactly where the old band began, so 1822 and up
+       resolves pixel for pixel the layout the fixed band drew. */
+    const gridDecl=((three.match(/#main\.stickytop\{[^}]*grid-template-columns:([^;]*)/)||[])[1]||'').trim();
+    const trackM=gridDecl.match(/^272px minmax\((\d+)px,1fr\) minmax\((\d+)px,(\d+)px\)$/);
+    ok(!!trackM,'three tracks: the 272px list, a floored editor, and a strip the row sizes: '+gridDecl);
+    const edFloor=trackM?+trackM[1]:NaN, stripMin=trackM?+trackM[2]:NaN, stripMax=trackM?+trackM[3]:NaN;
     ok(/#main\.stickytop\{[^}]*grid-template-rows:minmax\(0,1fr\)/.test(three),
       'one row, so the three share a top edge and the list and the editor still fill the pane');
     ok(/#main\.stickytop \.notelist\{grid-row:1\}/.test(three),
       'the list drops its two-row span, there being only one row left to sit in');
     ok(/#main\.stickytop \.noteed\{grid-column:2;grid-row:1\}/.test(three),
       'the editor takes the middle track, beside the list rather than under the strip');
-    ok(/#main\.stickytop #sticky\{grid-column:3;grid-row:1;margin:0\}/.test(three),
-      'and the strip takes the third, dropping the 10px that was its gap down to the pane');
+    ok(/#main\.stickytop #sticky\{grid-column:3;grid-row:1;margin:0;width:auto;justify-self:stretch\}/.test(three),
+      'and the strip takes the third at width:auto, so the TRACK sizes it: the 464px '+
+      'declaration belongs to the two-row bands and would overflow a narrow track');
     /* IN FLOW, still. A grid track cannot be floated over .ntools, Unpin or Delete, and
        width does not relax that refusal: the wider the pane, the more of those controls
        an overlay would reach. Nothing in the band may position the strip. */
     ok(!/position:\s*(absolute|fixed)/.test(three),
       'nothing in the band positions the strip: it is a column there, never an overlay');
     ok(!/#sticky\[data-pos="top"\]/.test(three)&&!/#stickyPad/.test(three),
-      'the strip keeps its 464px width and its 184px pad: the band moves it, it does not resize it');
+      'the strip keeps its 184px pad: the band resizes only the width, on the track');
     ok(!/stickycorner/.test(three),
       'and the board corner is not in the band at all, at any width, which is risk 16 kept shut');
     ok(css.indexOf('@media (min-width:'+threeW+'px)')>css.indexOf('@media (min-width:1200px)'),
       'the wider branch is declared after the two-column grid, so it is the one that applies');
-    /* THE THRESHOLD IS ARITHMETIC, checked against the parts rather than written twice.
-       The editor track has to carry .notewrap's reading measure whole: the measure plus
+    /* THE THRESHOLD IS ARITHMETIC, checked against the parts rather than written twice,
+       and since the track went flexible there are TWO identities to hold. The editor
+       track has to carry .notewrap's reading measure whole: the measure plus
        .notepage's padding and border, .noteed's own padding and the scrollbar gutter a
-       scrolling note takes. Beside it stand the list and the strip with the grid's two
-       gaps, inside a content area that is the viewport less the rail and #main's
-       padding. Change the list, the strip, the gap, the measure, the rail or any of the
-       padding and this is where the threshold stops adding up, rather than the editor
-       quietly losing the measure the whole number exists to protect. */
+       scrolling note takes. Beside it stand the list and the strip's minmax floor with
+       the grid's two gaps, inside a content area that is the viewport less the rail
+       and #main's padding: that sum is where the band starts. INDEPENDENTLY, the band
+       must start exactly where the two-row grid's dead canvas beside the full strip
+       would out-measure the strip itself (rail + padding + list + gap + 464 + 464),
+       which is the criterion that DERIVED the floor rather than choosing it. Change
+       the list, the strip, the gap, the measure, the rail or any of the padding and
+       one of these stops adding up, rather than the editor quietly losing the measure
+       the numbers exist to protect. */
     const num=re=>{const m=css.match(re);return m?+m[1]:NaN};
     const parts={
       list:num(/\.notelist\{width:(\d+)px/),
@@ -4487,10 +4524,20 @@ console.log('— sticky note: one shared scratch block —');
       JSON.stringify(parts));
     const editor=parts.measure+2*parts.pagePad+2*parts.pageBorder+parts.edPad+parts.bar;
     ok(editor===718,'the editor track needs 718px to leave the 640px measure whole: '+editor);
-    const total=parts.list+parts.gap+editor+parts.gap+parts.strip+2*parts.mainPad+parts.rail;
-    ok(total===threeW,'and the band starts exactly where the parts add up, not at a round '+
-      'number: '+[parts.list,parts.gap,editor,parts.gap,parts.strip,2*parts.mainPad,parts.rail]
-      .join(' + ')+' = '+total+', band at '+threeW);
+    ok(edFloor===editor,'and the band floors the editor track at exactly that: '+edFloor);
+    ok(stripMax===parts.strip,
+      'the strip saturates at the same 464 the two-row bands declare: '+stripMax);
+    const fixed=parts.list+parts.gap+editor+parts.gap+2*parts.mainPad+parts.rail;
+    ok(fixed+stripMin===threeW,'the band starts exactly where the parts add up, not at a '+
+      'round number: '+[parts.list,parts.gap,editor,parts.gap,stripMin,2*parts.mainPad,parts.rail]
+      .join(' + ')+' = '+(fixed+stripMin)+', band at '+threeW);
+    const deadEq=parts.rail+2*parts.mainPad+parts.list+parts.gap+parts.strip+parts.strip;
+    ok(deadEq===threeW,'and exactly where the two-row grid would leave more dead canvas '+
+      'beside the strip than the strip takes: '+parts.rail+' + '+2*parts.mainPad+' + '+
+      parts.list+' + '+parts.gap+' + '+parts.strip+' + '+parts.strip+' = '+deadEq);
+    ok(fixed+parts.strip===1822,
+      'the saturation point is the old 1822 threshold, so nothing above it moved: '+
+      (fixed+parts.strip));
     /* the rail COLLAPSED only ever hands the content area more room (the freed column,
        less the 56px the restore button stands in), so the branch can never be reached
        with less width than it was cut for. Stated as a test so a later change to the
@@ -4551,6 +4598,94 @@ console.log('— the carry tray is a board panel, and Notes does not draw it —
   ok(/Carry-over/.test(q('#tray').textContent)&&S().carry.length===2,
     'and both items are back on the board, still waiting to be triaged');
   S().carry=[]; A.render(); await wait(20);
+}
+
+console.log('— the tray collapses by default, and the accent it carries —');
+{
+  /* THE COLLAPSE IS PRESENTATION, PER DEVICE. settings.trayOpen sits on VIEWSET
+     beside habitsOpen, outside stateSig, defaulting to false: a carry ARRIVES as a
+     header bar with the shared chevron and an "N waiting" count, and the items with
+     their triage controls draw only once it is opened. */
+  ok(A.fresh().settings.trayOpen===false,'a fresh planner starts with the tray collapsed');
+  S().settings.view='board'; S().settings.floatMode=false; S().settings.trayOpen=false;
+  S().days={};
+  S().carry=[{id:'tc1',title:'left from Monday',done:false,subtasks:[],up:1,pos:1,from:'Prio 0 · Mon'},
+             {id:'tc2',title:'and another',done:false,subtasks:[],up:1,pos:1,from:'Prio 1 · Tue'}];
+  A.render(); await wait(20);
+  ok(!!q('#tray .tray.closed')&&!!q('#tray .trayhead[data-action="tray-toggle"]'),
+    'with items and the flag down, the tray is a header bar carrying the toggle');
+  ok(!!q('#tray .trayhead .chev')&&!q('#tray .trayhead .chev.open'),
+    'with the shared chevron pointing right, the way every collapsed panel says closed');
+  ok(q('#tray .traycnt').textContent==='2 waiting','and the count, the way "0 open" counts');
+  ok(!q('#tray .trayitem')&&qa('#tray .tbtn').length===0,
+    'no item and no triage control is built while the bar is closed');
+  click('[data-action="tray-toggle"]'); await wait(25);
+  ok(S().settings.trayOpen===true,'the header press opens it');
+  ok(qa('#tray .trayitem').length===2&&qa('#tray .trayhead .tbtn').length===2,
+    'open, both items and both bulk actions are there to use');
+  ok(!!q('#tray .trayhead .chev.open'),'and the chevron turns down');
+  ok(q('#tray .traycnt').textContent==='2 waiting','the count stays on the open bar');
+  A.render(); await wait(20);
+  ok(qa('#tray .trayitem').length===2,'a re-render keeps it open: a flag, not a peek');
+  /* NEVER A SYNC: the flag is settings, outside stateSig, and rides VIEWSET */
+  {
+    const sig0=A.stateSig(S());
+    S().settings.trayOpen=false;
+    ok(A.stateSig(S())===sig0,'toggling the flag never changes the signature, so it never pushes');
+    S().settings.trayOpen=true;
+    ok(/'noteSel','trayOpen'/.test(html),
+      'and it rides VIEWSET beside noteSel, so a Pull never imports another screen tray');
+  }
+  /* FRESH ARRIVAL RE-COLLAPSES: rollover drops the flag whenever it moves items in */
+  S().days[plus(-3)]={must:[{id:'tc3',title:'stale one',done:false,subtasks:[]}],should:[],extra:[]};
+  S().settings.lastRoll=null;
+  A.rollover(); A.render(); await wait(20);
+  ok(S().settings.trayOpen===false&&!q('#tray .trayitem'),
+    'rollover lands the tray collapsed even if it stood open');
+  ok(q('#tray .traycnt').textContent==='3 waiting','with the count grown to the new arrival');
+  /* TRIAGE THAT EMPTIES IT drops the flag too, so a sync-only arrival also starts closed */
+  click('[data-action="tray-toggle"]'); await wait(25);
+  click('[data-action="carry-all"][data-to="today"]'); await wait(25);
+  ok(S().carry.length===0&&S().settings.trayOpen===false,
+    'emptying by triage puts the flag down for the next arrival');
+  ok(q('#tray').innerHTML==='','and an empty carry draws NOTHING: no bar, no dead band');
+  click('[data-action="undo"]'); await wait(25);
+  ok(S().carry.length===3&&S().settings.trayOpen===true,
+    'the undo brings the items back into an OPEN tray, the state triage happened in');
+  ok(qa('#tray .trayitem').length===3,'drawn open, ready to keep triaging');
+  /* THE ACCENT: the dot reads --today, non-text, measured over the 3:1 bar */
+  const cssAll=html.slice(html.indexOf('<style>'),html.indexOf('</style>'));
+  ok(/\.traydot\{[^}]*background:var\(--today\)/.test(cssAll),
+    'the tray dot reads --today, the accent that already means attention here');
+  ok(!/\.trayhead b::before/.test(cssAll),'the old teal pseudo dot is gone, not doubled');
+  ok(!!q('#tray .traydot'),'and the dot is a real element the red sweep can see');
+  ok(!/\.traydot\{[^}]*color:/.test(cssAll)&&!/\.traycnt\{[^}]*--today/.test(cssAll)&&
+     !/\.trayhead[^{]*\{[^}]*--today/.test(cssAll),
+    'the accent inks no text: mono red on --traybg is a 3:1 accent, not 4.5:1 ink');
+  {
+    const lin=c=>{c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
+    const lum=h=>{h=h.replace('#','');return 0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16))};
+    const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+    const monoB=(cssAll.match(/:root\[data-theme="mono"\]\{[^}]*\}/)||[''])[0];
+    const rootB=(cssAll.match(/:root\{[^}]*\}/)||[''])[0];
+    const monoToday=(monoB.match(/--today:(#[0-9A-Fa-f]{6})/)||[])[1];
+    const monoTray=(monoB.match(/--traybg:(#[0-9A-Fa-f]{6})/)||[])[1];
+    const skyToday=(rootB.match(/--today:(#[0-9A-Fa-f]{6})/)||[])[1];
+    const pearl=(rootB.match(/--pearl:(#[0-9A-Fa-f]{6})/)||[])[1];
+    ok(monoToday&&monoTray&&ratio(monoToday,monoTray)>=3,
+      'mono: the red dot reads at '+(monoToday&&monoTray?ratio(monoToday,monoTray).toFixed(2):'?')+
+      ' on the tray surface, over the 3:1 non-text bar');
+    ok(skyToday&&pearl&&ratio(skyToday,pearl)>=3,
+      'cloud blue: the teal dot reads at '+(skyToday&&pearl?ratio(skyToday,pearl).toFixed(2):'?')+
+      ' on the tray sheen pearl, same bar, no red near the theme');
+  }
+  /* the coarse block gives the header its finger */
+  ok(/\.trayhead\[data-action\]\{min-height:44px\}/.test(cssAll.slice(cssAll.indexOf('@media (pointer:coarse)'))),
+    'on a coarse pointer the header bar grows to 44px for real');
+  /* hand the board back */
+  S().carry=[]; S().settings.trayOpen=false;
+  S().days={}; S().settings.lastRoll=T();
+  A.save(); A.render(); await wait(20);
 }
 
 console.log('— sticky note: merge, the honest limit said plainly —');

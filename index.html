@@ -269,11 +269,12 @@ select option{background:var(--pearl);color:var(--txt)}
 /* the one chevron every collapsible panel header uses: right when collapsed, down when open */
 .chev{width:12px;height:12px;flex:none;color:var(--mut2);transition:transform .18s ease}
 .chev.open{transform:rotate(90deg)}
-.kh[data-action],.hhead[data-action]{cursor:pointer;user-select:none}
+.kh[data-action],.hhead[data-action],.trayhead[data-action]{cursor:pointer;user-select:none}
 .kh.solo{margin-bottom:0}
 @media (hover:hover){
   .kh[data-action]:hover,.hhead[data-action]:hover{color:var(--navy)}
-  .kh[data-action]:hover .chev,.hhead[data-action]:hover .chev{color:var(--navy)}
+  .kh[data-action]:hover .chev,.hhead[data-action]:hover .chev,
+  .trayhead[data-action]:hover .chev{color:var(--navy)}
 }
 
 /* focus (True north): a statement panel, not a task list. Its presence in the
@@ -392,9 +393,21 @@ select option{background:var(--pearl);color:var(--txt)}
 @keyframes traydrop{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(-2px)}}
 @keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .trayhead{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px}
+/* collapsed, the header IS the tray: no items below it, so no gap held under it */
+.tray.closed .trayhead{margin-bottom:0}
 .trayhead b{font-family:var(--fd);font-size:13.5px;color:var(--navy);display:flex;align-items:center;gap:7px}
-.trayhead b::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none}
-.trayhead .acts{margin-left:auto;display:flex;gap:6px}
+/* THE ACCENT, and the one place the tray reads --today: the marker dot. --today is
+   the "attention here" accent the nav already reuses, so mono gets its red and cloud
+   blue its teal from the one variable and no red enters the blue palette. A real
+   element rather than a ::before so the viewport pass's red sweep can see it and the
+   whitelist names it. NON-TEXT on purpose: the red measures 3.27:1 on --traybg under
+   mono, over the 3:1 non-text bar and under the 4.5 text one, so it may never ink the
+   label beside it (blue's teal measures 4.08 on the tray's pearl sheen). */
+.traydot{width:7px;height:7px;border-radius:50%;background:var(--today);flex:none}
+/* the count rides the collapsed bar the way "0 open" and "0 habits" do, and stays
+   put when the bar opens; it carries the auto margin, so the actions follow it */
+.traycnt{margin-left:auto;font-size:11.5px;color:var(--mut);white-space:nowrap}
+.trayhead .acts{display:flex;gap:6px}
 /* tray only: powder keeps the controls readable now the panel behind them is brighter */
 .tbtn{font-size:11.5px;padding:5px 10px;border-radius:8px;border:1px solid var(--line2);color:var(--navy);background:var(--panel);transition:.15s}
 .tbtn:hover{background:var(--panel2)}
@@ -707,10 +720,12 @@ select option{background:var(--pearl);color:var(--txt)}
      editor; 190x221 of canvas is still bare above the editor at 1280, which is the
      strip's own 464px width and not something a layout can reclaim. The 901 to
      1199 band cannot have it: column two would be 398px against a 464px strip.
-     AT 1822px AND UP THE STRIP BECOMES THE THIRD COLUMN and that last bare band
+     AT 1554px AND UP THE STRIP BECOMES THE THIRD COLUMN and that last bare band
      goes with it: one row, three tracks, list and editor and strip all starting at
-     the content top. 1822 is where the editor can keep its 640px measure with both
-     of them beside it; the band's own comment does the arithmetic.
+     the content top. 1554 is where the two-row grid's dead band beside the strip
+     would reach the strip's own 464px, and from there the strip takes what the
+     row leaves, 196px at the boundary up to its full 464 at 1822; the band's own
+     comment does the arithmetic.
      An OVERLAY is still refused, now with this pass's numbers rather than from
      memory: at 1280 the page runs to x=1258 inside a content area ending at 1264,
      with Unpin at 1113-1166, Delete at 1172-1227 and the toolbar spanning
@@ -870,10 +885,11 @@ select option{background:var(--pearl);color:var(--txt)}
      (398px against 464px at 1024), so the strip would overflow back across the
      list; that band keeps the stacked flow, where the band is 129px rather than
      221px. Under 900px there is no band at all, the strip is last in the flow.
-     AND AT 1822px THE 190x221 GOES TOO, because the strip stops being a row and
+     AND AT 1554px THE 190x221 GOES TOO, because the strip stops being a row and
      becomes the third grid track: see the band below this one. That width is the
-     first at which the editor can keep its 640px measure with a 464px strip and
-     a 272px list beside it, so it is where the band starts and not a pixel below.
+     first at which the dead canvas this grid leaves beside the strip would exceed
+     the strip itself, so from there the row costs more than the feature takes and
+     the strip goes beside the pane instead, at whatever width the row leaves it.
      THE EMPTY SLOTS span the full width. #tray, #boardnav, #strip, #habits and
      #weekMobile are all guaranteed empty in a wide Notes view (renderTray returns
      early on the view, renderNav empties the two board slots, and renderHabits and
@@ -912,40 +928,54 @@ select option{background:var(--pearl);color:var(--txt)}
   #sticky[data-pos="corner"] #stickyPad{height:184px}
   #main.stickycorner .colbody{padding-bottom:249px}
 }
-/* ---------- 1822px and up: the strip stops being a row and becomes a COLUMN ----------
+/* ---------- 1554px and up: the strip stops being a row and becomes a COLUMN ----------
    The 1200px grid handed the list the band beside the strip, but the strip itself was
    still a row of #main's column, so the editor still began 231px down and 190x221 of
    canvas still stood bare above it at 1280. Wide enough, none of that has to be paid:
    the strip stands BESIDE the pane rather than above it, and the list, the editor and
    the strip all start at the content top together. The bare band is gone, not moved.
-   1822 IS MEASURED, AND WHAT IT PROTECTS IS THE EDITOR'S MEASURE. The page is
-   fit-content around .notewrap's 640px reading measure, so its full width is
-   640 + 60 of .notepage padding + 2 of border = 702px. .noteed spends 6px of its own
-   padding and, while a note is long enough to scroll, the 10px scrollbar gutter, so
-   the editor column needs 718px to leave the measure whole. Beside it stand the 272px
-   list and the 464px strip with the grid's two 14px gaps: 272 + 14 + 718 + 14 + 464 =
-   1482px of content area, and #main spends 16px either side inside a column that is
-   the viewport less the 308px rail, so 1482 + 32 + 308 = 1822. One pixel narrower and
-   the scrollbar takes the measure below 640, which is the whole of the number: it is
-   the width at which three columns fit without the editor paying for the third. It is
-   cut for the EXPANDED rail because that is the tighter case; collapsing the rail only
-   ever hands the content area more (the freed column, less the 56px the restore button
-   stands in), so the branch cannot be reached with less room than it was measured for.
-   NOTHING ELSE MOVES. The strip keeps its 464px width and its 184px pad, the list
-   keeps its 272px, the editor keeps its page, and the strip is still IN FLOW: it is a
-   grid track, not a float, so the overlap measured against .ntools, Unpin and Delete
-   cannot be built here any more than it can below. Below 1822 the two-column grid is
-   untouched, and below 1200 so is the stacked column flow. */
-@media (min-width:1822px){
+   THE BAND USED TO START AT 1822 AND THAT THRESHOLD'S PREMISE WAS WRONG: it asked for
+   the strip's DOUBLED 464px as a prerequisite, the one ceiling in a sum of floors, so
+   between 1554 and 1821 the two-row grid held a 221px row for the strip and left MORE
+   dead canvas beside it than the strip itself takes (the band beside a 464 strip is
+   the viewport less 1090, which passes 464 at 1554 and reached about 497px on the
+   1586px viewport that reported this). So the strip's track is now FLEXIBLE,
+   minmax(196px,464px): it takes exactly what the row leaves once the list and a whole
+   editor are paid, and saturates at its full 464 at 1822, where the resolved layout is
+   pixel for pixel the one the old band drew. 1822 is no longer a threshold, only the
+   saturation point 1358 + 464.
+   WHAT THE EDITOR TRACK PROTECTS IS THE MEASURE, as before. The page is fit-content
+   around .notewrap's 640px reading measure, so its full width is 640 + 60 of
+   .notepage padding + 2 of border = 702px. .noteed spends 6px of its own padding and,
+   while a note is long enough to scroll, the 10px scrollbar gutter, so the editor
+   column needs 718px to leave the measure whole: minmax(718px,1fr), the 718 a floor a
+   narrow band cannot squeeze and the 1fr what grows once the strip is full. Beside it
+   stand the 272px list and the strip with the grid's two 14px gaps, inside #main's
+   32px of padding and beside the 308px rail, so the fixed parts sum to
+   272 + 14 + 718 + 14 + 32 + 308 = 1358 and the strip's width IS the viewport less
+   1358, never chosen: 196 at the 1554 boundary (1554 = 1090 + 464, the width where
+   the dead band would out-measure the strip), 228 at 1586, 464 from 1822 up. It is
+   cut for the EXPANDED rail because that is the tighter case; collapsing the rail
+   only ever hands the content area more (the freed column, less the 56px the restore
+   button stands in), and the flexible tracks spend that room on the strip first and
+   then the editor, with no second threshold to cut.
+   NOTHING ELSE MOVES. The strip keeps its 184px pad, the list keeps its 272px, the
+   editor keeps its page, and the strip is still IN FLOW: it is a grid track, not a
+   float, so the overlap measured against .ntools, Unpin and Delete cannot be built
+   here any more than it can below. Below 1554 the two-column grid is untouched, and
+   below 1200 so is the stacked column flow. */
+@media (min-width:1554px){
   /* ONE row, so the three tracks share the top edge; 1fr rather than auto so the list
      and the editor still fill the pane's height the way they do in the two-row grid. */
-  #main.stickytop{grid-template-columns:272px minmax(0,1fr) 464px;
+  #main.stickytop{grid-template-columns:272px minmax(718px,1fr) minmax(196px,464px);
     grid-template-rows:minmax(0,1fr)}
   #main.stickytop .notelist{grid-row:1}
   #main.stickytop .noteed{grid-column:2;grid-row:1}
-  /* justify-self:end and align-self:start carry over from the 1200 rule; the 10px was
-     the gap down to a pane that is no longer underneath it. */
-  #main.stickytop #sticky{grid-column:3;grid-row:1;margin:0}
+  /* align-self:start carries over from the 1200 rule; the 10px was the gap down to a
+     pane that is no longer underneath it. width:auto with justify-self:stretch is what
+     lets the TRACK size the strip: the 464px declaration is the two-row bands' fixed
+     width, and here it would overflow a 196px track, not fill it. */
+  #main.stickytop #sticky{grid-column:3;grid-row:1;margin:0;width:auto;justify-self:stretch}
 }
 @media (max-width:900px){
   #sticky{position:static;width:auto;margin:10px 0 4px}
@@ -1286,6 +1316,9 @@ select option{background:var(--pearl);color:var(--txt)}
   .nact,.ntb{min-height:44px;min-width:44px}
   #notePage{min-height:44px}
   .nbtn,.tbtn,.abtn,.mrow button{min-height:44px;min-width:44px}
+  /* the tray header is now a toggle; a real min-height rather than an overlay, since
+     the row under it holds the first item's own 44px buttons and must keep its taps */
+  .trayhead[data-action]{min-height:44px}
   .navbtn,.railfoot button,#strip button,.fadd button{min-height:44px}
   /* the panel add buttons sit in a row that lost ~10px to the reserved scrollbar
      gutter, which squeezed them under 44px wide on a coarse pointer */
@@ -1437,8 +1470,14 @@ function fresh(){
       calSel:null,calOffset:0,mRange:'day',stripDay:null,lastRoll:null,showDone:false,
       /* todayOnly: the board draws today's column alone. A per-device view preference
          beside habitsOpen and weekOpen, on VIEWSET so a Pull cannot import another
-         screen's mode, and outside stateSig like every other setting. */
-      habitsOpen:true,weekOpen:true,todayOnly:false,lastWeek:null,noteSel:null}
+         screen's mode, and outside stateSig like every other setting.
+         trayOpen: whether the carry tray shows its items or only its header bar. The
+         same contract, with the opposite default: a tray arrives COLLAPSED, so a new
+         carry never takes the top of the board, and rollover re-collapses it whenever
+         it moves something in (the fresh-arrival rule). Opening persists on this
+         device until the tray empties, so a mid-triage reload keeps it open. */
+      habitsOpen:true,weekOpen:true,todayOnly:false,lastWeek:null,noteSel:null,
+      trayOpen:false}
   };
 }
 
@@ -1949,7 +1988,7 @@ const SSTAMP_LS='agora_dayplanner_syncstamp'; /* updated_at of the copy this dev
 const SBACK_LS='agora_dayplanner_v1_backup';  /* last local state before a pull replaced it */
 /* settings that describe what this screen is looking at. Never taken from another device. */
 const VIEWSET=['view','boardOffset','floatMode','activeFloat','calSel','calOffset','mRange','stripDay',
-  'showDone','lastRoll','habitsOpen','weekOpen','todayOnly','lastWeek','noteSel'];
+  'showDone','lastRoll','habitsOpen','weekOpen','todayOnly','lastWeek','noteSel','trayOpen'];
 const POLL_MS=25000;                          /* look for another device's changes this often */
 const RECHECK_MS=8000;                        /* and on focus or reconnect, at most this often */
 const sync={key:'',state:'off',note:'',ready:false,pending:false,applying:false,
@@ -2417,6 +2456,9 @@ function rollover(){
     }
   }
   state.settings.lastRoll=t;
+  /* a fresh arrival lands COLLAPSED, whatever the flag held: the tray announces
+     itself as a bar and the board keeps its top. Per-device presentation only. */
+  if(moved) state.settings.trayOpen=false;
   return moved;
 }
 /* Monday sweep for the weekly list: ticked items graduate into week.hist under the week
@@ -2834,16 +2876,26 @@ function renderQuick(){
    rule on top of the contract to stop the slot holding a band open. */
 function renderTray(){
   if(state.settings.view==='notes'||!state.carry.length){$('#tray').innerHTML='';return}
-  $('#tray').innerHTML='<div class="tray"><div class="trayhead">'+
-    '<b>Carry-over</b>'+
-    '<span class="acts"><button class="tbtn" data-action="carry-all" data-to="today">All → Today</button>'+
-    '<button class="tbtn" data-action="carry-all" data-to="float">All → Free Floating</button></span></div>'+
-    state.carry.map(t=>'<div class="trayitem">'+
+  /* COLLAPSED BY DEFAULT: with items the tray is a header bar until it is opened,
+     the same chevron-and-count idiom Habits and This week keep, so a fresh carry
+     announces itself without taking the top of the board. The bulk actions and the
+     items draw only while open: a collapsed bar that offered All → Today would be
+     triage without the list it triages. An EMPTY carry still draws nothing at all;
+     the bar is never the dead band the :not(:empty) contract closed. */
+  const open=state.settings.trayOpen===true, n=state.carry.length;
+  $('#tray').innerHTML='<div class="tray'+(open?'':' closed')+'">'+
+    '<div class="trayhead" data-action="tray-toggle">'+CHEV(open)+
+    '<b><span class="traydot"></span>Carry-over</b>'+
+    '<span class="traycnt">'+n+' waiting</span>'+
+    (open?'<span class="acts"><button class="tbtn" data-action="carry-all" data-to="today">All → Today</button>'+
+    '<button class="tbtn" data-action="carry-all" data-to="float">All → Free Floating</button></span>':'')+
+    '</div>'+
+    (open?state.carry.map(t=>'<div class="trayitem">'+
       '<span class="from">'+esc(t.from||'earlier')+'</span>'+
       '<span class="t">'+esc(t.title)+'</span>'+
       '<button class="tbtn" data-action="carry-one" data-id="'+t.id+'" data-to="today">Today</button>'+
       '<button class="tbtn" data-action="carry-one" data-id="'+t.id+'" data-to="float">Free Floating</button>'+
-      '<button class="tbtn" data-action="carry-drop" data-id="'+t.id+'">✕</button></div>').join('')+
+      '<button class="tbtn" data-action="carry-drop" data-id="'+t.id+'">✕</button></div>').join(''):'')+
     '</div>';
 }
 
@@ -4403,23 +4455,36 @@ document.addEventListener('click',e=>{
     }
     case 'strip': showDay(el.dataset.day); break;
 
+    /* the collapse is presentation, per device: the flag lives in settings on
+       VIEWSET, outside stateSig, so toggling it never syncs and a Pull never
+       imports another screen's tray. Breaks to the shared save()+render() tail
+       like habit-toggle, so there is no second save or render to collide with. */
+    case 'tray-toggle': s.trayOpen=s.trayOpen!==true; break;
+    /* triage that EMPTIES the tray also drops the open flag, so the next carry to
+       arrive, by this device's own roll or by a pull from another one, starts as
+       the collapsed bar again. The undo closures restore the flag with the items:
+       triage only happens in an open tray, so open is what an undo comes back to. */
     case 'carry-all':{
       const snap=state.carry.slice();
       const to=el.dataset.to;
       snap.forEach(t=>{delete t.from; place(t, to==='today'?{kind:'day',date:today(),zone:'must'}:{kind:'float',fid:activeFloat().id})});
-      state.carry=[];
+      state.carry=[]; s.trayOpen=false;
       toast('Moved '+snap.length+' to '+(to==='today'?'Today · Prio 0':'Free Floating'),()=>{
-        snap.forEach(t=>pull(t.id)); state.carry=snap;
+        snap.forEach(t=>pull(t.id)); state.carry=snap; state.settings.trayOpen=true;
       }); break;
     }
     case 'carry-one':{
       const t=pull(id); if(!t) return; delete t.from;
       place(t, el.dataset.to==='today'?{kind:'day',date:today(),zone:'must'}:{kind:'float',fid:activeFloat().id});
+      if(!state.carry.length) s.trayOpen=false;
       ui.flash=t.id; break;
     }
     case 'carry-drop':{
       const i=state.carry.findIndex(t=>t.id===id), t=state.carry.splice(i,1)[0];
-      toast('Dropped "'+t.title.slice(0,24)+'"',()=>state.carry.splice(i,0,t)); break;
+      if(!state.carry.length) s.trayOpen=false;
+      toast('Dropped "'+t.title.slice(0,24)+'"',()=>{
+        state.carry.splice(i,0,t); state.settings.trayOpen=true;
+      }); break;
     }
 
     case 'float-new':{

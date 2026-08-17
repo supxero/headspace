@@ -1,5 +1,5 @@
 /* Viewport verification pass: real headless Chrome, real mouse and touch dispatch.
-   Drives the full app through its flows at four device profiles and measures, per
+   Drives the full app through its flows at six device profiles and measures, per
    profile: horizontal page overflow, elementFromPoint at every control's centre,
    touch-target size on coarse-pointer profiles, blank control labels, and any
    computed colour that is pure white.
@@ -15,15 +15,21 @@
    Run from the project root:  node tests/viewports.js
    Needs Chrome installed (or CHROME_PATH set) and tests/node_modules (npm install).
 
-   The five profiles. The layout branches at window.innerWidth<900 and the custom
+   The six profiles. The layout branches at window.innerWidth<900 and the custom
    picker layer gates on (hover:hover), so the two tablet rows are the interesting
    ones: 1024 gets the wide desktop layout with a coarse pointer and no hover.
-   desktop-1920 is the fifth and it exists for ONE branch: the Notes sticky becomes a
-   third column at 1822px and up, and until it was added the set topped out at 1280,
-   so that branch was drawn by nobody. It is a fine-pointer, hovering profile like
-   1280, and it runs the whole flow set under both themes exactly as the others do. */
+   desktop-1920 exists for the Notes third-column branch, which until it was added
+   was drawn by nobody; there the strip's flexible track sits SATURATED at its full
+   464px. desktop-1586 is the sixth: a real user's maximised 1920 monitor at the
+   1.21 their 110% browser zoom composes with a 110% Windows display scale
+   (1920 / 1.21 = 1586 CSS px), which is inside the band's flexible range, so the
+   strip is track-sized (228px there) and the editor holds its 718 floor exactly.
+   Until it was added the set had nothing between 1440 and 1920 and the flexible
+   range was drawn by nobody. Both are fine-pointer, hovering profiles like 1280,
+   and run the whole flow set under both themes exactly as the others do. */
 const PROFILES = [
   { name: 'desktop-1920', width: 1920, height: 1080, coarse: false },
+  { name: 'desktop-1586', width: 1586, height: 892,  coarse: false },
   { name: 'desktop-1280', width: 1280, height: 800,  coarse: false },
   { name: 'tablet-1024',  width: 1024, height: 768,  coarse: true  },
   { name: 'tablet-820',   width: 820,  height: 1180, coarse: true  },
@@ -31,11 +37,17 @@ const PROFILES = [
 ];
 
 /* The width at which the Notes strip leaves the column flow and becomes a third grid
-   track beside the list and the editor. Measured, not chosen: 272px list + 14 gap +
-   718px editor (the 640px reading measure, .notepage's 60px padding and 2px border,
-   .noteed's 6px padding and the 10px scrollbar gutter) + 14 gap + 464px strip = 1482px
-   of content area, plus #main's 32px of padding and the 308px rail = 1822px. */
-const THREECOL = 1822;
+   track beside the list and the editor. Derived, not chosen, and there are two
+   identities: the fixed parts are 272px list + 14 gap + 718px editor (the 640px
+   reading measure, .notepage's 60px padding and 2px border, .noteed's 6px padding and
+   the 10px scrollbar gutter) + 14 gap + #main's 32px + the 308px rail = 1358, and the
+   band starts where the two-row grid's dead canvas beside the full 464px strip would
+   out-measure the strip itself: 308 + 32 + 272 + 14 + 464 + 464 = 1554. From there the
+   strip's track is minmax(196px,464px): it takes the viewport less 1358 and saturates
+   at 464 at 1822, the old threshold, above which nothing moved. */
+const THREECOL = 1554;
+const STRIP_FIXED = 1358;   /* rail + #main padding + list + gap + editor + gap */
+const STRIP_FULL = 464;     /* the strip's saturated width, the two-row bands' 464 */
 
 const MIN_TARGET = 44;   /* smallest acceptable hit target on a coarse profile, px */
 
@@ -323,6 +335,17 @@ function bootstrap(seedJson) {
       sample('#rail .navbtn:not(.on)', 4.5, 'a resting nav label on the rail');
       sample('#rail .navbtn.on', 4.5, 'the active nav label on its pearl');
       sample('#stickyPad', 4.5, 'the sticky note text on its panel');
+      /* the tray's marker dot: a NON-TEXT accent (red under mono, teal under blue),
+         measured as painted, its own fill against the tray surface behind it. 3:1 is
+         its bar, and staying under 4.5 is why it may never ink the label beside it. */
+      (() => {
+        const el = document.querySelector('.traydot');
+        if (!el || !el.getClientRects().length) return;
+        const fg = parse(getComputedStyle(el).backgroundColor), bg = bgOf(el.parentElement);
+        if (!fg || !bg) return;
+        const r = ratio(fg, bg);
+        if (r < 3 - 0.05) out.contrast.push('the tray marker dot on its tray = ' + r.toFixed(2) + ' (needs 3)');
+      })();
     })();
 
     /* ---- red discipline (mono only): the accent may paint nothing beyond
@@ -334,10 +357,14 @@ function bootstrap(seedJson) {
       const redTriplet = m ? [0, 1, 2].map(i => parseInt(m[1].slice(i * 2, i * 2 + 2), 16)).join(', ') : null;
       /* WIDENED DELIBERATELY 2026-08-12: the active nav item (accent bar and icon
          tint read --today, red under mono) and the True north statements (--north).
+         WIDENED AGAIN 2026-08-17: the carry tray's marker dot (.traydot), a real
+         element reading --today so this sweep can see it; non-text, since the red
+         is a 3.27:1 accent on --traybg and may never ink the label beside it.
          Anything else red is still a defect. */
       const ALLOWED = '.badge,.col.today,.box,.sbox,#qb,.fadd button,.mrow button.pri,.rp,' +
         '.cell.today,.cell.today .n,#strip button.istoday,.hdow.now,.bar.now,.allok,.pday.today,.dotm,' +
-        '.navbtn.on,.navbtn.on .em,.navbtn.on .em *,#fpanel .frow:not(.done) .ftxt,#fpanel .frow:not(.done) .ftxt *';
+        '.navbtn.on,.navbtn.on .em,.navbtn.on .em *,#fpanel .frow:not(.done) .ftxt,#fpanel .frow:not(.done) .ftxt *,' +
+        '.traydot';
       if (redTriplet) {
         const seen = {};
         for (const el of document.querySelectorAll('*')) {
@@ -500,27 +527,51 @@ async function runProfile(browser, base, prof) {
     }
   };
 
-  /* ---- A. boot: the seeded stale lastRoll must have rolled 4 tasks into the tray ---- */
+  /* ---- A. boot: the seeded stale lastRoll must have rolled 4 tasks into the tray,
+     and a fresh arrival is the COLLAPSED header bar, never the list ---- */
   await flow('boot-tray', async () => {
     await page.waitForSelector('#tray .tray', { timeout: 5000 });
     const n = await A(() => window.A.state.carry.length);
     check('tray: 4 seeded carries after stale lastRoll', n === 4, 'carry.length=' + n);
+    const bar = await A(() => ({
+      closed: !!document.querySelector('#tray .tray.closed'),
+      open: window.A.state.settings.trayOpen === true,
+      items: document.querySelectorAll('#tray .trayitem').length,
+      controls: document.querySelectorAll('#tray [data-action^="carry-"]').length,
+      count: (document.querySelector('#tray .traycnt') || {}).textContent || '',
+      chev: !!document.querySelector('#tray .trayhead .chev') }));
+    check('tray: the arrival is the collapsed bar, so the board keeps its top',
+      bar.closed && !bar.open && bar.items === 0 && bar.controls === 0, JSON.stringify(bar));
+    check('tray: the bar counts what waits, the way "0 open" does',
+      bar.count === '4 waiting', bar.count);
+    check('tray: behind the shared chevron', bar.chev, JSON.stringify(bar));
     await audit('boot-tray');
   });
 
-  /* ---- tray triage ---- */
+  /* ---- tray triage: open the bar, then every control is there to use ---- */
   await flow('tray-triage', async () => {
     const mustBefore = await page.evaluate(t => window.A.state.days[t].must.length, today);
+    await act({ css: '#tray .trayhead[data-action="tray-toggle"]' });
+    const opened = await A(() => ({ open: window.A.state.settings.trayOpen === true,
+      items: document.querySelectorAll('#tray .trayitem').length }));
+    check('tray: the header press opens it, items and controls drawn',
+      opened.open && opened.items === 4, JSON.stringify(opened));
+    await audit('tray-open');
     await act({ css: '[data-action="carry-one"][data-to="today"]' });
     await act({ css: '[data-action="carry-one"][data-to="float"]' });
     await act({ css: '[data-action="carry-drop"]' });
     await audit('toast-undo', { root: '#toast', keepToast: true });
     await act({ css: '[data-action="carry-all"][data-to="today"]' });
     const s = await A(() => ({ carry: window.A.state.carry.length,
+      open: window.A.state.settings.trayOpen,
+      slot: document.getElementById('tray').innerHTML,
       inbox: window.A.state.floats.find(f => f.id === 'fInbox').tasks.length }));
-    check('tray: emptied by triage', s.carry === 0, JSON.stringify(s));
+    check('tray: emptied by triage', s.carry === 0, JSON.stringify({ carry: s.carry }));
     check('tray: carry-one landed in Inbox', s.inbox === 2, 'inbox=' + s.inbox);
     check('tray: today grew by one + all', mustBefore >= 2, 'must before=' + mustBefore);
+    check('tray: emptied, the slot draws nothing, not even the bar', s.slot === '', s.slot.slice(0, 60));
+    check('tray: and the flag is down again, so the next arrival starts as the bar',
+      s.open === false, String(s.open));
   });
 
   /* ---- B. quick add, destination picker ---- */
@@ -884,8 +935,12 @@ async function runProfile(browser, base, prof) {
     check('roll-now: affordance shows for the back-dated task', !!btn, btn);
     if (btn) {
       await act({ css: '[data-action="roll-now"]' });
-      const carried = await A(() => window.A.state.carry.length);
-      check('roll-now: task moved to the tray', carried === 1, 'carry=' + carried);
+      const carried = await A(() => ({ n: window.A.state.carry.length,
+        open: window.A.state.settings.trayOpen }));
+      check('roll-now: task moved to the tray', carried.n === 1, 'carry=' + carried.n);
+      check('roll-now: a manual pull is an arrival, so it lands collapsed',
+        carried.open === false, String(carried.open));
+      await act({ css: '#tray .trayhead[data-action="tray-toggle"]' });
       await act({ css: '[data-action="carry-one"][data-to="today"]' });
     }
   });
@@ -2768,10 +2823,15 @@ async function runProfile(browser, base, prof) {
           /* the strip is a COLUMN here, so nothing follows it downwards: it stands
              beside the pane, clear of the editor's right edge, and the list, the
              editor and the strip all start on the same line at the content top. */
-          check('sticky: at 1822 and up it stands beside the pane, not above it' + th,
+          check('sticky: in the third-column band it stands beside the pane, not above it' + th,
             g.l >= g.ed.r && Math.abs(g.ed.t - g.contentTop) <= 1 &&
             Math.abs(g.list.t - g.contentTop) <= 1,
             JSON.stringify({ sticky: { l: g.l, t: g.t }, ed: g.ed, list: g.list, top: g.contentTop }));
+          /* the strip's width is the TRACK's: the viewport less the 1358 of fixed
+             parts, saturating at the full 464. 228 at 1586, 464 at 1920. */
+          const wantStrip = Math.min(STRIP_FULL, prof.width - STRIP_FIXED);
+          check('sticky: the row sizes the strip, ' + wantStrip + ' at this width' + th,
+            Math.abs((g.r - g.l) - wantStrip) <= 1, 'strip=' + (g.r - g.l) + ' want=' + wantStrip);
         } else {
           check('sticky: and the note pane follows it, with nothing above the strip' + th,
             (gridded ? g.ed.t : g.paneTop) >= g.b,
@@ -2883,8 +2943,9 @@ async function runProfile(browser, base, prof) {
           g.sticky && g.ed && g.list && g.sticky.l >= g.ed.r && g.ed.l >= g.list.r &&
           g.sticky.r >= g.ed.r,
           JSON.stringify({ list: g.list, ed: g.ed, sticky: g.sticky }));
-        /* the whole point of the width: the reading measure survives the third column */
-        check('notes: and the editor page keeps its 640px measure, which is what set 1822' + th,
+        /* the whole point of the editor's 718 floor: the reading measure survives the
+           third column at every width in the band, the flexible range included */
+        check('notes: and the editor page keeps its 640px measure, which the 718 floor protects' + th,
           g.wrap && g.wrap.w === 640, JSON.stringify(g.wrap));
       } else if (!narrow) {
         check('notes: the strip is that block, right aligned, and the pane follows it' + th,
@@ -2949,10 +3010,24 @@ async function runProfile(browser, base, prof) {
     /* (c) the same carry, on the two views that DO draw it. The tray is the first
        block of the content area there and the sticky is the corner or the end of the
        flow, so they are kept apart on the vertical axis, never by reserving width. */
+    let arrivalChecked = false;
     for (const [label, go] of [['board', '.navbtn[data-action="view"][data-v="board"]'],
                                ['free floating', '.navbtn[data-action="floattoggle"]']]) {
       await act({ css: go });
       await sleep(200);
+      /* the carry landed in state with the flag down (triage emptied it earlier), so
+         the first view back draws the COLLAPSED bar: an arrival that never rolled
+         locally, the sync shape, still starts as the bar and not the list */
+      if (!arrivalChecked) {
+        arrivalChecked = true;
+        const bar = await A(() => ({ closed: !!document.querySelector('#tray .tray.closed'),
+          items: document.querySelectorAll('#tray .trayitem').length,
+          count: (document.querySelector('#tray .traycnt') || {}).textContent || '' }));
+        check('tray: a carry that arrived without a local roll still starts collapsed',
+          bar.closed && bar.items === 0 && bar.count === '2 waiting', JSON.stringify(bar));
+        await act({ css: '#tray .trayhead[data-action="tray-toggle"]' });
+        await sleep(120);
+      }
       for (const g of await bothThemes(geo)) {
         const th = ' [' + label + ', ' + g.theme + ']';
         check('tray: still drawn, unchanged, on this view' + th, !!g.tray, JSON.stringify(g.tray));
@@ -2965,7 +3040,8 @@ async function runProfile(browser, base, prof) {
           apart, JSON.stringify({ tray: g.tray, sticky: g.sticky }));
       }
       const items = await A(() => document.querySelectorAll('#tray .trayitem').length);
-      check('tray: both carried items are there to triage [' + label + ']', items === 2, 'items=' + items);
+      check('tray: both carried items are there to triage, once opened [' + label + ']',
+        items === 2, 'items=' + items);
       await audit('tray-' + label.replace(/\W+/g, '-'));
     }
     await act({ css: '.navbtn[data-action="floattoggle"]' });
