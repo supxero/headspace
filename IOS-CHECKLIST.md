@@ -1,8 +1,8 @@
 # Manual device checklist
 
-Everything here needs a physical device: an iPhone with Safari as the primary target, an iPad for the rotation item, and one Android tablet for the two cross-platform items (5 and 11). Headless Chrome has already verified every flow at four viewport and input profiles, with hit sizes, overflow, labels and palette measured; what it cannot verify is Safari itself (PWA install and cache adoption, tab freezing, native pickers, the on-screen keyboard and autocorrect), a real finger's accuracy against the invisible hit overlays, or two physical devices syncing. These are the gaps, highest risk first. When something fails, report the item number, the exact step, and a screenshot; "item 4, step 3, the caret jumped to the end after Bold" is enough to act on.
+Everything here needs a physical device: an iPhone with Safari as the primary target, an iPad for the rotation item, and one Android tablet for the two cross-platform items (5 and 11). Headless Chrome has already verified every flow at six viewport and input profiles, with hit sizes, overflow, labels and palette measured; what it cannot verify is Safari itself (PWA install and cache adoption, tab freezing, native pickers, the on-screen keyboard and autocorrect), a real finger's accuracy against the invisible hit overlays, or two physical devices syncing. These are the gaps, highest risk first. When something fails, report the item number, the exact step, and a screenshot; "item 4, step 3, the caret jumped to the end after Bold" is enough to act on.
 
-Before starting: check the deployed version (the `CACHE` constant in `sw.js` names it) and know today's task list so stale data is recognisable. Items 1 and 2 need a second device, item 3 spans a night; everything else is one sitting. Budget: about 45 minutes for the sitting, 10 more for item 2, plus the overnight check.
+Before starting: check the deployed version (the `CACHE` constant in `sw.js` names it) and know today's task list so stale data is recognisable. Items 1 and 2 need a second device, item 3 spans a night; everything else is one sitting. Item 2's second half wants one of the two devices offline for a few minutes, so read it before you start. Budget: about 45 minutes for the sitting, 20 more for item 2, plus the overnight check.
 
 ## 1. Update pickup after a cache bump
 
@@ -17,11 +17,19 @@ Steps: connect two devices with a sync key. On A, write a note with a title, a b
 Correct: B shows the formatting exactly as A wrote it, ruling included. B's body edit arrives on A with the formatting intact (the later body wins whole; A's bold survives because it is part of that body). Pin, rename and page style all survive on both; a rename and a page flip made in the same instant may resolve to one device's pair, but nothing scrambles and markup never shows as literal text.
 Failure looks like: visible markup on either device, formatting lost after B's edit, a body reverting to an older version, or duplicated notes. Note the direction, A to B or B to A.
 
+Then, on the same pair, the tick against the roll. This is the acceptance test for the merge repair, and it needs two real devices because one device cannot produce the state at all: rollover leaves finished tasks on their day and the tray has no tick, so only a tick made HERE composing with a roll made THERE can put a done task in the carry tray.
+Steps: leave one unfinished task on today, on both devices, and put B in airplane mode. Wait for midnight to pass with A open (or, to do it in daylight, set today's task back a day on A with the date field so it is on a past day, then use "N waiting on past days" on A only). A now holds the task in its carry tray. With B still offline, tick that same task on B, where it is still sitting on its day. Bring B back online and give both a minute.
+Correct: on both devices the task ends up ticked and ON ITS DAY, struck through, and the carry tray does not list it. If the tray holds nothing else, it draws nothing at all. Both devices agree, and they still agree after a further minute.
+Failure looks like: the finished task appearing as a row in the carry tray on either device (that is the bug this repairs; screenshot it and say which device ticked and which rolled), the tick lost, the task on a day nobody put it on, or the two devices settling on different answers.
+
 ## 3. Carry-over tray after an overnight suspension
 
-Steps: in the evening leave at least one task unfinished on today. Do not close the app, just lock the phone. Next morning open it from the app switcher, not a fresh launch.
-Correct: within a moment of foregrounding, the tray appears with yesterday's unfinished task and its origin label, and today's date is current on the board, the strip and the calendar.
-Failure looks like: yesterday still showing as today, the tray missing until a kill and relaunch, or wrong origin labels. The 60 second timer does not run while iOS suspends the page; the foreground path must cover it, and this item tests exactly that.
+Steps: in the evening leave at least one task unfinished on today, and tick one so there is a finished one too. Press "Today only" so the board is the single column, so this one night covers the mode as well. Do not close the app, just lock the phone. Next morning open it from the app switcher, not a fresh launch.
+Correct: within a moment of foregrounding, a collapsed "Carry-over" bar appears with the marker dot and an "N waiting" count, and nothing else: no item rows and no triage buttons until you press the bar. Press it: yesterday's unfinished task is there with its origin label, and the count matches what is listed. The task you ticked is NOT in the tray: step back a day with Prev, and it is still on yesterday's column, struck through. Today's date is current on the board, the strip and the calendar.
+Failure looks like: yesterday still showing as today, the tray missing until a kill and relaunch, wrong origin labels, the tray arriving already OPEN with its rows on screen (it must arrive collapsed however you left it the night before), a finished task listed in the tray, or a count that disagrees with the rows once opened.
+
+The same morning, still in the mode: the one column is the NEW today, with the TODAY badge on it, at full strength, and the Prev/Next pair still steps a single day. Press "Today only" to leave the mode: the seven day window opens with today in it, on the left, not on tomorrow.
+Failure looks like: the single column still showing yesterday's date, drawn faded as a past day with no badge; or leaving the mode landing on a week that does not contain today. The 60 second timer does not run while iOS suspends the page, so this is the same foreground path as above and the same one item settles both.
 
 ## 4. Notes with the on-screen keyboard, autocorrect and the caret
 
@@ -31,8 +39,8 @@ Failure looks like: the caret jumping to the start or end after a toolbar tap, c
 
 ## 5. The 44px targets under a real finger
 
-Steps: on the iPhone AND the Android tablet, tap casually, one-thumbed, without aiming: a task tick box, a subtask tick, a delete mini, each button in a task's action bar, a habit day cell and then the Days button directly above it, a collapsed panel header, every Notes toolbar button across its row, a note row, and the search box.
-Correct: every intended control fires on the first casual tap, and Days never ticks the habit cell beneath it.
+Steps: on the iPhone AND the Android tablet, tap casually, one-thumbed, without aiming: a task tick box, a subtask tick, a delete mini, each button in a task's action bar, a habit day cell and then the Days button directly above it, a collapsed panel header, the carry-over tray's header bar (on its label text, not only on the chevron, and both to open it and to close it again), the ✕ that drops a carried task next to the two wide buttons beside it, the "Today only" switch in the board nav row, every Notes toolbar button across its row, a note row, and the search box.
+Correct: every intended control fires on the first casual tap, and Days never ticks the habit cell beneath it. The tray header toggles in both directions from anywhere along the bar. The tray's ✕ does not fire when "Free Floating" beside it was the target.
 Failure looks like: any control needing a second aimed tap, or a neighbour firing instead (say which pair). The invisible hit overlays were measured at 44px in Chrome but have never met a finger; this is the item that settles them.
 
 ## 6. Install to the Home Screen

@@ -71,8 +71,16 @@ function seedState() {
   return {
     ver: 2, carry: [], tomb: {}, bin: {},
     days: {
+      /* c5 is DONE and it is on a past day: rollover keeps finished tasks where they
+         are and only unfinished ones travel, so this is the seed's proof that a task
+         cannot be both finished and waiting. Until it was added, the boot roll here
+         had nothing ticked to leave behind, the tray-versus-day rule was a manual
+         claim from 2026-08-10 with no standing check anywhere, and the merge that
+         composed a tick with a roll shipped past every profile (REVIEW Section 21). */
       [yday]: { must: [T('c1', 'Email the landlord'), T('c2', 'Renew the parking permit'),
-                       T('c3', 'Book the dentist'), T('c4', 'Pay the water bill')], should: [], extra: [] },
+                       T('c3', 'Book the dentist'), T('c4', 'Pay the water bill'),
+                       Object.assign(T('c5', 'Collect the parcel'), { done: true })],
+                should: [], extra: [] },
       [today]: { must: [T('ta', 'Write the report', [
                           { id: 's1', title: 'Draft the outline', done: false },
                           { id: 's2', title: 'Send it', done: false }]),
@@ -93,7 +101,11 @@ function seedState() {
     sticky: { text: 'seeded sticky text', at: 1 },
     settings: { view: 'board', boardOffset: 0, floatMode: false, activeFloat: null,
       calSel: null, calOffset: 0, mRange: 'day', stripDay: null, lastRoll: yday,
-      showDone: false, habitsOpen: true, lastWeek: hweek(today) },
+      /* SEEDED OPEN on purpose. The boot roll must put it down, and with the seed
+         leaving it at the default false the check below could not tell "rollover
+         re-collapsed it" from "it was never open", which is the happy path asserting
+         itself. Open here, so the collapsed bar at boot is something that happened. */
+      showDone: false, habitsOpen: true, trayOpen: true, lastWeek: hweek(today) },
   };
 }
 
@@ -545,6 +557,19 @@ async function runProfile(browser, base, prof) {
     check('tray: the bar counts what waits, the way "0 open" does',
       bar.count === '4 waiting', bar.count);
     check('tray: behind the shared chevron', bar.chev, JSON.stringify(bar));
+    /* THE INVARIANT, at every profile: the roll takes the unfinished tasks and leaves
+       the finished one where it was. A done task in the tray is a state no device can
+       produce on its own, and this is the standing check that says so out loud. */
+    const kept = await page.evaluate(d => {
+      const day = window.A.state.days[d] || { must: [] };
+      const on = (day.must || []).filter(t => t.id === 'c5');
+      return { onDay: on.length, done: !!(on[0] && on[0].done),
+               inCarry: window.A.state.carry.filter(t => t.id === 'c5').length,
+               anyDoneInCarry: window.A.state.carry.filter(t => t.done).length };
+    }, yday);
+    check('roll: a task finished before midnight stays on its day, ticked, and never in the tray',
+      kept.onDay === 1 && kept.done && kept.inCarry === 0 && kept.anyDoneInCarry === 0,
+      JSON.stringify(kept));
     await audit('boot-tray');
   });
 

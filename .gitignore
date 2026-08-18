@@ -2,6 +2,10 @@ node_modules/
 .DS_Store
 Thumbs.db
 tests/node_modules/
+# what a test run leaves behind. Scratch, every one of them: the report and the
+# screenshots are rewritten by the next run, and a stale one reads like evidence.
 *.log
+vp.log
+tests/vp-*.log
 tests/viewports-report.json
 tests/viewport-fail-*.png

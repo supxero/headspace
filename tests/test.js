@@ -30,6 +30,23 @@ const select=async id=>{ // make sure this card is the open one
   }
 };
 
+/* THE STANDING INVARIANT, asserted on every merge this file runs.
+   A task in the carry tray is never done. rollover() leaves a ticked task on its day
+   and the tray draws no tick control, so no single device can reach the state; it was
+   manufactured by the merge itself, which resolves `done` on the dn axis and `loc` on
+   pos and married a tick made here to a roll made there (REVIEW Section 21). What let
+   it ship was that nothing anywhere asserted it: there were merge fixtures for ticks
+   and merge fixtures for rolls, and none of them looked at the combination.
+   Wrapping the entry point rather than adding one dedicated test means every fixture
+   in this file, present and future, carries the check for free and in its own shape. */
+const rawMerge=A.mergeStates;
+A.mergeStates=(x,y)=>{
+  const m=rawMerge(x,y);
+  const bad=(m.carry||[]).filter(t=>t&&t.done).map(t=>t.title||t.id);
+  ok(bad.length===0,'invariant: nothing done is ever left in the carry tray ('+bad.join(', ')+')');
+  return m;
+};
+
 console.log('— boot —');
 ok(!!A,'app object exposed');
 ok(!!q('#rail'),'left rail renders');
@@ -542,6 +559,34 @@ const ca=q('#calAdd'); ca.value='added from the calendar';
 q('#calZone').value='should';
 click('[data-action="cal-add"][data-day="'+T()+'"]'); await wait(30);
 ok(S().days[T()].should.some(t=>t.title==='added from the calendar'),'add-to-this-day with a zone picker works');
+{ /* A RENDER MUST NOT MUTATE WHAT IT IS DRAWING. The day panel read the day through
+     day(), which CREATES it when it is missing, so every click on a bare square wrote a
+     permanent empty {must,should,extra} into state.days and left it there: the planner
+     grew by one dead day per click, and dead days merge, sync and count for every sweep
+     that walks the keys. Read without creating; create where a task is actually added.
+     (The board creates the days it DRAWS, through the same call in dayCol, which is why
+     this starts by clearing the square it is about to click.) */
+  const empty=d=>{ const x=S().days[d];
+    return !x||['must','should','extra'].every(z=>!((x[z]||[]).length)) };
+  const cells=qa('.cell[data-day]').map(c=>c.dataset.day).filter(d=>d!==T()&&empty(d));
+  const bare=cells[cells.length-1];
+  delete S().days[bare]; A.save(); A.render(); await wait(20);
+  ok(!!bare&&!S().days[bare],'starting from a square the planner holds nothing for ('+bare+')');
+  click('[data-action="cal-day"][data-day="'+bare+'"]'); await wait(30);
+  ok(S().settings.calSel===bare&&/Tasks on/.test(q('.dphead').textContent),
+    'its panel opens and offers the day');
+  ok(/Nothing on this day yet/.test(q('.dplist').textContent),'saying plainly that it is empty');
+  ok(!S().days[bare],'and drawing that panel does NOT create the day');
+  A.render(); A.render(); await wait(20);
+  ok(!S().days[bare],'nor does drawing it again, however many times the screen is redrawn');
+  q('#calAdd').value='the first thing on that day';
+  click('[data-action="cal-add"][data-day="'+bare+'"]'); await wait(30);
+  ok(!!S().days[bare]&&S().days[bare].must.some(t=>t.title==='the first thing on that day'),
+    'adding a task is what creates the day, which is the only thing that should');
+  const tid=S().days[bare].must[0].id;
+  S().days[bare].must=[]; delete S().days[bare]; A.save(); A.render(); await wait(20);
+  ok(!S().days[bare]&&!A.findTask(tid),'cleaned up after itself, so the sections below start where they did');
+}
 click('[data-action="cal-nav"][data-d="1"]'); await wait(20);
 ok(S().settings.calOffset===1,'calendar navigates months');
 click('[data-action="cal-nav"][data-d="0"]'); await wait(20);
@@ -929,6 +974,59 @@ console.log('— Today only: the board narrows to one column —');
   ok(nav().getAttribute('aria-pressed')==='false','the switch says so too');
   ok(A.stateSig(S())===sigOn,'turning it off pushes nothing either');
 
+  { /* THE DAY TURNING WITH THE MODE ON. The single column branch returns the absolute
+       stripDay and nothing rewrote it when the date turned, so a window left open
+       overnight went on drawing YESTERDAY: past treatment, no TODAY badge, and the
+       mode's own name contradicted on screen. */
+    const snapD=JSON.parse(JSON.stringify(S().days)), snapC=JSON.parse(JSON.stringify(S().carry));
+    const snapW=JSON.parse(JSON.stringify(S().week)), lastWeekWas=S().settings.lastWeek;
+    S().days={}; S().carry=[];
+    S().settings.todayOnly=true; A.save(); A.render(); await wait(25);
+    S().settings.stripDay=plus(-1); S().settings.boardOffset=-1; S().settings.lastRoll=plus(-1);
+    A.render(); await wait(25);
+    ok(day1()===plus(-1)&&q('#board .col').classList.contains('past'),
+      'parked on yesterday at .past, which is exactly what the open window showed once the date turned');
+    ok(!q('#board .badge'),'with no TODAY badge, so the mode was naming a day that is not today');
+    A.rollIfNewDay({quiet:true}); await wait(40);
+    ok(S().settings.stripDay===T()&&S().settings.boardOffset===0,
+      'the turn re-centres the mode on the new today, both halves of the position together');
+    ok(day1()===T()&&!!q('#board .badge'),'so the one column is today again, badge and all');
+    ok(cols().length===1&&S().settings.todayOnly===true,'still one column, and still the mode');
+    /* PARKED ON A STEPPED-TO DAY: the mode's name is the contract, so it snaps anyway */
+    S().settings.stripDay=plus(2); S().settings.boardOffset=2; S().settings.lastRoll=plus(-1);
+    A.render(); await wait(25);
+    ok(day1()===plus(2),'stepped two days on inside the mode');
+    A.rollIfNewDay({quiet:true}); await wait(40);
+    ok(day1()===T()&&S().settings.boardOffset===0&&S().settings.stripDay===T(),
+      'and the turn snaps that to today too: "Today only" showing Thursday is the same broken promise');
+    S().days=snapD; S().carry=snapC; S().week=snapW;
+    S().settings.lastWeek=lastWeekWas; S().settings.lastRoll=T();
+    S().settings.todayOnly=false; A.save(); A.render(); await wait(25);
+  }
+
+  { /* LEAVING THE MODE LANDS A COHERENT WEEK. The measured desync: Prev and Next step
+       a single day inside the mode, so one press of Next leaves boardOffset at 1, and
+       the old exit snapped nothing at all, which meant the seven day window opened on
+       TOMORROW with today off the left edge. The only week worth coming back to is the
+       one holding today, with today visible: boardOffset 0, through showDay. */
+    click('[data-action="nav-today"]'); await wait(30);
+    nav().click(); await wait(40);
+    ok(S().settings.todayOnly===true&&day1()===T(),'into the mode, on today');
+    click('[data-action="nav"][data-d="1"]'); await wait(40);
+    ok(day1()===plus(1)&&S().settings.boardOffset===1&&S().settings.stripDay===plus(1),
+      'stepped one day on, the two halves still in step');
+    nav().click(); await wait(40);
+    ok(cols().length>=7,'leaving the mode brings the seven day window back');
+    ok(day1()===T(),'opening on the week that HOLDS TODAY, not on tomorrow');
+    ok(S().settings.boardOffset===0&&S().settings.stripDay===T(),
+      'with boardOffset and stripDay in step, both naming today');
+    ok(!!q('#board .col .badge'),'so today is on screen, which is what makes the week a coherent one');
+    /* and the pair is in step at every step of the round trip */
+    const dayDiffT=d=>Math.round((new Date(d+'T12:00:00')-new Date(T()+'T12:00:00'))/864e5);
+    const step=()=>S().settings.boardOffset===dayDiffT(S().settings.stripDay);
+    ok(step(),'enter, step, midnight and exit all leave the pair consistent');
+  }
+
   { /* the shape of the code, not just its behaviour */
     const css=q('style').textContent;
     ok(/@media \(min-width:901px\)\{\s*#board\.oneday \.col\{[^}]*flex:1 1 auto/.test(css),
@@ -938,8 +1036,12 @@ console.log('— Today only: the board narrows to one column —');
     ok(/case 'todayonly':\{[^{}]*save\(\);\s*render\(\);\s*return;/.test(html),
       'the click case saves, renders and RETURNS, rather than breaking into the shared tail');
     ok(!/case 'todayonly':\{[^{}]*break;/.test(html),'so it never does both');
-    ok(/if\(s\.todayOnly\) showDay\(today\(\)\)/.test(html),
-      'and it reaches today through showDay, never by writing boardOffset or stripDay');
+    ok(/s\.todayOnly=!s\.todayOnly;\s*showDay\(today\(\)\);/.test(html),
+      'and BOTH directions reach today through showDay, never by writing boardOffset or stripDay');
+    ok(!/boardOffset|stripDay/.test((html.match(/case 'todayonly':\{[\s\S]*?\}/)||[''])[0]),
+      'so neither half of the board position is ever written by hand from the switch');
+    ok(/if\(dayDue&&todayOnlyOn\(\)\) showDay\(today\(\)\)/.test(html),
+      'and the midnight re-centre is the same one call, in rollIfNewDay, guarded on the mode');
   }
   S().settings.todayOnly=false; click('[data-action="nav-today"]'); await wait(30);
 }
@@ -1119,6 +1221,78 @@ const subNames=(s,pid)=>{ const g=A.flatten(s).sub;
   const now=put(dev(),tk('t1','made today',600));
   const m=A.mergeStates(now,read);
   ok(names(m).join()==='made today,saved last year','old cloud data merges in without loss');
+}
+
+console.log('— merge: a done task can never be left in the carry tray —');
+{
+  /* BUG 1, root cause A. Nothing on one device can put a ticked task in the tray:
+     rollover keeps done tasks on their day and the tray has no tick. The merge made
+     one, because `done` rides dn and `loc` rides pos and the two are resolved apart,
+     so a tick made on the tablet composed with a roll made on the laptop into a
+     finished task sitting in the tray with three triage buttons and no way to undo it.
+     pickNewer repairs it, which is the last layer holding BOTH sides. */
+  const ydayD=plus(-1), mid=new Date(T()+'T00:00:00').getTime();
+  const onDay=(s,t,d,z)=>{ (s.days[d]=s.days[d]||{must:[],should:[],extra:[]})[z||'must'].push(t); return s };
+  const carryIds=s=>arrOf(s.carry).map(t=>t.id).sort();
+  const arrOf=x=>Array.isArray(x)?x:[];
+
+  { /* R4b, the reported shape: the tablet ticked yesterday's task at 08:00 while the
+       laptop, waking at midnight, had already rolled it into the tray. */
+    const ticked=onDay(dev(),tk('r1','walk the dog',100,{done:true,dn:mid+8*36e5,pos:100}),ydayD);
+    const rolled=dev();
+    rolled.carry=[tk('r1','walk the dog',100,{dn:100,pos:mid,from:'Prio 0 · Mon'})];
+    const m=A.mergeStates(ticked,rolled), m2=A.mergeStates(rolled,ticked);
+    ok(carryIds(m).length===0,'a tick made after another device rolled it does not land in the tray');
+    ok((m.days[ydayD].must||[]).some(t=>t.id==='r1'&&t.done),
+      'it stays on the day it was finished, ticked, which is where rollover would have left it');
+    ok(byId(m,'r1').pos===mid&&byId(m,'r1').dn===mid+8*36e5,
+      'and no stamp moves: repairing is not an edit, so it cannot out-rank the next real move');
+    ok(A.stateSig(m)===A.stateSig(m2),'both devices reach that same answer');
+    ok(A.stateSig(A.mergeStates(m,m2))===A.stateSig(m),'and a second round changes nothing: it converges');
+  }
+  { /* the tick was made in a float tab rather than on a day: same rule, that home */
+    const inTab=dev(); inTab.floats[0].tasks=[tk('r3','sort the receipts',100,{done:true,dn:mid+36e5,pos:100})];
+    const rolled=dev(); rolled.carry=[tk('r3','sort the receipts',100,{dn:100,pos:mid})];
+    const m=A.mergeStates(inTab,rolled);
+    ok(carryIds(m).length===0&&m.floats[0].tasks.some(t=>t.id==='r3'&&t.done),
+      'a tick made in a float tab restores the tab, not a day: any real home will do');
+  }
+  { /* the repair reaches only what is actually done */
+    const open=dev(); open.carry=[tk('r4','still open',100,{dn:100,pos:mid,from:'Prio 0 · Mon'})];
+    const m=A.mergeStates(dev(),open);
+    ok(carryIds(m).join()==='r4','an unfinished carried task is left exactly where it is');
+    ok(byId(m,'r4').from==='Prio 0 · Mon','with the label saying where it came from');
+  }
+  { /* AN ALREADY CONVERGED BLOB: both sides say carry, so the day is long gone. It is
+       filed to the day its dn stamp falls on, the day it was finished. This is also
+       the one-sided path, a corrupt copy arriving from a device that had converged on
+       it before the rule existed. */
+    const fin=mid+9*36e5;                       /* ticked at 09:00 today */
+    const bad=dev(); bad.carry=[tk('r5','pay the bill',100,{done:true,dn:fin,pos:mid})];
+    const m=A.mergeStates(dev(),bad);
+    ok(carryIds(m).length===0,'a corrupted planner is repaired as it arrives, not carried on');
+    ok((m.days[T()].must||[]).some(t=>t.id==='r5'&&t.done),
+      'the finished task is filed to the day its dn stamp names, in Prio 0');
+    const both=A.mergeStates(bad,clone(bad));
+    ok(carryIds(both).length===0&&(both.days[T()].must||[]).some(t=>t.id==='r5'),
+      'and the same when both sides hold the corruption, which is how it converged');
+    ok(A.stateSig(m)===A.stateSig(A.mergeStates(bad,dev())),'the repair is the same from either side');
+    ok(A.stateSig(A.mergeStates(m,bad))===A.stateSig(m),
+      'a repaired planner merged against the stale corrupt one stays repaired');
+  }
+  { /* a planner written before per item stamps has no dn to date the repair by */
+    const old=dev(); old.carry=[{id:'r6',title:'from the old format',done:true,subtasks:[]}];
+    const m=A.mergeStates(dev(),A.stampLegacy(old));
+    ok(carryIds(m).length===0&&(m.days[T()].must||[]).some(t=>t.id==='r6'),
+      'a legacy stamp is a sentinel and not a moment, so that one lands on today, not in 1970');
+  }
+  { /* the invariant holds through the door the app actually uses */
+    const ticked=onDay(dev(),tk('r7','file the form',100,{done:true,dn:mid+7*36e5,pos:100}),ydayD);
+    const rolled=dev(); rolled.carry=[tk('r7','file the form',100,{dn:100,pos:mid})];
+    const p=A.readCloud(JSON.parse(JSON.stringify(rolled)));
+    const m=A.mergeStates(ticked,p);
+    ok(arrOf(m.carry).length===0,'and it holds for a copy that came off the wire through readCloud');
+  }
 }
 
 console.log('— a new top level state key survives a merge —');
@@ -1412,6 +1586,124 @@ console.log('— the day turning while the app stays open —');
   ok(labels[0]==='Today'&&labels[1]==='Free Floating','they name where the task would go');
   const bulk=[...ld.querySelectorAll('[data-action="carry-all"]')].map(b=>b.textContent.trim());
   ok(bulk.join()==='All → Today,All → Free Floating','both bulk actions are offered');
+  lw.close();
+}
+
+console.log('— two windows on one device: a storage write merges, never overwrites —');
+{
+  /* BUG 1, ROOT CAUSE B. localStorage is shared by every tab on the origin, and each
+     window held its own copy of the tree and wrote the whole thing back on its next
+     commit. Two windows open on one machine were a silent last-writer-wins, and with
+     the tick and the roll landing in different windows it was the second way a done
+     task reached the carry tray. The listener merges the incoming write into memory
+     through the same adopt path syncCycle uses. The writing tab receives no event of
+     its own, which is what stops this looping. */
+  const live=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true});
+  const lw=live.window, ld=lw.document;
+  await wait(300);
+  const LS=()=>lw.A.state, LQ=s=>ld.querySelector(s);
+  const LKEY='agora_dayplanner_v1';
+  const stored=()=>JSON.parse(lw.localStorage.getItem(LKEY));
+  /* the other window commits: this one hears about it, exactly as the browser tells it */
+  const otherWindowWrites=v=>{
+    lw.dispatchEvent(new lw.StorageEvent('storage',
+      {key:LKEY,oldValue:null,newValue:JSON.stringify(v),url:'http://localhost/'}));
+  };
+  const mkt=(id,title,x)=>Object.assign({id,title,done:false,subtasks:[],up:1000,dn:1000,pos:1000},x||{});
+
+  LS().days={}; LS().carry=[]; LS().notes=[]; LS().settings.lastRoll=T();
+  lw.A.save(); await wait(20);
+
+  { /* IT MERGES, IT DOES NOT OVERWRITE */
+    const stale=stored();                       /* what the second window loaded, before this */
+    LS().days[T()]={must:[mkt('w1','typed in this window',{up:Date.now()})],should:[],extra:[]};
+    lw.A.save(); await wait(20);
+    stale.days[T()]={must:[mkt('w2','typed in the other window',{up:Date.now()})],should:[],extra:[]};
+    stale.settings.view='calendar'; stale.settings.trayOpen=true; stale.settings.stripDay=plus(4);
+    otherWindowWrites(stale); await wait(40);
+    const ids=(LS().days[T()].must||[]).map(t=>t.id).sort().join();
+    ok(ids==='w1,w2','both windows keep their work: the incoming write is merged, not applied');
+    ok(LS().settings.view==='board'&&LS().settings.stripDay!==plus(4),
+      'and the other window view settings do not travel with it');
+    ok(!!LQ('.col[data-day="'+T()+'"]'),'the board is drawn from the merged tree, normally');
+    ok(stored().days[T()].must.length===2,
+      'the merged result is written back, so the next window to load gets both');
+  }
+  { /* AND IT CANNOT LOOP: the same bytes again change nothing, so nothing is adopted */
+    const same=stored();
+    const colWas=LQ('#board .col'), rawWas=lw.localStorage.getItem(LKEY);
+    otherWindowWrites(same); await wait(40);
+    ok(LQ('#board .col')===colWas,'a write this window already holds triggers no render at all');
+    ok(lw.localStorage.getItem(LKEY)===rawWas,'and no write back, so two windows cannot ping-pong');
+  }
+  { /* THE REPORTED REPRO. Window A ticks yesterday task; window B, opened before the
+       date turned, rolls it into the tray and commits. Both root causes in one gesture. */
+    LS().days={}; LS().carry=[]; lw.A.save(); await wait(20);
+    const mid=new Date(T()+'T00:00:00').getTime();
+    LS().days[plus(-1)]={must:[mkt('tw1','walk the dog',{done:true,up:100,dn:mid+8*36e5,pos:100})],
+      should:[],extra:[]};
+    lw.A.save(); await wait(20);
+    const rolled=stored();
+    rolled.days[plus(-1)]={must:[],should:[],extra:[]};
+    rolled.carry=[mkt('tw1','walk the dog',{up:100,dn:100,pos:mid,from:'Prio 0 · Mon'})];
+    otherWindowWrites(rolled); await wait(40);
+    ok(LS().carry.length===0,'the tick here and the roll there do not compose into a tray item');
+    ok((LS().days[plus(-1)].must||[]).some(t=>t.id==='tw1'&&t.done),
+      'the finished task stays finished, on the day it was finished');
+    ok(LQ('#tray').innerHTML==='','and with nothing waiting the tray slot draws nothing at all');
+  }
+  { /* A CARRY ARRIVING THIS WAY DRAWS AS THE BAR, like any other fresh arrival */
+    LS().settings.trayOpen=false;
+    const s=stored();
+    s.carry=[mkt('tw2','left from Monday',{pos:Date.now(),from:'Prio 0 · Mon'})];
+    otherWindowWrites(s); await wait(40);
+    ok(LS().carry.length===1&&!!LQ('#tray .tray.closed'),
+      'a carry that arrives from the other window is the collapsed bar, not the open list');
+    ok(LQ('#tray .traycnt').textContent==='1 waiting','counting what waits');
+    LS().carry=[]; lw.A.save(); lw.A.render(); await wait(20);
+  }
+  const ed=()=>LQ('#noteBody');
+  { /* THE UNSTAMPED WINDOW, exactly as syncCycle has it. A note body only takes its
+       stamp at commit, and the editor defers the commit for as long as typing runs, so
+       without flushSave() first the merge weighs a body typed a second ago as though it
+       were as old as the last commit, and the other window copy silently wins. */
+    ld.querySelector('.navbtn[data-v="notes"]').click(); await wait(30);
+    ld.querySelector('[data-action="note-new"]').click(); await wait(40);
+    const typed=txt=>{ const e=ed();
+      if(!e.firstChild||e.firstChild.nodeName!=='DIV') e.innerHTML='<div></div>';
+      const l=e.firstChild;
+      if(!l.firstChild||l.firstChild.nodeType!==3){
+        while(l.firstChild) l.removeChild(l.firstChild);
+        l.appendChild(ld.createTextNode('')); }
+      l.firstChild.data+=txt;
+      e.dispatchEvent(new lw.Event('input',{bubbles:true})) };
+    typed('draft'); lw.A.save(); await wait(20);
+    const nid=LS().notes[0].id, dn0=LS().notes[0].dn;
+    typed('x');                                   /* and now type on, never pausing */
+    ok(LS().notes[0].body.indexOf('draftx')>-1&&LS().notes[0].dn===dn0,
+      'the keystroke is in state at once, but its stamp is still waiting for the commit');
+    const theirs=stored();
+    theirs.notes=[Object.assign({},theirs.notes.find(n=>n.id===nid),
+      {body:'written in the other window',dn:dn0+1})];
+    otherWindowWrites(theirs); await wait(40);
+    ok(LS().notes[0].body.indexOf('draftx')>-1,
+      'the merge saw this window keystroke stamped, so the typing is not merged away');
+    ok(ed().textContent.indexOf('draftx')>-1,'and the screen agrees with it');
+  }
+  { /* A FOREIGN RENDER, so the Notes rules apply: focus and caret both survive it */
+    const bo=ed(); bo.focus();
+    const tn=bo.firstChild.firstChild;
+    { const r=ld.createRange(); r.setStart(tn,2); r.setEnd(tn,4);
+      const sl=lw.getSelection(); sl.removeAllRanges(); sl.addRange(r); }
+    const s=stored();
+    s.days[T()]={must:[mkt('w9','from the other window',{up:Date.now()})],should:[],extra:[]};
+    otherWindowWrites(s); await wait(40);
+    ok(LS().days[T()].must.some(t=>t.id==='w9'),'the write really did arrive and re-render');
+    ok(ld.activeElement===LQ('#noteBody'),'yet focus stays in the note body');
+    { const r=lw.getSelection().getRangeAt(0);
+      ok(r.startOffset===2&&r.endOffset===4&&LQ('#noteBody').contains(r.startContainer),
+        'with the selection exactly where the typist left it'); }
+  }
   lw.close();
 }
 
@@ -4233,6 +4525,70 @@ console.log('— Notes: folder merge —');
   }
 }
 
+/* ---- the cascade resolver, shared by every section that asks what a browser would
+   actually paint at a given viewport (the sticky corner heights below, and the layout
+   boundary pin further down). It walks the PARSED sheet rather than the file text:
+   match the element, drop the bands that are not live at that width and height, then
+   order by importance, specificity and source position and take the last one standing.
+   A grep over the source proves a declaration exists; only this proves it wins. ---- */
+const specOf=sel=>{
+  const s=sel.replace(/::[\w-]+/g,' ').replace(/\*/g,' ');
+  const ids=(s.match(/#[\w-]+/g)||[]).length;
+  const cls=(s.match(/\.[\w-]+/g)||[]).length+(s.match(/\[[^\]]*\]/g)||[]).length
+    +(s.replace(/\[[^\]]*\]/g,' ').match(/:[\w-]+/g)||[]).length;
+  const typ=(s.replace(/\[[^\]]*\]/g,' ').match(/(^|[\s>+~])[a-zA-Z][\w-]*/g)||[]).length;
+  return ids*10000+cls*100+typ;
+};
+/* only plain width and height queries are judged. Anything else gating one of
+   these declarations is collected and reported instead of guessed at, so the
+   resolver fails loudly rather than quietly going wrong when the sheet grows a
+   condition it does not understand. @supports lands here for the same reason. */
+const mediaLive=(cond,vw,vh)=>{
+  if(!cond) return true;
+  let known=true;
+  for(const part of cond.split(/\s+and\s+/)){
+    const m=part.trim().match(/^\(\s*(min|max)-(width|height)\s*:\s*(\d+)px\s*\)$/);
+    if(!m){ known=false; continue }
+    const v=m[2]==='width'?vw:vh;
+    if(m[1]==='min'?v<+m[3]:v>+m[3]) return false;
+  }
+  return known?true:null;
+};
+const unjudged=[];
+/* match, drop the dead bands, then order by importance, specificity and source
+   position and take the last one standing: the cascade, on the real parsed sheet
+   rather than on the file's text, so a rule moving between bands changes the
+   answer here the same way it changes the answer in Chrome. */
+const cascade=(el,prop,vw,vh)=>{
+  const cands=[]; let n=0;
+  const walk=(rules,cond)=>{
+    for(const r of rules){
+      if(r.type===4||r.type===12){
+        walk(r.cssRules||[],(cond?cond+' and ':'')+
+          (r.type===4?(r.media&&r.media.mediaText||''):'supports('+(r.conditionText||'?')+')'));
+        continue;
+      }
+      if(r.type!==1) continue;
+      n++;
+      const val=r.style&&r.style.getPropertyValue(prop);
+      if(!val) continue;
+      let sp=-1;
+      for(const one of r.selectorText.split(',')){
+        let hit=false; try{ hit=el.matches(one.trim()) }catch(e){}
+        if(hit) sp=Math.max(sp,specOf(one.trim()));
+      }
+      if(sp<0) continue;
+      const live=mediaLive(cond,vw,vh);
+      if(live===null){ unjudged.push(cond+' {'+r.selectorText+'}'); continue }
+      if(!live) continue;
+      cands.push({imp:r.style.getPropertyPriority(prop)==='important'?1:0,sp,n,val});
+    }
+  };
+  walk(doc.styleSheets[0].cssRules,'');
+  cands.sort((a,b)=>a.imp-b.imp||a.sp-b.sp||a.n-b.n);
+  return cands.length?cands[cands.length-1].val:'';
+};
+
 console.log('— sticky note: one shared scratch block —');
 {
   S().settings.view='board'; S().settings.floatMode=false;
@@ -4314,63 +4670,10 @@ console.log('— sticky note: one shared scratch block —');
        against the base's one id, so it outranks `#stickyPad` wherever its band is
        live, in any order the two are written in. What was wrong was that it was not
        in the served file. */
-    const specOf=sel=>{
-      const s=sel.replace(/::[\w-]+/g,' ').replace(/\*/g,' ');
-      const ids=(s.match(/#[\w-]+/g)||[]).length;
-      const cls=(s.match(/\.[\w-]+/g)||[]).length+(s.match(/\[[^\]]*\]/g)||[]).length
-        +(s.replace(/\[[^\]]*\]/g,' ').match(/:[\w-]+/g)||[]).length;
-      const typ=(s.replace(/\[[^\]]*\]/g,' ').match(/(^|[\s>+~])[a-zA-Z][\w-]*/g)||[]).length;
-      return ids*10000+cls*100+typ;
-    };
-    /* only plain width and height queries are judged. Anything else gating one of
-       these declarations is collected and reported instead of guessed at, so the
-       resolver fails loudly rather than quietly going wrong when the sheet grows a
-       condition it does not understand. @supports lands here for the same reason. */
-    const mediaLive=(cond,vw,vh)=>{
-      if(!cond) return true;
-      let known=true;
-      for(const part of cond.split(/\s+and\s+/)){
-        const m=part.trim().match(/^\(\s*(min|max)-(width|height)\s*:\s*(\d+)px\s*\)$/);
-        if(!m){ known=false; continue }
-        const v=m[2]==='width'?vw:vh;
-        if(m[1]==='min'?v<+m[3]:v>+m[3]) return false;
-      }
-      return known?true:null;
-    };
-    const unjudged=[];
-    /* match, drop the dead bands, then order by importance, specificity and source
-       position and take the last one standing: the cascade, on the real parsed sheet
-       rather than on the file's text, so a rule moving between bands changes the
-       answer here the same way it changes the answer in Chrome. */
-    const cascade=(el,prop,vw,vh)=>{
-      const cands=[]; let n=0;
-      const walk=(rules,cond)=>{
-        for(const r of rules){
-          if(r.type===4||r.type===12){
-            walk(r.cssRules||[],(cond?cond+' and ':'')+
-              (r.type===4?(r.media&&r.media.mediaText||''):'supports('+(r.conditionText||'?')+')'));
-            continue;
-          }
-          if(r.type!==1) continue;
-          n++;
-          const val=r.style&&r.style.getPropertyValue(prop);
-          if(!val) continue;
-          let sp=-1;
-          for(const one of r.selectorText.split(',')){
-            let hit=false; try{ hit=el.matches(one.trim()) }catch(e){}
-            if(hit) sp=Math.max(sp,specOf(one.trim()));
-          }
-          if(sp<0) continue;
-          const live=mediaLive(cond,vw,vh);
-          if(live===null){ unjudged.push(cond+' {'+r.selectorText+'}'); continue }
-          if(!live) continue;
-          cands.push({imp:r.style.getPropertyPriority(prop)==='important'?1:0,sp,n,val});
-        }
-      };
-      walk(doc.styleSheets[0].cssRules,'');
-      cands.sort((a,b)=>a.imp-b.imp||a.sp-b.sp||a.n-b.n);
-      return cands.length?cands[cands.length-1].val:'';
-    };
+    /* the cascade resolver these heights are read through is shared with the layout
+       boundary pin below, so it lives at file scope: specOf, mediaLive, unjudged and
+       cascade. Two sections resolving the sheet by two copies of the same walker is
+       how one of them goes quietly stale. */
     const padAt=(pos,vw,vh)=>{
       const st=q('#sticky'), was=st.getAttribute('data-pos');
       st.setAttribute('data-pos',pos);
@@ -4698,6 +5001,27 @@ console.log('— the tray collapses by default, and the accent it carries —');
       'cloud blue: the teal dot reads at '+(skyToday&&pearl?ratio(skyToday,pearl).toFixed(2):'?')+
       ' on the tray sheen pearl, same bar, no red near the theme');
   }
+  /* HONESTY IF ONE EVER GETS THROUGH. The merge repairs done-in-carry at the axis that
+     manufactured it, so nothing should reach the tray ticked. If a future regression
+     does, it must be VISIBLE rather than one more untidy row: drawn done, and left out
+     of the count, so the bar disagrees with its own list. */
+  S().carry=[{id:'td1',title:'still waiting',done:false,subtasks:[],up:1,pos:1,from:'Prio 0 · Mon'},
+             {id:'td2',title:'finished somehow',done:true,subtasks:[],up:1,pos:1,from:'Prio 1 · Tue'}];
+  S().settings.trayOpen=true; A.render(); await wait(20);
+  ok(q('#tray .traycnt').textContent==='1 waiting',
+    'a done task in the tray is not counted as waiting: the count counts triage, not rows');
+  ok(qa('#tray .trayitem').length===2,'it is still drawn, not quietly hidden');
+  ok(!!q('#tray .trayitem.done')&&q('#tray .trayitem.done .t').textContent==='finished somehow',
+    'and it is the ticked one that carries the mark');
+  ok(/\.trayitem\.done \.t\{[^}]*text-decoration:line-through/.test(cssAll)&&
+     /\.trayitem\.done \.t\{[^}]*color:var\(--mut2\)/.test(cssAll),
+    'struck through in the same --mut2 a finished card takes, with no colour of its own');
+  /* the drop control is a glyph, so its name is the aria-label, like the two beside it */
+  ok(q('[data-action="carry-drop"]').getAttribute('aria-label')==='Drop from the tray',
+    'the carry drop control carries an accessible name rather than a bare glyph');
+  ok(!!q('[data-action="carry-drop"]').getAttribute('title'),'and a title, so a pointer gets it too');
+  S().carry=[]; S().settings.trayOpen=false; A.render(); await wait(20);
+
   /* the coarse block gives the header its finger */
   ok(/\.trayhead\[data-action\]\{min-height:44px\}/.test(cssAll.slice(cssAll.indexOf('@media (pointer:coarse)'))),
     'on a coarse pointer the header bar grows to 44px for real');
@@ -4705,6 +5029,67 @@ console.log('— the tray collapses by default, and the accent it carries —');
   S().carry=[]; S().settings.trayOpen=false;
   S().days={}; S().settings.lastRoll=T();
   A.save(); A.render(); await wait(20);
+}
+
+console.log('— the tray flag comes down when another device empties the carry —');
+{
+  /* THE REPORTED HOLE. trayOpen is put down at every path that makes the next
+     appearance a fresh arrival: rollover drops it, and local triage that empties the
+     tray drops it. A carry emptied by the OTHER device went through neither, so the
+     flag stayed up from the session that opened the tray, and the next carry to arrive
+     by sync alone drew as the open list and took the top of the board, which is the one
+     thing the collapse contract exists to stop. The rule now sits in adopt(), the single
+     funnel every foreign state comes through. */
+  const cloud={row:null};
+  const net=async(url,opts)=>{
+    opts=opts||{};
+    if((opts.method||'GET').toUpperCase()==='GET')
+      return {ok:true,status:200,text:async()=>'',
+        json:async()=>cloud.row?[{data:cloud.row.data,updated_at:cloud.row.updated_at}]:[]};
+    const b=JSON.parse(opts.body)[0];
+    cloud.row={data:JSON.parse(JSON.stringify(b.data)),updated_at:b.updated_at};
+    return {ok:true,status:200,text:async()=>'',json:async()=>[]};
+  };
+  const d=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+    beforeParse(win){ win.fetch=net;
+      win.localStorage.setItem('agora_dayplanner_synckey','hs-tray') }});
+  await wait(300);
+  const win=d.window, dc=win.document, AA=win.A;
+  const st=()=>AA.state, items=()=>dc.querySelectorAll('.trayitem').length;
+  const mk=(id,title,pos)=>({id,title,done:false,subtasks:[],up:1,dn:1,pos,from:'Prio 0 · Mon'});
+
+  st().days={}; st().carry=[]; st().settings.lastRoll=T(); AA.save(); await wait(20);
+  st().carry=[mk('sy1','left from Monday',1000),mk('sy2','and another',1000)];
+  st().settings.trayOpen=true; AA.save(); AA.render(); await wait(30);
+  ok(items()===2&&st().settings.trayOpen===true,'the tray stands open, mid triage, with two items');
+  await AA.syncCycle({}); await wait(60);
+  ok(!!cloud.row,'the cloud holds this device copy');
+
+  /* the other device triages the lot: both land on today, its carry is empty, and its
+     move is the newer one on the pos axis */
+  const later=Date.now()+1000;
+  cloud.row.data.carry=[];
+  cloud.row.data.days[T()]={must:[Object.assign(mk('sy1','left from Monday',later),{from:null}),
+    Object.assign(mk('sy2','and another',later),{from:null})],should:[],extra:[]};
+  cloud.row.updated_at=new Date(later).toISOString();
+  await AA.syncCycle({}); await wait(60);
+  ok(st().carry.length===0,'the merge brings the other device triage across');
+  ok(st().settings.trayOpen===false,'and the flag comes down with the last item, as local triage does');
+  ok(dc.querySelector('#tray').innerHTML==='','an emptied carry still draws nothing at all, bar included');
+
+  /* LATER: a carry arrives by sync alone. No local roll ran, so the flag is the only
+     thing deciding how it draws. */
+  const later2=Date.now()+2000;
+  cloud.row.data.carry=[mk('sy3','left from Tuesday',later2)];
+  cloud.row.updated_at=new Date(later2).toISOString();
+  await AA.syncCycle({}); await wait(60);
+  ok(st().carry.length===1,'the new carry arrives from the other device');
+  ok(!!dc.querySelector('#tray .tray.closed')&&items()===0,
+    'and draws as the collapsed bar, not as the open list the earlier session left behind');
+  ok(dc.querySelector('#tray .traycnt').textContent==='1 waiting','counting the one that waits');
+  ok(dc.querySelectorAll('#tray [data-action^="carry-"]').length===0,
+    'with no triage control built in a bar nobody has opened');
+  win.close();
 }
 
 console.log('— sticky note: merge, the honest limit said plainly —');
@@ -4944,6 +5329,85 @@ console.log('— the rail: exactly one nav item is ever the current one —');
     'and drops aria-current with it, so only one element claims the page');
   S().settings.floatMode=false; S().settings.view='board'; A.save(); A.render(); await wait(25);
   only('back from float','Board');
+}
+
+console.log('— the layout boundary is one pixel, and both sides stand on the same one —');
+{
+  /* AT EXACTLY innerWidth 900 the wide structure was built into the narrow stylesheet.
+     The sheet splits at max-width:900px / min-width:901px, so 900 is a narrow window to
+     every rule in the file; every gate in the script read >=900 and built the WIDE one
+     there. A 900px window therefore got the seven day board, the Today only switch, the
+     off-board column and the rail layout laid out by a stylesheet that draws one column,
+     no rail and a day strip the script had not built. No viewport profile sits on the
+     pixel, so nothing measured it. Both sides now read one boundary; this pins it from
+     both, at 899, 900 and 901. */
+  { /* THE SHEET, resolved the way a browser resolves it rather than grepped */
+    const app=q('#app');
+    const gt=vw=>cascade(app,'grid-template-columns',vw,800).trim();
+    ok(gt(899)===gt(900),
+      '899 and 900 resolve the same template, so 900 is a narrow window to the sheet: '+gt(900));
+    ok(gt(901)!==gt(900),'and 901 is the one pixel where the sheet changes its mind');
+    ok(gt(900)==='1fr','at 900 #app is the single column phone template ('+gt(900)+')');
+    ok(/var\(--rail\)/.test(gt(901)),'at 901 it is the rail beside the content column ('+gt(901)+')');
+    /* and there is no second boundary hiding anywhere near it */
+    const seen=[];
+    (function walk(rules){ for(const r of rules){
+      if(r.type===4){ (String(r.media.mediaText).match(/(min|max)-width:\s*\d+px/g)||[])
+        .forEach(x=>seen.push(x.replace(/\s+/g,''))); walk(r.cssRules||[]) }
+      else if(r.cssRules) walk(r.cssRules);
+    } })(doc.styleSheets[0].cssRules);
+    const near=[...new Set(seen)].filter(x=>{ const n=+x.match(/\d+/)[0]; return n>=890&&n<=910 }).sort();
+    ok(near.join(' ')==='max-width:900px min-width:901px',
+      'the sheet declares exactly one boundary in the band, the 900/901 pair ('+near.join(' ')+')');
+  }
+  { /* THE SCRIPT, at the three pixels, in real windows */
+    const seed=JSON.stringify({ver:2,days:{},carry:[],focus:[],
+      floats:[{id:'f1',name:'Inbox',tasks:[],up:1}],
+      habits:{list:[{id:'hh1',name:'Stretch',days:[1,2,3,4,5],up:1}],marks:{}},
+      week:{list:[],hist:{}},notes:[],folders:[],sticky:{text:'',at:0},tomb:{},bin:{},
+      settings:{view:'board',boardOffset:0,floatMode:false,activeFloat:'f1',calSel:null,
+        calOffset:0,mRange:'day',stripDay:null,showDone:false,lastRoll:T(),
+        habitsOpen:true,weekOpen:true,todayOnly:false,lastWeek:null,noteSel:null,trayOpen:false}});
+    const at=async vw=>{
+      const d=new JSDOM(html,{runScripts:'dangerously',url:'http://localhost/',pretendToBeVisual:true,
+        beforeParse(win){
+          Object.defineProperty(win,'innerWidth',{value:vw,writable:true,configurable:true});
+          Object.defineProperty(win,'innerHeight',{value:800,writable:true,configurable:true});
+          try{ win.localStorage.setItem('agora_dayplanner_v1',seed) }catch(e){}
+        }});
+      await wait(300);
+      const dw=d.window, dd=dw.document;
+      const snap=()=>({
+        cols:dd.querySelectorAll('#board .col').length,
+        strip:dd.querySelectorAll('#strip button').length,
+        toggle:!!dd.querySelector('[data-action="todayonly"]'),
+        oneday:dd.querySelector('#board').classList.contains('oneday'),
+        habitsBand:dd.querySelector('#habits').innerHTML!=='',
+        habitsRail:dd.querySelector('#habitsRail').innerHTML!=='',
+        step:!!dd.querySelector('[data-action="nav"][data-d="7"]')});
+      const off=snap();
+      dw.A.state.settings.todayOnly=true; dw.A.render(); await wait(30);
+      const on=snap();
+      dw.close();
+      return {off,on};
+    };
+    const w899=await at(899), w900=await at(900), w901=await at(901);
+    const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+    ok(same(w899.off,w900.off)&&same(w899.on,w900.on),
+      '900 builds exactly what 899 builds, which is what the sheet at 900 is drawing');
+    ok(!same(w900.off,w901.off),'and 901 is where the script changes its mind, once, with the sheet');
+    ok(w900.off.cols===1&&w900.off.strip>0&&!w900.off.toggle,
+      'at 900: one day column, the day strip to move it, and no Today only switch');
+    ok(w900.off.habitsBand&&!w900.off.habitsRail,
+      'and the habits panel is the full width band under the board, not the rail card');
+    ok(w901.off.cols===7&&w901.off.strip===0&&w901.off.toggle,
+      'at 901: the seven day window, no strip, and the switch that is only meaningful here');
+    ok(!w901.off.habitsBand&&w901.off.habitsRail,'with the habits panel back in the rail');
+    ok(!w900.on.oneday&&!w900.on.toggle&&w900.on.step,
+      'a stored Today only changes nothing at 900: the board there is a single day strip already');
+    ok(w901.on.oneday&&w901.on.cols===1&&!w901.on.step,
+      'and takes effect at 901, where one column is a mode rather than the only layout');
+  }
 }
 
 console.log('— the docs match reality —');

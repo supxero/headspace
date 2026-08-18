@@ -414,6 +414,11 @@ select option{background:var(--pearl);color:var(--txt)}
 .trayitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid rgba(var(--ink-rgb),.13);font-size:13px}
 .trayitem .from{font-size:10.5px;color:var(--mut);background:rgba(var(--ink-rgb),.08);padding:1px 7px;border-radius:99px;white-space:nowrap}
 .trayitem .t{flex:1;min-width:0;word-break:break-word}
+/* a done task can no longer reach the tray (the merge repairs it at the axis that
+   made it), so this styles a state that should never appear. It exists so that a
+   regression is VISIBLE: same struck-through --mut2 a finished card takes, and the
+   header count leaves it out. No new variable, no colour of its own. */
+.trayitem.done .t{color:var(--mut2);text-decoration:line-through}
 
 /* recycle bin */
 .binrow{display:flex;align-items:center;gap:8px;padding:8px 2px;border-top:1px solid var(--line)}
@@ -893,7 +898,7 @@ select option{background:var(--pearl);color:var(--txt)}
      THE EMPTY SLOTS span the full width. #tray, #boardnav, #strip, #habits and
      #weekMobile are all guaranteed empty in a wide Notes view (renderTray returns
      early on the view, renderNav empties the two board slots, and renderHabits and
-     renderWeekly host in the rail whenever railWide()), so this decides nothing
+     renderWeekly host in the rail whenever wideLayout()), so this decides nothing
      visible; it means a slot that somehow drew would be a row of its own rather
      than a squeeze on the list's column.
      The display:contents is !important because render() writes #notes's display
@@ -1688,9 +1693,43 @@ function pickSide(a,b,stamp,fields){
   const ja=JSON.stringify(fields.map(f=>a[f])), jb=JSON.stringify(fields.map(f=>b[f]));
   return ja<=jb?a:b;
 }
+/* THE STANDING INVARIANT: a task in the carry tray is never done.
+   No single device can produce one. rollover() leaves a ticked task on its day and
+   the tray draws no tick control, so done-in-carry is not a state any screen can
+   reach; it is manufactured HERE, by composition, because `done` resolves on the dn
+   axis and `loc` on the pos axis and nothing stopped the merge marrying a tick made
+   on one device to a roll made on the other. The result sat in the tray as a finished
+   task with three triage buttons and no way to finish it again (Section 21).
+   Repaired in pickNewer rather than in rebuild() because this is the last place that
+   still holds BOTH sides: by rebuild there is one winner and no way left to ask where
+   the device that ticked it had the task. Two rules, both computed from `d`, the side
+   that won dn, so they are symmetric in a and b and the two devices repair alike:
+     - d's loc names a real home (a day, or a float tab): take it. That is where the
+       device that ticked it had it, and it is exactly where rollover would have left
+       the task had that device rolled first.
+     - both sides say carry, so the day is already gone (an old blob converged before
+       this rule existed): file it to the day its dn stamp falls on, the day it was
+       finished, in Prio 0, the zone rebuild() already falls back to for a loc it
+       cannot read. A planner written before per item stamps has no dn at all and
+       falls back to LEGACY_UP, which is a sentinel and not a moment, so that one case
+       files to today instead of 1970: the repair's job is to put a finished task
+       somewhere a person could actually find it.
+   No stamp is touched. Repairing is not an edit, and a repair that moved pos would
+   out-rank the other device's next real move. It stays idempotent: the repaired blob
+   merged against the stale one ties on pos, and whichever loc that tie picks, done is
+   still true and the rule fires again on the same dn side, so it converges. */
+function homed(kind,w,d){
+  if(kind!=='task'||!w||!w.done) return w;
+  if((w.loc||{kind:'carry'}).kind!=='carry') return w;
+  const dl=d&&d.loc;
+  const stamp=+((d&&d.dn)||w.dn||0);
+  const home=(dl&&dl.kind&&dl.kind!=='carry')?dl
+    :{kind:'day',date:stamp>LEGACY_UP?iso(new Date(stamp)):today(),zone:'must'};
+  return Object.assign({},w,{loc:home});
+}
 function pickNewer(kind,a,b){
-  if(!a) return b;
-  if(!b) return a;
+  if(!a) return homed(kind,b,b);
+  if(!b) return homed(kind,a,a);
   const c=pickSide(a,b,'up',CONTENTF[kind]);                     /* what it says */
   /* dn resolves on its own even when no fields ride it (float, habit): the winning dn
      is what a tombstone is compared against, so a habit ticked after a delete elsewhere
@@ -1698,11 +1737,11 @@ function pickNewer(kind,a,b){
      always mirrors up on both sides, so this changes nothing for them. */
   const d=pickSide(a,b,'dn',DONEF[kind]);                        /* whether it is ticked */
   const p=pickSide(a,b,'pos',POSF[kind]);                        /* where it sits */
-  if(c===d&&c===p) return c;
+  if(c===d&&c===p) return homed(kind,c,d);
   const out=Object.assign({},c);
   DONEF[kind].forEach(f=>{ out[f]=d[f] }); out.dn=d.dn;
   POSF[kind].forEach(f=>{ out[f]=p[f] }); out.pos=p.pos;
-  return out;
+  return homed(kind,out,d);
 }
 function mergeTombs(x,y){
   const out={};
@@ -2151,6 +2190,17 @@ function readCloud(p){
 }
 /* put a state on screen without letting the change look like a local edit */
 function adopt(next){
+  /* AN EMPTIED CARRY PUTS THE FLAG DOWN, wherever the emptying happened. Local triage
+     already does it in its own handlers; this is the same rule for a carry emptied by
+     somebody else, which is the only other way it can go: the other device triaged the
+     lot and the merge brought that back here. Without it the flag stayed up from the
+     session that opened the tray, and the NEXT carry to arrive by sync drew as the open
+     list, taking the top of the board, which is exactly what the collapse contract
+     exists to stop. One line in the single funnel every foreign state comes through
+     (the sync cycle, a Pull, the undo of a Pull, and now another window on this same
+     device), rather than four copies at four call sites. Presentation only: trayOpen is
+     on VIEWSET and outside stateSig, so nothing here syncs or pushes. */
+  if(next&&next.settings&&!arr(next.carry).length) next.settings.trayOpen=false;
   swapState(next);
   snapSigs();
   sync.applying=true; commit(); sync.applying=false;
@@ -2183,6 +2233,33 @@ function applyCloud(row,announce){
   });
   return true;
 }
+
+/* ---------- the second window on this same device ----------
+   localStorage is shared by every tab on the origin, and until now each tab held its
+   own copy of the tree in memory and wrote the whole thing back on its next commit.
+   Two windows open on one machine were therefore a silent last-writer-wins: whatever
+   the second tab had loaded overwrote whatever the first had done since, and with the
+   two axes composing on the way back through the cloud it was one of the two ways a
+   done task reached the carry tray (Section 21).
+   The event fires in the OTHER tabs only, never in the one that wrote, so this cannot
+   loop: the tab that receives it merges, and if the merge changes nothing (it will not,
+   once both hold the same tree) it writes nothing back. It is the SAME adopt path
+   syncCycle uses and for the same reasons: flushSave() first, so this tab's own
+   unstamped keystrokes carry their real moment into the merge rather than the previous
+   commit's, and mergeStates rather than a replace, so neither side's work is dropped.
+   rebuild() keeps this device's own settings, so the incoming tab's view, its rail, its
+   tray and its selected note never travel either. */
+window.addEventListener('storage',e=>{
+  if(!e||e.key!==KEY||e.newValue==null) return;
+  let p=null;
+  try{ p=readCloud(JSON.parse(e.newValue)) }catch(err){ return }
+  if(!p) return;
+  flushSave();                    /* the unstamped-window rule, exactly as in syncCycle */
+  const before=stateSig(state);
+  const merged=mergeStates(state,p);
+  if(stateSig(merged)===before) return;   /* nothing of theirs we do not already hold */
+  adopt(merged);                  /* a foreign render: it restores the caret and focus */
+});
 
 /* ---------- the automatic cycle: read the cloud, merge item by item, write back ----------
    Runs on load, on focus, on reconnect, on a timer, and a moment after any edit. */
@@ -2390,6 +2467,17 @@ function day(d){
   ZONES.forEach(z=>{if(!Array.isArray(state.days[d][z])) state.days[d][z]=[]});
   return state.days[d];
 }
+/* the same shape for a caller that only wants to LOOK at a day. day() above creates
+   the entry as a side effect, which is right when something is about to be put in it
+   and wrong everywhere else: a render that asks for an empty day must not leave one
+   behind in state.days. Returns a throwaway when the day does not exist. */
+function dayRead(d){
+  const x=state.days[d];
+  if(!x) return {must:[],should:[],extra:[]};
+  const out={};
+  ZONES.forEach(z=>{ out[z]=Array.isArray(x[z])?x[z]:[] });
+  return out;
+}
 function mkTask(title){return {id:uid(),title:title.trim(),done:false,subtasks:[],up:Date.now()}}
 function float(id){return state.floats.find(f=>f.id===id)}
 function activeFloat(){return float(state.settings.activeFloat)||state.floats[0]}
@@ -2504,6 +2592,21 @@ function rollIfNewDay(opts){
   flushSave();                        /* pending edits keep their own moment */
   const midnight=new Date(today()+'T00:00:00').getTime();
   const n=dayDue?rollover():0;
+  /* TODAY ONLY HAS TO KEEP MEANING TODAY. The single column branch returns the
+     absolute stripDay, so a device left open across midnight in the mode went on
+     drawing YESTERDAY: the date is past, the column takes the .past treatment and
+     loses the TODAY badge, and nothing on screen says why. The mode's NAME is its
+     contract, so it re-centres whatever day was being looked at, a stepped-to one
+     included: "Today only" showing Thursday because you stepped forward on Wednesday
+     is the same broken promise as it showing yesterday. Through showDay, never a
+     write to boardOffset or stripDay, so the two halves of the board position stay in
+     step at every width. Guarded on todayOnlyOn(), not on the raw flag: under 900px
+     the board is a single day strip that is navigation rather than a mode, and moving
+     a phone user's strip day at midnight would be a second mechanism.
+     rollIfNewDay is the only owner: it is the one path that notices the date has
+     turned (launch, foreground, and the 60 second timer all arrive through it), and
+     no render may mutate the position it is drawing. */
+  if(dayDue&&todayOnlyOn()) showDay(today());
   if(weekDue) weekSweep();
   commit(midnight);
   if(n&&!opts.quiet){
@@ -2882,7 +2985,14 @@ function renderTray(){
      items draw only while open: a collapsed bar that offered All → Today would be
      triage without the list it triages. An EMPTY carry still draws nothing at all;
      the bar is never the dead band the :not(:empty) contract closed. */
-  const open=state.settings.trayOpen===true, n=state.carry.length;
+  /* HONESTY ABOUT A DONE ITEM. The merge now repairs done-in-carry at the axis where
+     it was manufactured (homed(), Section 21), so nothing should ever reach this line
+     ticked. If one does, it is drawn ticked, in the same struck-through --mut2 a done
+     card takes, and it is left OUT of the count, which counts what is actually waiting
+     for triage. A regression then shows on the surface as a finished task in the tray
+     and a count that disagrees with the list, rather than hiding as one more untidy
+     row nobody reads twice. */
+  const open=state.settings.trayOpen===true, n=state.carry.filter(t=>!t.done).length;
   $('#tray').innerHTML='<div class="tray'+(open?'':' closed')+'">'+
     '<div class="trayhead" data-action="tray-toggle">'+CHEV(open)+
     '<b><span class="traydot"></span>Carry-over</b>'+
@@ -2890,12 +3000,15 @@ function renderTray(){
     (open?'<span class="acts"><button class="tbtn" data-action="carry-all" data-to="today">All → Today</button>'+
     '<button class="tbtn" data-action="carry-all" data-to="float">All → Free Floating</button></span>':'')+
     '</div>'+
-    (open?state.carry.map(t=>'<div class="trayitem">'+
+    (open?state.carry.map(t=>'<div class="trayitem'+(t.done?' done':'')+'">'+
       '<span class="from">'+esc(t.from||'earlier')+'</span>'+
       '<span class="t">'+esc(t.title)+'</span>'+
       '<button class="tbtn" data-action="carry-one" data-id="'+t.id+'" data-to="today">Today</button>'+
       '<button class="tbtn" data-action="carry-one" data-id="'+t.id+'" data-to="float">Free Floating</button>'+
-      '<button class="tbtn" data-action="carry-drop" data-id="'+t.id+'">✕</button></div>').join(''):'')+
+      /* the glyph is not a name: spop and the float move beside it both carry one,
+         and the blank-label sweep reads text OR aria-label */
+      '<button class="tbtn" data-action="carry-drop" data-id="'+t.id+'" title="Drop from the tray"'+
+      ' aria-label="Drop from the tray">✕</button></div>').join(''):'')+
     '</div>';
 }
 
@@ -2909,9 +3022,25 @@ function renderTray(){
    min-width:901px block. A device that is narrow now cannot be in the mode now,
    whatever it stored while it was wide, and the resize handler re-renders on a real
    width change, so crossing the boundary either way lands in the right one. */
-function todayOnlyOn(){ return state.settings.todayOnly===true&&window.innerWidth>=900 }
+/* ONE BOUNDARY, AND IT IS THE STYLESHEET'S. The layout branches in two places, the
+   media queries and the gates in here, and for one pixel the two disagreed. The narrow
+   block is `max-width:900px` and the wide one `min-width:901px`, so 900 is a narrow
+   window to every rule in the file; every gate in the script read `>=900` and built the
+   WIDE structure there. At exactly innerWidth 900 the seven column board, the Today
+   only switch, the off-board column and the rail hosting of Habits and This week were
+   therefore handed to a stylesheet that draws a single column, folds the rail behind
+   Menu and lays out a day strip the script had not built, which put both panels inside
+   a closed menu with their full width bands left empty. Rare, not impossible (a
+   maximised window on a 900px split, a 900px
+   iframe), and invisible to the viewport pass because no profile sits on the pixel.
+   Every gate now reads this one predicate, defined as the exact complement of
+   `max-width:900px`. Do not inline a width comparison beside it and do not give the
+   rail its own copy: a test pins 899, 900 and 901 against the resolved cascade. */
+const WIDE_FROM=901;              /* the same pixel as the stylesheet's min-width:901px */
+const wideLayout=()=>window.innerWidth>=WIDE_FROM;
+function todayOnlyOn(){ return state.settings.todayOnly===true&&wideLayout() }
 function windowDays(){
-  const n=(window.innerWidth<900||todayOnlyOn())?1:7, o=state.settings.boardOffset, out=[];
+  const n=(!wideLayout()||todayOnlyOn())?1:7, o=state.settings.boardOffset, out=[];
   /* ONE branch for one column, whichever reason produced it: the day shown is
      stripDay, the same field the phone strip drives, kept in step with boardOffset by
      shiftBoard and showDay so the seven-column window and the single one always
@@ -2964,7 +3093,7 @@ function renderNav(){
        press. The word the other state needs lives in the title, which is the one part
        of a toggle that is allowed to name the destination.
        Not drawn under 900px, where the board is a single day strip already. */
-    (window.innerWidth>=900
+    (wideLayout()
       ? '<button class="nbtn'+(one?' solid':'')+'" data-action="todayonly" aria-pressed="'+(one?'true':'false')+
         '" title="'+(one?'Show the seven day week':'Show today alone')+'">Today only</button>'
       : '')+
@@ -2976,7 +3105,7 @@ function renderNav(){
         pastOpen+' waiting on past days</button>'
       : (off.length?'<span class="offnote">'+off.length+' off-board</span>':''));
   /* mobile day strip */
-  if(window.innerWidth<900){
+  if(!wideLayout()){
     const cur=state.settings.stripDay||today();
     let days=[];
     for(let i=-1;i<=6;i++) days.push(plus(i));
@@ -3015,7 +3144,7 @@ function renderBoard(){
      as the phone's single-day board does not. The count is still reported in the nav
      row, so nothing dated elsewhere goes unmentioned; the way to reach it is the
      seven-day window, which is one press away. */
-  if(off.length&&window.innerWidth>=900&&!todayOnlyOn()){
+  if(off.length&&wideLayout()&&!todayOnlyOn()){
     h+='<div class="col" style="animation-delay:'+(win.length*35)+'ms"><div class="colhead">'+
       '<div class="d1"><span class="dow">Off-board</span></div>'+
       '<div class="meta">dated outside this window</div></div><div class="colbody">'+
@@ -3154,9 +3283,10 @@ function card(t,loc){
 const HDOW=['','Mo','Tu','We','Th','Fr','Sa'];
 /* On a desktop the panel lives in the rail under True north; on a phone the rail folds
    behind Menu and the 308px column cannot hold names beside six cells and their
-   controls, so the panel stays the full-width band under the day columns. Same gate
-   the rest of the layout uses (innerWidth<900), so the resize handler re-homes it. */
-const railWide=()=>window.innerWidth>=900;
+   controls, so the panel stays the full-width band under the day columns. It reads
+   wideLayout(), the ONE boundary predicate, rather than keeping a copy of the
+   comparison: the rail had its own `>=900` and inherited the one-pixel band with it.
+   The resize handler re-homes the panel on a real width change either way. */
 function hcell(hb,d,marks,eds){
   const days=arr(hb.days);
   if(eds) return '<button class="hday'+(days.includes(d)?' on':'')+
@@ -3181,7 +3311,7 @@ function habitAddRow(){
     '<button class="nbtn" data-action="habit-add">Add</button></div>';
 }
 function renderHabits(){
-  const wide=railWide();
+  const wide=wideLayout();
   const host=wide?$('#habitsRail'):$('#habits'), other=wide?$('#habits'):$('#habitsRail');
   other.innerHTML='';
   if(!wide&&(state.settings.view!=='board'||state.settings.floatMode)){ host.innerHTML=''; return }
@@ -3249,7 +3379,7 @@ function wrow(t){
     '<button class="mini" data-action="week-del" data-id="'+t.id+'" title="Remove" aria-label="Remove">✕</button></div>';
 }
 function renderWeekly(){
-  const wide=railWide();
+  const wide=wideLayout();
   const host=wide?$('#weekRail'):$('#weekMobile'), other=wide?$('#weekMobile'):$('#weekRail');
   other.innerHTML='';
   if(!wide&&(state.settings.view!=='board'||state.settings.floatMode)){ host.innerHTML=''; return }
@@ -3961,7 +4091,13 @@ function renderCal(){
   h+='</div>';
 
   if(state.settings.calSel){
-    const d=state.settings.calSel, x=day(d);
+    /* READ, NEVER CREATE. day() makes the day if it is missing, so rendering the panel
+       for a selected empty date wrote a `{must:[],should:[],extra:[]}` into state.days
+       and left it there: every click on a bare square grew the planner by a permanent
+       empty day, and they merge, sync and count for offBoard's key sweep like real ones.
+       A render must not mutate what it is drawing. The day is created where a task is
+       actually added to it, which is place(), through day() as before. */
+    const d=state.settings.calSel, x=dayRead(d);
     h+='<div class="dpanel"><div class="dphead"><b>Tasks on '+
       DOW[new Date(d+'T12:00:00').getDay()]+', '+d+'</b>'+
       '<button class="nbtn" data-action="goto-day" data-day="'+d+'">Open on board →</button></div>'+
@@ -4444,13 +4580,21 @@ document.addEventListener('click',e=>{
        the mode is for the days when only today matters, so it would be useless if it
        framed a random week's Thursday. showDay is how it gets there, never a write to
        boardOffset or stripDay, so the two halves of the board position stay in step at
-       both widths (the trap Prev and Next fell into on iOS). Turning it OFF snaps
-       nothing: the seven-day window opens on the day being looked at.
+       both widths (the trap Prev and Next fell into on iOS).
+       TURNING IT OFF GOES TO TODAY TOO, and for the same reason. It used to snap
+       nothing, which read as "the week opens on the day being looked at" and was
+       measured as something else: one press of Next inside the mode leaves
+       boardOffset at 1, so the seven day window opened on TOMORROW with today off the
+       left edge, and a night in the mode could leave it anywhere. What comes back has
+       to be a coherent week, and the only week that is coherent to come back to is the
+       one holding today, with today visible: that is boardOffset 0, which is what
+       showDay(today()) means. Both directions therefore reach the board position the
+       same single way, and neither writes a field.
        Returns rather than breaks, the convention this switch keeps for a case that has
        done its own save and render, and the one the other mode switch (mrange) uses. */
     case 'todayonly':{
       s.todayOnly=!s.todayOnly;
-      if(s.todayOnly) showDay(today());
+      showDay(today());
       save(); render(); return;
     }
     case 'strip': showDay(el.dataset.day); break;
@@ -4788,7 +4932,7 @@ document.addEventListener('dragover',e=>{
     e.preventDefault(); e.dataTransfer.dropEffect='move';
     /* the same midpoint the drop will use, so the bar names the true landing side */
     const r=ui.drag.over===c?ui.drag.rect:c.getBoundingClientRect();
-    const side=(window.innerWidth<900?e.clientY>r.top+r.height/2:e.clientX>r.left+r.width/2)
+    const side=(!wideLayout()?e.clientY>r.top+r.height/2:e.clientX>r.left+r.width/2)
       ?'drop-after':'drop-before';
     if(ui.drag.over===c&&ui.drag.side===side) return;
     if(ui.drag.over&&ui.drag.over!==c) ui.drag.over.classList.remove('drop','drop-before','drop-after');
@@ -4811,7 +4955,7 @@ document.addEventListener('drop',e=>{
     /* land before or past the target by which half of it the pointer let go in;
        the columns run sideways on a wide screen and stack on a narrow one */
     const r=c.getBoundingClientRect();
-    const after=window.innerWidth<900?e.clientY>r.top+r.height/2:e.clientX>r.left+r.width/2;
+    const after=!wideLayout()?e.clientY>r.top+r.height/2:e.clientX>r.left+r.width/2;
     if(reorderTab(fid,c.dataset.fid,after)){ save(); flipTabs() }
     return;
   }
